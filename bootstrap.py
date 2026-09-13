@@ -30,12 +30,37 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly",
 
 def _creds():
     from google.oauth2 import service_account
+    # 1) 배포: st.secrets["gcp_service_account"] 우선 사용
+    raw = None
     try:
-        info = dict(st.secrets["gcp_service_account"])
-        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        raw = st.secrets["gcp_service_account"]
     except Exception:
-        return service_account.Credentials.from_service_account_file(
-            str(BASE / "secrets" / "service-account.json"), scopes=SCOPES)
+        raw = None
+    if raw is not None:
+        info = dict(raw)
+        # private_key가 TOML/따옴표 문제로 개행이 문자 그대로 "\n"으로 들어온 경우 복구
+        pk = info.get("private_key", "")
+        if "\\n" in pk and "\n" not in pk:
+            info["private_key"] = pk.replace("\\n", "\n")
+        try:
+            return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        except Exception as e:
+            raise RuntimeError(
+                "Secrets의 [gcp_service_account]를 읽었지만 인증 정보 생성에 실패했습니다.\n"
+                f"원인: {type(e).__name__}: {e}\n"
+                f"들어있는 키 목록: {sorted(info.keys())}\n"
+                "→ private_key 값(개행 \\n 포함)과 client_email/token_uri가 올바른지 확인하세요."
+            ) from e
+    # 2) 로컬: 파일 폴백
+    path = BASE / "secrets" / "service-account.json"
+    if not path.exists():
+        raise RuntimeError(
+            "서비스계정 자격증명을 찾을 수 없습니다.\n"
+            "배포(Streamlit Cloud) 환경이면 Settings→Secrets에 TOML 형식으로 "
+            "[gcp_service_account] 섹션을 넣어야 합니다. (JSON 형식이 아니라 key = \"value\" 형식)\n"
+            f"로컬 개발이면 파일이 필요합니다: {path}"
+        )
+    return service_account.Credentials.from_service_account_file(str(path), scopes=SCOPES)
 
 def _download(drive, fid):
     from googleapiclient.http import MediaIoBaseDownload
