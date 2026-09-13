@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+secrets/
+*.log
+scout_data/_*.json
+saved_data/*.xlsx
+saved_data/err.log
+saved_data/out.log
