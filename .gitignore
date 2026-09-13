@@ -14,3 +14,4 @@ __pycache__/
 _*.json
 
 cloudflared.exe
+deploy_secrets.toml
