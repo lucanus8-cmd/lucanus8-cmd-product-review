@@ -43,15 +43,23 @@ def _creds():
             # 개행이 문자 그대로 "\n"으로 들어온 경우 복구
             if "\\n" in pk and "\n" not in pk:
                 pk = pk.replace("\\n", "\n")
-            # 스마트 따옴표/en·em 대시 등 비ASCII 문장부호를 ASCII로 정규화
-            # (붙여넣기 자동변환 방지 — 정상 PEM 키는 전부 ASCII이므로 안전)
-            for _a, _b in {
-                "‘": "'", "’": "'", "“": '"', "”": '"',
-                "–": "-", "—": "-", "―": "-", "−": "-",
-                " ": " ", "﻿": "",
-            }.items():
-                pk = pk.replace(_a, _b)
-            info["private_key"] = pk
+            # 붙여넣기 자동변환(스마트 문장부호)로 섞인 비ASCII 문자를 정리.
+            # 정상 PEM/base64 키는 전부 ASCII이므로 이 정규화는 안전하다.
+            import unicodedata
+            out = []
+            for ch in pk:
+                if ch.isascii():
+                    out.append(ch)
+                elif unicodedata.category(ch) == "Pd" or ch == "\u2212":
+                    out.append("-")              # 각종 유니코드 대시/마이너스 -> 하이픈
+                elif ch in "\u2018\u2019\u201a\u201b\u2032":
+                    out.append("'")              # 스마트 작은따옴표
+                elif ch in "\u201c\u201d\u201e\u201f\u2033":
+                    out.append('"')              # 스마트 큰따옴표
+                elif ch == "\u00a0":
+                    out.append(" ")              # 비분리 공백
+                # 그 외 비ASCII(제로폭 공백/BOM 등)는 제거
+            info["private_key"] = "".join(out)
         try:
             return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
         except Exception as e:
