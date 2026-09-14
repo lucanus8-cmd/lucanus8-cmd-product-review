@@ -128,8 +128,8 @@ HAS_PRICE = ss.price_available()
 st.title("🔎 제품 검토")
 st.caption("매출: IQVIA·UBIST · 허가/특허/임상: 식약처 · 약가: 심평원 + NHIS 협상완료(공식)")
 
-t_search, t_sugg, t_sales, t_patent, t_price, t_ai, t_status = st.tabs(
-    ["🔍 제품 종합분석", "🎯 제품 제안", "💰 매출 분석", "⚖️ 특허 분석", "💊 약가 분석", "🤖 AI 분석", "ℹ️ 상태"])
+t_search, t_sugg, t_sales, t_patent, t_clinical, t_price, t_ai, t_status = st.tabs(
+    ["🔍 제품 종합분석", "🎯 제품 제안", "💰 매출 분석", "⚖️ 특허 분석", "🧪 임상 분석", "💊 약가 분석", "🤖 AI 분석", "ℹ️ 상태"])
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
 with t_search:
@@ -383,6 +383,79 @@ with t_patent:
                     "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
             cc = {k2: v for k2, v in cmap.items() if k2 in pt.columns}
             st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), use_container_width=True, height=360, hide_index=True)
+
+# ══════════════════════════ 임상 분석 ══════════════════════════
+with t_clinical:
+    st.subheader("🧪 임상 분석 — 조건별")
+    try:
+        cl = ss.load_clinical().copy()
+    except Exception:
+        cl = None
+    if cl is None or cl.empty:
+        st.info("임상 데이터 미연결")
+    else:
+        def _cc(cands):
+            for c in cands:
+                if c in cl.columns:
+                    return c
+            return None
+        step_c = _cc(["CLINIC_STEP_NM"])
+        dis_c  = _cc(["TRGT_DISS_NM"])
+        stat_c = _cc(["STATUS"])
+        dev_c  = _cc(["원개발사"])
+        date_c = _cc(["CLST_APRV_DT"])
+        prod_c = _cc(["제품명"])
+        ing_c  = _cc(["성분명"])
+
+        f = st.columns(4)
+        f_step = msel(f[0], "임상 단계", cl[step_c], "c_step") if step_c else []
+        f_stat = msel(f[1], "상태", cl[stat_c], "c_stat") if stat_c else []
+        dev_kw = f[2].text_input("개발사 검색", key="c_dev")
+        kw = f[3].text_input("성분/제품 검색", key="c_kw")
+
+        f2 = st.columns([3, 1])
+        f_dis = msel(f2[0], "대상질환", cl[dis_c], "c_dis") if dis_c else []
+
+        m = cl
+        if step_c: m = isin(m, step_c, f_step)
+        if stat_c: m = isin(m, stat_c, f_stat)
+        if dis_c:  m = isin(m, dis_c, f_dis)
+        if dev_c and dev_kw:
+            m = m[m[dev_c].astype(str).str.contains(dev_kw, case=False, na=False)]
+        if kw:
+            m = contains(m, [c for c in [prod_c, ing_c] if c], kw)
+
+        # 요약 지표
+        bio = int(m[step_c].astype(str).str.contains("생동", na=False).sum()) if step_c else 0
+        ongoing = int(m[stat_c].astype(str).str.contains("승인|진행|모집", na=False).sum()) if stat_c else 0
+        k = st.columns(4)
+        k[0].metric("임상 건수", f"{len(m):,}")
+        k[1].metric("생동(제네릭 개발) 건수", f"{bio:,}")
+        k[2].metric("진행/승인 건수", f"{ongoing:,}")
+        k[3].metric("개발사 수", f"{m[dev_c].nunique():,}" if dev_c else "—")
+
+        if m.empty:
+            st.info("조건에 맞는 임상 없음")
+        else:
+            g1, g2 = st.columns(2)
+            if step_c:
+                vc = m[step_c].astype(str).value_counts().head(15).reset_index()
+                vc.columns = ["단계", "건수"]
+                g1.plotly_chart(px.bar(vc, x="단계", y="건수", title="임상 단계별 건수"), use_container_width=True)
+            if date_c:
+                yr = pd.to_datetime(m[date_c], errors="coerce").dt.year.dropna()
+                if not yr.empty:
+                    yc = yr.astype(int).value_counts().sort_index().reset_index()
+                    yc.columns = ["연도", "건수"]
+                    g2.plotly_chart(px.bar(yc, x="연도", y="건수", title="연도별 임상 승인 추이"), use_container_width=True)
+
+            cmap = {"제품명": "제품명", "성분명": "성분명", "CLINIC_STEP_NM": "단계",
+                    "TRGT_DISS_NM": "대상질환", "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
+            cc = {k2: v for k2, v in cmap.items() if k2 in m.columns}
+            view = m.rename(columns=cc)[list(cc.values())]
+            if "승인일" in view.columns:
+                view = view.sort_values("승인일", ascending=False)
+            st.dataframe(view, use_container_width=True, height=380, hide_index=True)
 
 # ══════════════════════════ 약가 분석 ══════════════════════════
 with t_price:
