@@ -290,9 +290,14 @@ def ensure_data():
         try:
             folder = _price_from_folder(drive)   # 월별 고시(없으면 None)
             if folder is not None and not folder.empty:
-                cols = ["제품코드", "제품명", "주성분명", "금액", "적용일자", "급여구분"]
-                b = base.reindex(columns=cols)
-                merged = _compress_price(pd.concat([b, folder], ignore_index=True))
+                fc = _compress_price(folder)     # 폴더(월별 스냅샷)만 변동점으로 압축
+                # 기존(base)은 컬럼·행 그대로 보존하고, base에 없는 (제품코드,적용일자)만 추가
+                if {"제품코드", "적용일자"}.issubset(base.columns):
+                    have = set(zip(base["제품코드"].astype(str), base["적용일자"].astype(str)))
+                    keep = [not ((str(a), str(b)) in have)
+                            for a, b in zip(fc["제품코드"], fc["적용일자"])]
+                    fc = fc[keep]
+                merged = pd.concat([base, fc], ignore_index=True)  # base 컬럼 유지, fc의 없는 컬럼은 NaN
         except Exception:
             merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
         merged.to_parquet(SD / "price.parquet", index=False)
