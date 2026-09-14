@@ -123,6 +123,9 @@ def nego_years(prodname):
     if not nego_available():
         return []
     df = load_nego()
+    # 데이터가 비었거나 필요한 컬럼(_nm/연도)이 없으면 안전하게 빈 결과
+    if df is None or df.empty or "_nm" not in df.columns or "연도" not in df.columns:
+        return []
     p = re.sub(r"\s+", "", str(prodname))
     if len(p) < 3:
         return []
