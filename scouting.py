@@ -464,14 +464,18 @@ with t_price:
         st.info("약가 데이터 미연결")
     else:
         pr = ss.load_price()
+        def _ser(name):  # 컬럼이 없어도 안전하게 빈 시리즈 반환
+            return pr[name] if name in pr.columns else pd.Series([], dtype=object)
         latest = pr.sort_values("적용일자").groupby("제품코드").tail(1).copy()
         f = st.columns(4)
-        latest = isin(latest, "급여구분", msel(f[0], "급여구분", pr["급여구분"], "pr_pay", default=["급여"]))
-        latest = isin(latest, "투여", msel(f[1], "투여", pr["투여"], "pr_route"))
-        latest = isin(latest, "분류", msel(f[2], "분류(코드)", pr["분류"], "pr_cls"))
+        pay_def = ["급여"] if "급여구분" in pr.columns else []
+        latest = isin(latest, "급여구분", msel(f[0], "급여구분", _ser("급여구분"), "pr_pay", default=pay_def))
+        latest = isin(latest, "투여", msel(f[1], "투여", _ser("투여"), "pr_route"))
+        latest = isin(latest, "분류", msel(f[2], "분류(코드)", _ser("분류"), "pr_cls"))
         ent = f[3].text_input("업체 검색", key="pr_ent")
         kw = st.text_input("제품/성분 검색", key="pr_kw")
-        if ent: latest = latest[latest["업체명"].astype(str).str.contains(ent, case=False, na=False)]
+        if ent and "업체명" in latest.columns:
+            latest = latest[latest["업체명"].astype(str).str.contains(ent, case=False, na=False)]
         if kw: latest = contains(latest, ["제품명", "주성분명"], kw)
         if latest.empty:
             st.warning("조건에 맞는 약가 없음")

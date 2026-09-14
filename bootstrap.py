@@ -269,6 +269,16 @@ def _compress_price(df):
 @st.cache_resource(show_spinner="데이터 준비 중… (최초 1회, 드라이브에서 생성 — 1~2분)")
 def ensure_data():
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
+    # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
+    _pp = SD / "price.parquet"
+    if _pp.exists():
+        try:
+            pd.read_parquet(_pp, columns=["투여"])
+        except Exception:
+            try:
+                _pp.unlink()
+            except Exception:
+                pass
     need_scout = {n: not (SD / f"{n}.parquet").exists() for n in ["approval", "patent", "clinical", "price", "nego"]}
     need_iqvia = not (SAVED / "iqvia.pkl").exists()
     need_ubist = not (SAVED / "ubist.pkl").exists()
