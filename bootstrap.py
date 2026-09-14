@@ -38,10 +38,20 @@ def _creds():
         raw = None
     if raw is not None:
         info = dict(raw)
-        # private_key가 TOML/따옴표 문제로 개행이 문자 그대로 "\n"으로 들어온 경우 복구
         pk = info.get("private_key", "")
-        if "\\n" in pk and "\n" not in pk:
-            info["private_key"] = pk.replace("\\n", "\n")
+        if isinstance(pk, str):
+            # 개행이 문자 그대로 "\n"으로 들어온 경우 복구
+            if "\\n" in pk and "\n" not in pk:
+                pk = pk.replace("\\n", "\n")
+            # 스마트 따옴표/en·em 대시 등 비ASCII 문장부호를 ASCII로 정규화
+            # (붙여넣기 자동변환 방지 — 정상 PEM 키는 전부 ASCII이므로 안전)
+            for _a, _b in {
+                "‘": "'", "’": "'", "“": '"', "”": '"',
+                "–": "-", "—": "-", "―": "-", "−": "-",
+                " ": " ", "﻿": "",
+            }.items():
+                pk = pk.replace(_a, _b)
+            info["private_key"] = pk
         try:
             return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
         except Exception as e:
