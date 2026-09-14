@@ -348,7 +348,16 @@ with t_patent:
             st.warning("조건에 맞는 특허 없음")
         else:
             yrs = pt["_exp"].dt.year; lo, hi = int(yrs.min()), int(yrs.max())
-            rng = st.slider("만료 연도 범위", lo, hi, (max(lo, TODAY.year - 1), min(hi, TODAY.year + 5)), key="p_rng")
+            if lo >= hi:
+                # 만료 연도가 한 해뿐이면 슬라이더(min==max) 대신 그대로 사용
+                st.caption(f"만료 연도: {lo}년 (해당 연도 특허만 존재)")
+                rng = (lo, hi)
+            else:
+                d0 = min(max(lo, TODAY.year - 1), hi)   # 기본 시작값을 [lo,hi]로 클램프
+                d1 = max(min(hi, TODAY.year + 5), lo)   # 기본 끝값을 [lo,hi]로 클램프
+                if d0 > d1:
+                    d0, d1 = lo, hi
+                rng = st.slider("만료 연도 범위", lo, hi, (d0, d1), key="p_rng")
             pt = pt[(yrs >= rng[0]) & (yrs <= rng[1])]
             pt["만료D(년)"] = ((pt["_exp"] - TODAY).dt.days / 365.25).round(1)
             k = st.columns(3)
