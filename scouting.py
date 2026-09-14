@@ -148,7 +148,7 @@ with t_search:
             k[3].metric("성분 수", f"{hit[cfg['ing']].nunique()} 종")
         else:
             st.info(f"{src1} 매출 매칭 없음 (허가/특허/임상/약가는 아래 확인)")
-        tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사"])
+        tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트"])
         with tabs[0]:
             if HAS_REG:
                 ap = ss.load_approval(); m = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
@@ -277,31 +277,6 @@ with t_search:
                         if drows:
                             st.markdown("**📉 가격 인하 시점 전후 사실** (공식 데이터, 사유 해석 없음)")
                             st.dataframe(pd.DataFrame(drows), hide_index=True, use_container_width=True)
-        with tabs[4]:
-            rj = ss.load_rejdge()
-            if rj is None or rj.empty:
-                st.info("재심사 데이터 미연결 (구글시트 '재심사' 탭이 서비스계정에 공유됐는지 확인)")
-            else:
-                # 품목명·업체명 등 이름 컬럼 자동 탐지 후 검색어로 필터
-                name_cols = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in rj.columns] \
-                    or [c for c in rj.columns if "NAME" in c.upper()]
-                m = contains(rj, name_cols, q) if name_cols else rj.iloc[0:0]
-                st.caption(f"재심사 매칭 {len(m):,}건 (전체 {len(rj):,}건 · 매일 05시 갱신)")
-                if m.empty:
-                    st.info("재심사 매칭 없음")
-                else:
-                    # 알려진 컬럼은 한글 라벨로, 나머지는 원본명 그대로 표시
-                    label = {
-                        "ITEM_NAME": "품목명", "ENTP_NAME": "업체명",
-                        "REEXAM_CODE_NAME": "재심사구분", "REEXAM_CD_NM": "재심사구분",
-                        "REEXAM_START_DATE": "재심사시작", "REEXAM_END_DATE": "재심사종료",
-                        "RESULT_DATE": "결과일", "CLASS_NO_NAME": "분류", "CLASS_NO": "분류",
-                        "ITEM_SEQ": "품목기준코드", "ITEM_NO": "품목번호", "BIZRNO": "사업자번호",
-                    }
-                    prefer = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in m.columns]
-                    ordered = prefer + [c for c in m.columns if c not in prefer]
-                    view = m[ordered].rename(columns={c: label.get(c, c) for c in ordered})
-                    st.dataframe(view, use_container_width=True, height=320, hide_index=True)
 
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
 with t_sugg:
