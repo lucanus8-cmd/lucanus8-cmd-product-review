@@ -132,6 +132,39 @@ def nego_years(prodname):
     hit = df[df["_nm"].apply(lambda n: len(n) >= 3 and p.startswith(n))]
     return sorted({y for y in hit["연도"].dropna().astype(str).tolist() if y})
 
+# ── 재심사 (구글시트, Apps Script가 매일 05시 갱신) ──────────────────────────
+REJDGE_SHEET_ID = "1UDZJamAl9UJnnNNgb-HfuSdLu3Cb_-ybVQvmuVqYfQE"
+REJDGE_TAB = "재심사"
+
+@st.cache_data(ttl=6 * 3600, show_spinner="재심사 로딩 중…")
+def load_rejdge():
+    """구글시트 '재심사' 탭을 서비스계정으로 읽어 DataFrame 반환.
+    Apps Script가 매일 시트를 갱신하므로 TTL(6h) 캐시로 최신 반영. 실패 시 빈 DF."""
+    try:
+        import bootstrap
+        from googleapiclient.discovery import build
+        creds = bootstrap._creds()
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        vals = (sheets.spreadsheets().values()
+                .get(spreadsheetId=REJDGE_SHEET_ID, range=REJDGE_TAB,
+                     valueRenderOption="FORMATTED_VALUE").execute().get("values", []))
+        if not vals or len(vals) < 2:
+            return pd.DataFrame()
+        cols = [str(c).split("\n")[0].strip() for c in vals[0]]
+        # 빈 헤더 컬럼(갱신 메모 등) 제거
+        keep = [i for i, c in enumerate(cols) if c]
+        cols = [cols[i] for i in keep]
+        rows = [[(r[i] if i < len(r) else "") for i in keep] for r in vals[1:]]
+        return pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return pd.DataFrame()
+
+def rejdge_available():
+    try:
+        return not load_rejdge().empty
+    except Exception:
+        return False
+
 @st.cache_data
 def pva_official():
     """공식 사용량-약가 연동(PVA) 품목 목록. scout_data/pva_official.csv 있을 때만.
