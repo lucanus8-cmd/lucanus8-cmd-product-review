@@ -579,7 +579,8 @@ with st.sidebar:
     st.divider()
     st.caption("한 번 업로드하면 다음 실행 시 자동 로드됩니다.")
 
-if not IQVIA_SAVED.exists() and not UBIST_SAVED.exists():
+if (not IQVIA_SAVED.exists() and not UBIST_SAVED.exists()
+        and not IQVIA_CACHE.exists() and not UBIST_CACHE.exists()):
     st.info("왼쪽 사이드바에서 IQVIA 또는 UBIST 파일을 업로드하세요.\n\n한 번 업로드하면 이후 자동으로 불러옵니다.")
     st.stop()
 
@@ -587,14 +588,15 @@ if not IQVIA_SAVED.exists() and not UBIST_SAVED.exists():
 iqvia_df = lc_qtr = lc_yr = None
 ubist_df = ubist_num_cols = None
 
-if IQVIA_SAVED.exists():
-    # 캐시 없거나 원본보다 오래됐으면 재생성
-    if not IQVIA_CACHE.exists() or IQVIA_CACHE.stat().st_mtime < IQVIA_SAVED.stat().st_mtime:
+# 원본 xlsx가 있으면 그것으로, 없더라도 bootstrap이 만든 .pkl 캐시가 있으면 그대로 로드
+if IQVIA_SAVED.exists() or IQVIA_CACHE.exists():
+    # 원본 xlsx가 있고 캐시가 없/오래됐을 때만 재생성 (pkl만 있으면 그대로 사용)
+    if IQVIA_SAVED.exists() and (not IQVIA_CACHE.exists() or IQVIA_CACHE.stat().st_mtime < IQVIA_SAVED.stat().st_mtime):
         with st.spinner("IQVIA 캐시 생성 중… (최초 1회)"):
             build_cache("iqvia")
     iqvia_df, lc_qtr, lc_yr = load_iqvia(IQVIA_CACHE.stat().st_mtime)
-if UBIST_SAVED.exists():
-    if not UBIST_CACHE.exists() or UBIST_CACHE.stat().st_mtime < UBIST_SAVED.stat().st_mtime:
+if UBIST_SAVED.exists() or UBIST_CACHE.exists():
+    if UBIST_SAVED.exists() and (not UBIST_CACHE.exists() or UBIST_CACHE.stat().st_mtime < UBIST_SAVED.stat().st_mtime):
         with st.spinner("UBIST 캐시 생성 중… (최초 1회)"):
             build_cache("ubist")
     ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
@@ -608,8 +610,8 @@ def _atc_opts(cache_mtime, kind):
         return sorted(ubist_df["ATC"].dropna().astype(str).unique().tolist())
     return []
 
-iqvia_atc_opts = _atc_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_SAVED.exists() else 0, "iqvia") if iqvia_df is not None else []
-ubist_atc_opts = _atc_opts(UBIST_CACHE.stat().st_mtime if UBIST_SAVED.exists() else 0, "ubist") if ubist_df is not None else []
+iqvia_atc_opts = _atc_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
+ubist_atc_opts = _atc_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists() else 0, "ubist") if ubist_df is not None else []
 
 # 제품명 선택 목록
 @st.cache_data
@@ -620,8 +622,8 @@ def _prod_opts(cache_mtime, kind):
         return sorted(ubist_df["제품명"].dropna().astype(str).unique().tolist())
     return []
 
-iqvia_prod_opts = _prod_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_SAVED.exists() else 0, "iqvia") if iqvia_df is not None else []
-ubist_prod_opts = _prod_opts(UBIST_CACHE.stat().st_mtime if UBIST_SAVED.exists() else 0, "ubist") if ubist_df is not None else []
+iqvia_prod_opts = _prod_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
+ubist_prod_opts = _prod_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists() else 0, "ubist") if ubist_df is not None else []
 
 # ── 탭 구성 ──────────────────────────────────────────────────────────────────
 
