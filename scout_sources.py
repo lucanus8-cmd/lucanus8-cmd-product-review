@@ -132,6 +132,80 @@ def nego_years(prodname):
     hit = df[df["_nm"].apply(lambda n: len(n) >= 3 and p.startswith(n))]
     return sorted({y for y in hit["연도"].dropna().astype(str).tolist() if y})
 
+# ── 재심사(PMS) · DMF (구글시트, 서비스계정으로 읽음) ────────────────────────
+REJDGE_SHEET_ID = "1UDZJamAl9UJnnNNgb-HfuSdLu3Cb_-ybVQvmuVqYfQE"
+REJDGE_TAB = "재심사"
+DMF_SHEET_ID = REJDGE_SHEET_ID  # 같은 스프레드시트로 가정(다르면 이 값만 교체)
+
+def _sheet_values(sheet_id, tab):
+    import bootstrap
+    from googleapiclient.discovery import build
+    creds = bootstrap._creds()
+    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    return (sheets.spreadsheets().values()
+            .get(spreadsheetId=sheet_id, range=tab,
+                 valueRenderOption="FORMATTED_VALUE").execute().get("values", []))
+
+def _values_to_df(vals):
+    if not vals or len(vals) < 2:
+        return pd.DataFrame()
+    cols = [str(c).split("\n")[0].strip() for c in vals[0]]
+    keep = [i for i, c in enumerate(cols) if c]
+    cols = [cols[i] for i in keep]
+    rows = [[(r[i] if i < len(r) else "") for i in keep] for r in vals[1:]]
+    return pd.DataFrame(rows, columns=cols)
+
+@st.cache_data(ttl=6 * 3600, show_spinner="재심사 로딩 중…")
+def load_rejdge():
+    """재심사(PMS) 구글시트 탭을 읽어 DataFrame. 실패 시 빈 DF."""
+    try:
+        return _values_to_df(_sheet_values(REJDGE_SHEET_ID, REJDGE_TAB))
+    except Exception:
+        return pd.DataFrame()
+
+def rejdge_available():
+    try:
+        return not load_rejdge().empty
+    except Exception:
+        return False
+
+@st.cache_data(ttl=6 * 3600, show_spinner="DMF 로딩 중…")
+def load_dmf():
+    """DMF 탭을 자동 탐지(이름 DMF/원료 또는 헤더 DMF_/INGR_KOR_NA)해 읽음. 실패 시 빈 DF."""
+    try:
+        import bootstrap
+        from googleapiclient.discovery import build
+        creds = bootstrap._creds()
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        meta = (sheets.spreadsheets().get(spreadsheetId=DMF_SHEET_ID,
+                fields="sheets.properties(title)").execute())
+        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        cand = [t for t in titles if not t.startswith("_") and t != REJDGE_TAB]
+        pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t), None)
+        if pick is None:
+            for t in cand:
+                head = (sheets.spreadsheets().values()
+                        .get(spreadsheetId=DMF_SHEET_ID, range=f"{t}!1:1").execute()
+                        .get("values", [[]]))
+                hdr = " ".join(str(c).upper() for c in (head[0] if head else []))
+                if "DMF_" in hdr or "INGR_KOR_NA" in hdr:
+                    pick = t; break
+        if pick is None:
+            return pd.DataFrame()
+        return _values_to_df(_sheet_values(DMF_SHEET_ID, pick))
+    except Exception:
+        return pd.DataFrame()
+
+def dmf_available():
+    try:
+        return not load_dmf().empty
+    except Exception:
+        return False
+
+def _dmf_ing_col(df):
+    return next((c for c in ["INGR_KOR_NAME", "INGR_KOR_NA", "INGR_NAME", "INGR_KOR"]
+                 if c in df.columns), None)
+
 @st.cache_data
 def pva_official():
     """공식 사용량-약가 연동(PVA) 품목 목록. scout_data/pva_official.csv 있을 때만.
