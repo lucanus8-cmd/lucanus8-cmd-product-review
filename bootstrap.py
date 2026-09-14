@@ -20,6 +20,8 @@ SAVED = BASE / "saved_data"
 IQVIA_ID = "1AfN8A8XXJoulm6PPctjKWRsetGD5MSYt"
 UBIST_ID = "1RsXTofGdZPVLRqClUlpa9JD0JOm67nPj"
 PRICE_XLSX_ID = "1u9gfxs7NyuQebBn4WEOyBCUQ0zQvYqYf"
+# 매월 고시 약가 엑셀을 넣는 드라이브 폴더(HIRA). 파일명에 시행일(예: (2026.9.1.))이 들어감.
+HIRA_PRICE_FOLDER_ID = "10LCp9oVtdJPBf34stPbqqzlAm3W1_lPG"
 SHEETS = {
     "clinical": "1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE",
     "patent": "1tj75vy8KcJSmz6-rAqmPpLThNt7ZymuQfi12Vbzz1CE",
@@ -190,6 +192,80 @@ def _nego_df():
     keep = [c for c in ["연도", "제품명", "회사명", "협상결과", "_nm"] if c in df.columns]
     return df[keep]
 
+def _parse_price_date(name):
+    """파일명에서 시행일 추출. 예: '..._(2026.9.1.)_...' → Timestamp('2026-09-01').
+    (2026.9.) 처럼 일이 없으면 1일로. 없으면 None."""
+    s = str(name)
+    m = re.search(r"\(?\s*(\d{4})[.\-/]\s*(\d{1,2})(?:[.\-/]\s*(\d{1,2}))?", s)
+    if not m:
+        return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3) or 1)
+    if not (1 <= mo <= 12 and 1 <= d <= 31):
+        return None
+    try:
+        return pd.Timestamp(year=y, month=mo, day=d)
+    except Exception:
+        return None
+
+def _price_from_folder(drive):
+    """HIRA 폴더의 월별 고시 약가 엑셀들을 표준 스키마로 읽어 하나의 DF로.
+    약가 파일 식별: '제품코드'와 '상한금액' 컬럼이 있는 파일. 실패는 조용히 건너뜀."""
+    def _find(cols, cands):
+        for cand in cands:
+            for c in cols:
+                if cand in str(c):
+                    return c
+        return None
+    try:
+        res = drive.files().list(
+            q=f"'{HIRA_PRICE_FOLDER_ID}' in parents and trashed=false",
+            fields="files(id,name)", pageSize=500,
+            supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        files = res.get("files", [])
+    except Exception:
+        return None
+    frames = []
+    for f in files:
+        d = _parse_price_date(f.get("name", ""))
+        if d is None:
+            continue
+        try:
+            df = pd.read_excel(_download(drive, f["id"]), dtype=str).fillna("")
+        except Exception:
+            continue
+        df.columns = [str(c).replace("\n", "").strip() for c in df.columns]
+        code_c = _find(df.columns, ["제품코드"])
+        amt_c = _find(df.columns, ["상한금액표금액", "상한금액", "금액"])
+        if not code_c or not amt_c:
+            continue  # 약가 파일이 아님
+        name_c = _find(df.columns, ["제품명"])
+        ing_c = _find(df.columns, ["주성분명"])
+        out = pd.DataFrame({
+            "제품코드": df[code_c].astype(str).str.strip(),
+            "제품명": df[name_c].astype(str) if name_c else "",
+            "주성분명": df[ing_c].astype(str) if ing_c else "",
+            "금액": df[amt_c].astype(str).str.replace(r"[^0-9.]", "", regex=True),
+            "적용일자": d.strftime("%Y-%m-%d"),
+            "급여구분": "급여",
+        })
+        out = out[out["제품코드"] != ""]
+        frames.append(out)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+def _compress_price(df):
+    """제품코드별로 금액이 바뀐 시점만 남겨 이력을 압축(메모리 절약)."""
+    df = df.copy()
+    df["_amt"] = pd.to_numeric(df["금액"], errors="coerce")
+    df["_dt"] = pd.to_datetime(df["적용일자"], errors="coerce")
+    df = df.dropna(subset=["_amt"]).sort_values(["제품코드", "_dt"])
+    # 같은 (제품코드,적용일자) 중복 제거 후, 직전과 금액 같으면 제거
+    df = df.drop_duplicates(subset=["제품코드", "적용일자", "_amt"])
+    prev = df.groupby("제품코드")["_amt"].shift()
+    changed = df[prev.isna() | (prev != df["_amt"])]
+    return changed.drop(columns=["_amt", "_dt"])
+
 @st.cache_resource(show_spinner="데이터 준비 중… (최초 1회, 드라이브에서 생성 — 1~2분)")
 def ensure_data():
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
@@ -206,10 +282,20 @@ def ensure_data():
     for name in ["approval", "patent", "clinical"]:
         if need_scout[name]:
             _sheet_df(sheets, SHEETS[name]).to_parquet(SD / f"{name}.parquet", index=False)
-    # 약가
+    # 약가: 기존 이력 엑셀 + HIRA 폴더의 월별 고시 엑셀을 합쳐 이력 생성
     if need_scout["price"]:
-        buf = _download(drive, PRICE_XLSX_ID)
-        pd.read_excel(buf, sheet_name="가격이력(변동)", dtype=str).fillna("").to_parquet(SD / "price.parquet", index=False)
+        base = pd.read_excel(_download(drive, PRICE_XLSX_ID),
+                             sheet_name="가격이력(변동)", dtype=str).fillna("")
+        merged = base
+        try:
+            folder = _price_from_folder(drive)   # 월별 고시(없으면 None)
+            if folder is not None and not folder.empty:
+                cols = ["제품코드", "제품명", "주성분명", "금액", "적용일자", "급여구분"]
+                b = base.reindex(columns=cols)
+                merged = _compress_price(pd.concat([b, folder], ignore_index=True))
+        except Exception:
+            merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
+        merged.to_parquet(SD / "price.parquet", index=False)
     # 공단협상
     if need_scout["nego"]:
         try:
