@@ -165,59 +165,6 @@ def rejdge_available():
     except Exception:
         return False
 
-# ── DMF 원료의약품 등록 (구글시트, 동일 스프레드시트의 DMF 탭 자동 탐지) ────────
-DMF_SHEET_ID = REJDGE_SHEET_ID  # 재심사와 같은 스프레드시트로 가정(다르면 이 값만 교체)
-
-@st.cache_data(ttl=6 * 3600, show_spinner="DMF 로딩 중…")
-def load_dmf():
-    """구글시트의 DMF 탭을 서비스계정으로 읽어 DataFrame 반환.
-    탭 이름은 'DMF'/'원료' 포함 또는 헤더(INGR_KOR_NA/DMF_)로 자동 탐지. 실패 시 빈 DF."""
-    try:
-        import bootstrap
-        from googleapiclient.discovery import build
-        creds = bootstrap._creds()
-        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        meta = (sheets.spreadsheets().get(spreadsheetId=DMF_SHEET_ID,
-                fields="sheets.properties(title)").execute())
-        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
-        cand = [t for t in titles if not t.startswith("_") and t != REJDGE_TAB]
-        # 1) 이름으로 탐지
-        pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t), None)
-        # 2) 헤더로 탐지
-        if pick is None:
-            for t in cand:
-                head = (sheets.spreadsheets().values()
-                        .get(spreadsheetId=DMF_SHEET_ID, range=f"{t}!1:1").execute()
-                        .get("values", [[]]))
-                hdr = " ".join(str(c).upper() for c in (head[0] if head else []))
-                if "DMF_" in hdr or "INGR_KOR_NA" in hdr:
-                    pick = t; break
-        if pick is None:
-            return pd.DataFrame()
-        vals = (sheets.spreadsheets().values()
-                .get(spreadsheetId=DMF_SHEET_ID, range=pick,
-                     valueRenderOption="FORMATTED_VALUE").execute().get("values", []))
-        if not vals or len(vals) < 2:
-            return pd.DataFrame()
-        cols = [str(c).split("\n")[0].strip() for c in vals[0]]
-        keep = [i for i, c in enumerate(cols) if c]
-        cols = [cols[i] for i in keep]
-        rows = [[(r[i] if i < len(r) else "") for i in keep] for r in vals[1:]]
-        return pd.DataFrame(rows, columns=cols)
-    except Exception:
-        return pd.DataFrame()
-
-def dmf_available():
-    try:
-        return not load_dmf().empty
-    except Exception:
-        return False
-
-def _dmf_ing_col(df):
-    """DMF 데이터의 성분(한글) 컬럼명 반환."""
-    return next((c for c in ["INGR_KOR_NAME", "INGR_KOR_NA", "INGR_NAME", "INGR_KOR"]
-                 if c in df.columns), None)
-
 @st.cache_data
 def pva_official():
     """공식 사용량-약가 연동(PVA) 품목 목록. scout_data/pva_official.csv 있을 때만.
