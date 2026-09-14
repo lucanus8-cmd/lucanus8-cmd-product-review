@@ -227,11 +227,11 @@ def render_filters(state_key, fields, placeholder="검색어 입력", options_ma
                 st.rerun()
     ca, cb = st.columns(2)
     with ca:
-        if st.button("➕ 조건 추가", key=f"{state_key}_add", use_container_width=True):
+        if st.button("➕ 조건 추가", key=f"{state_key}_add", width="stretch"):
             st.session_state[state_key].append({"field": fields[0], "value": ""})
             st.rerun()
     with cb:
-        if st.button("🔄 초기화", key=f"{state_key}_clr", use_container_width=True):
+        if st.button("🔄 초기화", key=f"{state_key}_clr", width="stretch"):
             st.session_state[state_key] = [{"field": fields[0], "value": ""}]
             st.rerun()
     return [f for f in st.session_state[state_key] if _is_active(f["value"])]
@@ -689,7 +689,7 @@ with tabs[0]:
             st.success(f"IQVIA: 조건에 맞는 **{len(prod_i)}개 팩** 검색됨")
             with st.expander("📄 검색된 제품 목록 보기", expanded=True):
                 _sc = [c for c in ["제품명", "회사명", "성분명", "용량", "팩명", "ATC 4(한글)", "급여구분"] if c in prod_i.columns]
-                st.dataframe(prod_i[_sc].drop_duplicates(), use_container_width=True, hide_index=True)
+                st.dataframe(prod_i[_sc].drop_duplicates(), width="stretch", hide_index=True)
             report_iqvia["n"] = len(prod_i)
             if lc_yr:
                 _yv = prod_i[lc_yr].sum().values / 1e6
@@ -725,7 +725,7 @@ with tabs[0]:
                     height=400,
                     xaxis_tickangle=-45
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # 매출액 표 (백만원)
                 st.markdown("**📋 매출액 표 (단위: 백만원)**")
@@ -735,7 +735,7 @@ with tabs[0]:
                 })
                 st.dataframe(
                     sales_table.style.format({"매출액(백만원)": "{:,}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
                 export_blocks.append({"name": "IQVIA_매출액", "df": sales_table,
                                       "chart": "bar", "cat": "기간", "val": "매출액(백만원)",
@@ -767,11 +767,11 @@ with tabs[0]:
                     figd.update_layout(title=f"[IQVIA] {title_suffix} 처방량(DU) ({summary})",
                                        xaxis_title="기간", yaxis_title="처방량(DU)",
                                        height=380, xaxis_tickangle=-45)
-                    st.plotly_chart(figd, use_container_width=True)
+                    st.plotly_chart(figd, width="stretch")
                     du_table = pd.DataFrame({"기간": du_labels,
                                              "처방량(DU)": du_series.values.round(0).astype("int64")})
                     st.dataframe(du_table.style.format({"처방량(DU)": "{:,}"}),
-                                 use_container_width=True, hide_index=True)
+                                 width="stretch", hide_index=True)
                     export_blocks.append({"name": "IQVIA_처방량DU", "df": du_table,
                                           "chart": "bar", "cat": "기간", "val": "처방량(DU)",
                                           "title": f"[IQVIA] {title_suffix} 처방량(DU)"})
@@ -800,7 +800,7 @@ with tabs[0]:
                 fmt = {f"{c[:-1]}(백만원)": "{:,}" for c in lc_yr}
                 fmt["CAGR(%)"] = "{:+.1f}"
                 st.dataframe(disp.style.format(fmt, na_rep="-"),
-                             use_container_width=True, hide_index=True)
+                             width="stretch", hide_index=True)
                 st.caption("표를 드래그 선택 후 Ctrl+C → 엑셀에 Ctrl+V로 붙여넣기 가능")
                 export_blocks.append({"name": "IQVIA_제품별매출", "df": disp,
                                       "chart": None, "title": "[IQVIA] 제품별 연도별 매출액 (백만원)"})
@@ -829,7 +829,7 @@ with tabs[0]:
                         fig_r = px.pie(df_reimb, values="매출액", names="급여구분",
                                        title="급여 / 비급여 비율", hole=0.35)
                         fig_r.update_traces(textinfo="percent+label")
-                        st.plotly_chart(fig_r, use_container_width=True)
+                        st.plotly_chart(fig_r, width="stretch")
 
                         df_reimb["매출액(백만원)"] = (df_reimb["매출액"] / 1e6).round(0).astype("int64")
                         total_r = df_reimb["매출액"].sum()
@@ -837,7 +837,7 @@ with tabs[0]:
                         reimb_tbl = df_reimb[["급여구분", "매출액(백만원)", "비율(%)"]]
                         st.dataframe(
                             reimb_tbl.style.format({"매출액(백만원)": "{:,}", "비율(%)": "{:.1f}"}),
-                            use_container_width=True, hide_index=True
+                            width="stretch", hide_index=True
                         )
                         export_blocks.append({"name": "IQVIA_급여구분", "df": reimb_tbl,
                                               "chart": "pie", "cat": "급여구분", "val": "매출액(백만원)",
@@ -864,7 +864,7 @@ with tabs[0]:
                         fig_a = px.pie(df_atc, values="매출액", names="ATC",
                                        title="ATC(계열)별 비율", hole=0.35)
                         fig_a.update_traces(textinfo="percent+label")
-                        st.plotly_chart(fig_a, use_container_width=True)
+                        st.plotly_chart(fig_a, width="stretch")
 
                         df_atc["매출액(백만원)"] = (df_atc["매출액"] / 1e6).round(0).astype("int64")
                         total_a = df_atc["매출액"].sum()
@@ -872,7 +872,7 @@ with tabs[0]:
                         atc_tbl = df_atc[["ATC", "매출액(백만원)", "비율(%)"]]
                         st.dataframe(
                             atc_tbl.style.format({"매출액(백만원)": "{:,}", "비율(%)": "{:.1f}"}),
-                            use_container_width=True, hide_index=True
+                            width="stretch", hide_index=True
                         )
                         export_blocks.append({"name": "IQVIA_ATC비율", "df": atc_tbl,
                                               "chart": "pie", "cat": "ATC", "val": "매출액(백만원)",
@@ -895,7 +895,7 @@ with tabs[0]:
             st.success(f"UBIST: 조건에 맞는 **{len(prod_u)}개** 검색됨")
             with st.expander("📄 검색된 제품 목록 보기", expanded=True):
                 _uc = [c for c in ["제품명", "제조사명", "성분", "용량", "ATC", "급여구분"] if c in prod_u.columns]
-                st.dataframe(prod_u[_uc].drop_duplicates(), use_container_width=True, hide_index=True)
+                st.dataframe(prod_u[_uc].drop_duplicates(), width="stretch", hide_index=True)
             st.markdown("**[UBIST] 처방 데이터**")
 
             ugran = agg_unit  # 분기별 / 연간
@@ -920,7 +920,7 @@ with tabs[0]:
                     fig2.update_layout(title=f"[UBIST] {ugran} 처방조제액",
                                        yaxis_title="처방조제액 (백만원)", height=350,
                                        xaxis_tickangle=-45)
-                    st.plotly_chart(fig2, use_container_width=True)
+                    st.plotly_chart(fig2, width="stretch")
             with c2:
                 if not cnt_sum.empty:
                     labels = [u_period_label(c) for c in cnt_cols]
@@ -929,7 +929,7 @@ with tabs[0]:
                         text=[f"{v:,.0f}" for v in cnt_sum.values], textposition="outside"))
                     fig3.update_layout(title=f"[UBIST] {ugran} 처방건수",
                                        yaxis_title="처방건수", height=350, xaxis_tickangle=-45)
-                    st.plotly_chart(fig3, use_container_width=True)
+                    st.plotly_chart(fig3, width="stretch")
 
             # 처방량 차트
             if not vol_sum.empty and vol_sum.sum() > 0:
@@ -939,7 +939,7 @@ with tabs[0]:
                     text=[f"{v:,.0f}" for v in vol_sum.values], textposition="outside"))
                 figv.update_layout(title=f"[UBIST] {ugran} 처방량",
                                    yaxis_title="처방량", height=350, xaxis_tickangle=-45)
-                st.plotly_chart(figv, use_container_width=True)
+                st.plotly_chart(figv, width="stretch")
 
             # CAGR용 연간 컬럼 (항상 연간)
             rx_cols_25 = u_cols(prod_u, "처방조제액(원)", "연간")
@@ -954,7 +954,7 @@ with tabs[0]:
                 })
                 st.dataframe(
                     rx_table.style.format({"처방조제액(백만원)": "{:,}"}),
-                    use_container_width=True, hide_index=True
+                    width="stretch", hide_index=True
                 )
                 export_blocks.append({"name": "UBIST_처방조제액", "df": rx_table,
                                       "chart": "bar", "cat": plabel, "val": "처방조제액(백만원)",
@@ -996,7 +996,7 @@ with tabs[0]:
                 fmtu = {f"{re.search(r'[0-9]{4}', c).group(0)}(백만원)": "{:,}" for c in rx_cols_25}
                 fmtu["CAGR(%)"] = "{:+.1f}"
                 st.dataframe(dispu.style.format(fmtu, na_rep="-"),
-                             use_container_width=True, hide_index=True)
+                             width="stretch", hide_index=True)
                 st.caption("CAGR은 2026년(진행 중) 제외, 2025년까지 기준. 표 드래그 선택 후 Ctrl+C로 복사 가능")
                 export_blocks.append({"name": "UBIST_제품별처방", "df": dispu,
                                       "chart": None, "title": "[UBIST] 제품별 연도별 처방조제액 (백만원)"})
@@ -1020,13 +1020,13 @@ with tabs[0]:
                         fig_ur = px.pie(dfu, values="처방조제액", names="급여구분",
                                         title="[UBIST] 급여 / 비급여 비율", hole=0.35)
                         fig_ur.update_traces(textinfo="percent+label")
-                        st.plotly_chart(fig_ur, use_container_width=True)
+                        st.plotly_chart(fig_ur, width="stretch")
                         dfu["처방조제액(백만원)"] = (dfu["처방조제액"] / 1e6).round(0).astype("int64")
                         dfu["비율(%)"] = (dfu["처방조제액"] / dfu["처방조제액"].sum() * 100).round(1)
                         ureimb_tbl = dfu[["급여구분", "처방조제액(백만원)", "비율(%)"]]
                         st.dataframe(
                             ureimb_tbl.style.format({"처방조제액(백만원)": "{:,}", "비율(%)": "{:.1f}"}),
-                            use_container_width=True, hide_index=True
+                            width="stretch", hide_index=True
                         )
                         export_blocks.append({"name": "UBIST_급여구분", "df": ureimb_tbl,
                                               "chart": "pie", "cat": "급여구분", "val": "처방조제액(백만원)",
@@ -1043,13 +1043,13 @@ with tabs[0]:
                         fig_ua = px.pie(dfa, values="처방조제액", names="ATC",
                                         title="[UBIST] ATC(계열)별 비율", hole=0.35)
                         fig_ua.update_traces(textinfo="percent+label")
-                        st.plotly_chart(fig_ua, use_container_width=True)
+                        st.plotly_chart(fig_ua, width="stretch")
                         dfa["처방조제액(백만원)"] = (dfa["처방조제액"] / 1e6).round(0).astype("int64")
                         dfa["비율(%)"] = (dfa["처방조제액"] / dfa["처방조제액"].sum() * 100).round(1)
                         uatc_tbl = dfa[["ATC", "처방조제액(백만원)", "비율(%)"]]
                         st.dataframe(
                             uatc_tbl.style.format({"처방조제액(백만원)": "{:,}", "비율(%)": "{:.1f}"}),
-                            use_container_width=True, hide_index=True
+                            width="stretch", hide_index=True
                         )
                         export_blocks.append({"name": "UBIST_ATC비율", "df": uatc_tbl,
                                               "chart": "pie", "cat": "ATC", "val": "처방조제액(백만원)",
@@ -1066,7 +1066,7 @@ with tabs[0]:
             data=xlsx_bytes,
             file_name=f"의약품분석_{safe_name}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(f"포함 시트: {len(export_blocks)}개 (각 시트에 표 + 그래프 자동 포함)")
 
@@ -1085,7 +1085,7 @@ with tabs[0]:
                 data=word_bytes,
                 file_name=f"매출보고서_{safe_rname}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
+                width="stretch",
             )
         with rc2:
             st.download_button(
@@ -1093,7 +1093,7 @@ with tabs[0]:
                 data=report_text.encode("utf-8-sig"),
                 file_name=f"매출보고서_{safe_rname}.txt",
                 mime="text/plain",
-                use_container_width=True,
+                width="stretch",
             )
         st.caption("검색된 데이터만으로 자동 작성됩니다 (외부 전송 없음). 워드 파일에는 그래프와 표가 함께 들어갑니다.")
 
@@ -1180,7 +1180,7 @@ with tabs[1]:
                 fig_mfr = px.pie(top_mfr, values="값", names=mfr_field,
                                  title=f"제조사별 점유율 (상위 {top_n})", hole=0.35)
                 fig_mfr.update_traces(textinfo="percent+label")
-                st.plotly_chart(fig_mfr, use_container_width=True)
+                st.plotly_chart(fig_mfr, width="stretch")
             with c2:
                 top_prod = (prod_sales2.head(top_n) / 1e6).reset_index()
                 top_prod = top_prod.rename(columns={top_prod.columns[-1]: "값"})
@@ -1197,21 +1197,21 @@ with tabs[1]:
                 fig_prod.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
                 fig_prod.update_layout(yaxis=dict(autorange="reversed"), height=420,
                                        xaxis_title=f"{metric_name} ({unit_label})")
-                st.plotly_chart(fig_prod, use_container_width=True)
+                st.plotly_chart(fig_prod, width="stretch")
 
             # 제품별 표 (제품명 + 성분)
             prod_tbl = (prod_sales2.head(top_n) / 1e6).round(0).reset_index()
             prod_tbl = prod_tbl.rename(columns={prod_tbl.columns[-1]: f"{metric_name}({unit_label})"})
             prod_tbl["점유율(%)"] = (prod_sales2.head(top_n) / total * 100).round(1).values
             st.dataframe(prod_tbl.style.format({f"{metric_name}({unit_label})": "{:,.0f}", "점유율(%)": "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
 
             # 제조사 점유율 표
             share_tbl = (mfr_sales.head(top_n) / 1e6).round(0).reset_index()
             share_tbl.columns = [mfr_field, f"{metric_name}({unit_label})"]
             share_tbl["점유율(%)"] = (mfr_sales.head(top_n) / total * 100).round(1).values
             st.dataframe(share_tbl.style.format({f"{metric_name}({unit_label})": "{:,.0f}", "점유율(%)": "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
 
             # ── 성분별 집계 ──────────────────────────────────────────────
             seong_col = "성분명" if "성분명" in atc_df.columns else ("성분" if "성분" in atc_df.columns else None)
@@ -1231,13 +1231,13 @@ with tabs[1]:
                     fig_ing.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
                     fig_ing.update_layout(yaxis=dict(autorange="reversed"), height=420,
                                           xaxis_title=f"{metric_name} ({unit_label})")
-                    st.plotly_chart(fig_ing, use_container_width=True)
+                    st.plotly_chart(fig_ing, width="stretch")
                 with ic2:
                     ing_tbl = (ing_sales.head(top_n) / 1e6).round(0).reset_index()
                     ing_tbl.columns = ["성분", f"{metric_name}({unit_label})"]
                     ing_tbl["점유율(%)"] = (ing_sales.head(top_n) / ing_total * 100).round(1).values
                     st.dataframe(ing_tbl.style.format({f"{metric_name}({unit_label})": "{:,.0f}", "점유율(%)": "{:.1f}"}),
-                                 use_container_width=True, hide_index=True)
+                                 width="stretch", hide_index=True)
 
                 # ── 성분별 제형 분석 (IQVIA 전용) ────────────────────────
                 nfc_candidates = [c for c in ["NFC 1 DESC", "NFC 2 DESC", "NFC 3 DESC"] if c in atc_df.columns]
@@ -1260,13 +1260,13 @@ with tabs[1]:
                             fig_form = px.pie(df_form, values="값", names="제형",
                                               title=f"[{ing_choice}] 제형별 비율", hole=0.35)
                             fig_form.update_traces(textinfo="percent+label")
-                            st.plotly_chart(fig_form, use_container_width=True)
+                            st.plotly_chart(fig_form, width="stretch")
                         with fc2:
                             ftbl = (form_sales / 1e6).round(0).reset_index()
                             ftbl.columns = ["제형", f"{metric_name}({unit_label})"]
                             ftbl["점유율(%)"] = (form_sales / ftotal * 100).round(1).values
                             st.dataframe(ftbl.style.format({f"{metric_name}({unit_label})": "{:,.0f}", "점유율(%)": "{:.1f}"}),
-                                         use_container_width=True, hide_index=True)
+                                         width="stretch", hide_index=True)
                         st.caption(f"📌 '{ing_choice}' 성분에서 가장 많이 팔리는 제형: **{form_sales.index[0]}** ({form_sales.iloc[0]/ftotal*100:.1f}%)")
                 elif mkt_source == "UBIST":
                     st.caption("ℹ️ 제형(NFC) 정보는 IQVIA 자료에만 있습니다. 제형 분석은 IQVIA를 선택하세요.")
@@ -1281,7 +1281,7 @@ with tabs[1]:
                                     markers=True, text=trend[f"{metric_name}({unit_label})"].round(0),
                                     title=f"{selected_atc} 연도별 시장 규모")
                 fig_trend.update_traces(texttemplate="%{text:,.0f}", textposition="top center")
-                st.plotly_chart(fig_trend, use_container_width=True)
+                st.plotly_chart(fig_trend, width="stretch")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 3: IQVIA vs UBIST 비교
@@ -1368,13 +1368,13 @@ with tabs[2]:
                                          textposition="outside"))
                 fig.update_layout(title=f"IQVIA vs UBIST 매출/처방조제액 ({cmp_summary})",
                                   barmode="group", yaxis_title="금액 (백만원)", height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
                 df_cmp_disp = df_cmp.copy()
                 for c in ["IQVIA 매출액(백만원)", "UBIST 처방조제액(백만원)"]:
                     df_cmp_disp[c] = df_cmp_disp[c].round(0)
                 st.dataframe(df_cmp_disp.style.format(
                     {"IQVIA 매출액(백만원)": "{:,.0f}", "UBIST 처방조제액(백만원)": "{:,.0f}"}, na_rep="-"),
-                    use_container_width=True, hide_index=True)
+                    width="stretch", hide_index=True)
 
                 # ── 처방량 비교 ──
                 if df_vol["IQVIA 처방량(DU)"].notna().any() or df_vol["UBIST 처방량"].notna().any():
@@ -1394,13 +1394,13 @@ with tabs[2]:
                                               textposition="outside"))
                     figv.update_layout(title=f"IQVIA vs UBIST 처방량 ({cmp_summary})",
                                        barmode="group", yaxis_title="처방량", height=400)
-                    st.plotly_chart(figv, use_container_width=True)
+                    st.plotly_chart(figv, width="stretch")
                     df_vol_disp = df_vol.copy()
                     for c in ["IQVIA 처방량(DU)", "UBIST 처방량"]:
                         df_vol_disp[c] = df_vol_disp[c].round(0)
                     st.dataframe(df_vol_disp.style.format(
                         {"IQVIA 처방량(DU)": "{:,.0f}", "UBIST 처방량": "{:,.0f}"}, na_rep="-"),
-                        use_container_width=True, hide_index=True)
+                        width="stretch", hide_index=True)
                     st.caption("※ IQVIA 처방량(DU)과 UBIST 처방량은 단위·산출 기준이 달라 절대값보다 추세 비교로 보세요.")
 
                 # 엑셀 추출
@@ -1416,7 +1416,7 @@ with tabs[2]:
                 st.download_button("📊 비교 결과 엑셀 다운로드", data=xlsx_cmp,
                                    file_name=f"IQVIA_UBIST_비교_{safe_cmp}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   use_container_width=True)
+                                   width="stretch")
 
                 st.caption("IQVIA = 소매 판매 데이터(의약품 출하 기준), UBIST = 처방·조제 기준. 두 지표 간 갭은 재고 효과·채널 차이를 반영합니다.")
 
@@ -1477,8 +1477,8 @@ with tabs[3]:
                                  title=f"고성장 {gi_unit} Top 20 ({base_yr[:-1]}→{comp_yr[:-1]})")
                 fig_top.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
                 fig_top.update_layout(yaxis=dict(autorange="reversed"), height=550)
-                st.plotly_chart(fig_top, use_container_width=True)
-                st.dataframe(top20, use_container_width=True, hide_index=True)
+                st.plotly_chart(fig_top, width="stretch")
+                st.dataframe(top20, width="stretch", hide_index=True)
 
             with bot_tab:
                 bot20 = grp.tail(20).sort_values("YoY 성장률(%)")
@@ -1489,8 +1489,8 @@ with tabs[3]:
                                  title=f"하락 {gi_unit} Bottom 20 ({base_yr[:-1]}→{comp_yr[:-1]})")
                 fig_bot.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
                 fig_bot.update_layout(yaxis=dict(autorange="reversed"), height=550)
-                st.plotly_chart(fig_bot, use_container_width=True)
-                st.dataframe(bot20, use_container_width=True, hide_index=True)
+                st.plotly_chart(fig_bot, width="stretch")
+                st.dataframe(bot20, width="stretch", hide_index=True)
 
     else:  # UBIST
         if ubist_df is None:
@@ -1546,8 +1546,8 @@ with tabs[3]:
                                    title=f"고성장 {gu_unit} Top 20 ({base_idx}→{comp_idx})")
                     fig_u.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
                     fig_u.update_layout(yaxis=dict(autorange="reversed"), height=550)
-                    st.plotly_chart(fig_u, use_container_width=True)
-                    st.dataframe(top20_u, use_container_width=True, hide_index=True)
+                    st.plotly_chart(fig_u, width="stretch")
+                    st.dataframe(top20_u, width="stretch", hide_index=True)
                 with bot_tab_u:
                     bot20_u = grp_u.tail(20).sort_values("YoY 성장률(%)")
                     fig_ub = px.bar(bot20_u, x="YoY 성장률(%)", y=uykey, orientation="h",
@@ -1557,5 +1557,5 @@ with tabs[3]:
                                     title=f"하락 {gu_unit} Bottom 20 ({base_idx}→{comp_idx})")
                     fig_ub.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
                     fig_ub.update_layout(yaxis=dict(autorange="reversed"), height=550)
-                    st.plotly_chart(fig_ub, use_container_width=True)
-                    st.dataframe(bot20_u, use_container_width=True, hide_index=True)
+                    st.plotly_chart(fig_ub, width="stretch")
+                    st.dataframe(bot20_u, width="stretch", hide_index=True)

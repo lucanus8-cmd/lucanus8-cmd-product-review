@@ -154,7 +154,7 @@ with t_search:
                 ap = ss.load_approval(); m = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
                 st.caption(f"허가 {len(m):,}건 · 업체 {m['업체명'].nunique()}곳 · 신약 {int((m['신약구분']=='신약').sum())}건")
                 cc = [c for c in ["품목명", "업체명", "허가일자", "전문/일반", "주성분", "신약구분", "상태", "보험코드(EDI)"] if c in m.columns]
-                st.dataframe(m[cc].sort_values("허가일자", ascending=False), use_container_width=True, height=300, hide_index=True)
+                st.dataframe(m[cc].sort_values("허가일자", ascending=False), width="stretch", height=300, hide_index=True)
             else: st.info("허가 데이터 미연결")
         with tabs[1]:
             if HAS_REG:
@@ -164,7 +164,7 @@ with t_search:
                 cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
                         "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
                 st.dataframe(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
-                             use_container_width=True, height=300, hide_index=True)
+                             width="stretch", height=300, hide_index=True)
             else: st.info("특허 데이터 미연결")
         with tabs[2]:
             if HAS_REG:
@@ -174,7 +174,7 @@ with t_search:
                         "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
                 cc = {k2: v for k2, v in cmap.items() if k2 in m.columns}
                 st.dataframe(m.rename(columns=cc)[list(cc.values())].sort_values("승인일", ascending=False),
-                             use_container_width=True, height=300, hide_index=True)
+                             width="stretch", height=300, hide_index=True)
             else: st.info("임상 데이터 미연결")
         with tabs[3]:
             if not HAS_PRICE:
@@ -251,7 +251,7 @@ with t_search:
                                       text=appr["품목명"], hovertemplate="%{x|%Y-%m-%d} 등재<br>%{text}<extra></extra>"))
                     fig.update_layout(height=440, title=f"{sel} — 급여 상한금액 전체 이력 + 등재·특허 만료",
                                       yaxis_title="상한금액(원)", legend=dict(orientation="h", y=-0.25), hovermode="x unified")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                     st.caption("파란선=선택 품목 · 회색=동일성분 타 품목 · 초록△=동일성분 등재(허가) · 빨강=물질특허만료 · 주황=용도특허만료 · ✕=급여삭제")
                     if not one_gy.empty:
                         nyears = ss.nego_years(sel) if hasattr(ss, "nego_available") and ss.nego_available() else []
@@ -276,7 +276,7 @@ with t_search:
                                               "공단 협상완료(해당연도·공식)": "○" if str(d.year) in nyears else ""})
                         if drows:
                             st.markdown("**📉 가격 인하 시점 전후 사실** (공식 데이터, 사유 해석 없음)")
-                            st.dataframe(pd.DataFrame(drows), hide_index=True, use_container_width=True)
+                            st.dataframe(pd.DataFrame(drows), hide_index=True, width="stretch")
         with tabs[4]:
             rj = ss.load_rejdge()
             if rj is None or rj.empty:
@@ -301,7 +301,7 @@ with t_search:
                     prefer = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in m.columns]
                     ordered = prefer + [c for c in m.columns if c not in prefer]
                     view = m[ordered].rename(columns={c: label.get(c, c) for c in ordered})
-                    st.dataframe(view, use_container_width=True, height=320, hide_index=True)
+                    st.dataframe(view, width="stretch", height=320, hide_index=True)
         with tabs[5]:
             dmf = ss.load_dmf()
             if dmf is None or dmf.empty:
@@ -339,7 +339,7 @@ with t_search:
                     prefer = [c for c in [ing_col, "ENTP_NAME"] if c and c in m.columns]
                     ordered = prefer + [c for c in m.columns if c not in prefer]
                     view = m[ordered].rename(columns={c: label.get(c, c) for c in ordered})
-                    st.dataframe(view, use_container_width=True, height=320, hide_index=True)
+                    st.dataframe(view, width="stretch", height=320, hide_index=True)
                     st.caption("※ 동일성분 매칭은 허가 주성분(한글)과 DMF 성분명 기준입니다.")
 
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
@@ -384,7 +384,7 @@ with t_sugg:
         res["용도특허 만료"] = pd.to_datetime(res.get("특허만료_용도")).dt.date.astype("string")
     cols = [name, "시장규모(억)", "CAGR(%)"] + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
-    st.dataframe(res[cols].head(200), use_container_width=True, height=430, hide_index=True)
+    st.dataframe(res[cols].head(200), width="stretch", height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"제품제안_{src2}_{unit}.csv")
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료 조건을 직접 필터링합니다.")
 
@@ -429,11 +429,11 @@ with t_patent:
             k[1].metric("특허권자 수", f"{pt['PATENTEE'].nunique():,}")
             k[2].metric("향후 3년 내 만료", f"{int(((pt['만료D(년)']>=0)&(pt['만료D(년)']<3)).sum()):,}")
             cnt = pt.groupby(pt["_exp"].dt.year).size().reset_index(); cnt.columns = ["만료연도", "건수"]
-            st.plotly_chart(px.bar(cnt, x="만료연도", y="건수", title="만료 연도별 특허 건수"), use_container_width=True)
+            st.plotly_chart(px.bar(cnt, x="만료연도", y="건수", title="만료 연도별 특허 건수"), width="stretch")
             cmap = {"품목명": "품목명", "INGR_NAME": "성분", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자",
                     "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
             cc = {k2: v for k2, v in cmap.items() if k2 in pt.columns}
-            st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), use_container_width=True, height=360, hide_index=True)
+            st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), width="stretch", height=360, hide_index=True)
 
 # ══════════════════════════ 약가 분석 ══════════════════════════
 with t_price:
@@ -476,11 +476,11 @@ with t_price:
                         for nm, g in oh.groupby("제품명"):
                             figo.add_trace(go.Scatter(x=g["적용일자"], y=g["금액"], mode="lines+markers", name=nm[:24], line_shape="hv"))
                         figo.update_layout(height=360, title="오리지널(신약) 상한금액 추이", yaxis_title="상한금액(원)", legend=dict(orientation="h", y=-0.3))
-                        st.plotly_chart(figo, use_container_width=True)
+                        st.plotly_chart(figo, width="stretch")
                     else:
                         st.caption(f"오리지널 {len(ocodes)}개 — 그래프는 40개 이하로 좁혀야 표시됩니다.")
                     st.dataframe(orig_latest[["제품명", "업체명", "주성분명", "적용일자", "금액"]].sort_values("금액", ascending=False),
-                                 use_container_width=True, height=220, hide_index=True)
+                                 width="stretch", height=220, hide_index=True)
             elif HAS_REG and len(latest) > 2000:
                 st.caption("⭐ 오리지널 분류·그래프는 필터를 좁히면(투여·분류·업체·제품/성분 검색) 표시됩니다.")
             st.markdown("**📅 연도별 상한금액** (연도말 기준, 0=급여삭제, 빈칸=미등재)")
@@ -489,7 +489,7 @@ with t_price:
                 st.info(f"필터 결과 {len(codes):,}개 — 400개 이하로 좁히면 연도별 표가 표시됩니다. (업체/제품·성분 검색 활용)")
             else:
                 ym = yearly_matrix(pr, codes, dict(zip(latest["제품코드"], latest["제품명"])))
-                st.dataframe(ym, use_container_width=True, height=380)
+                st.dataframe(ym, width="stretch", height=380)
                 st.download_button("⬇️ 연도별 약가 CSV", ym.to_csv(index=False).encode("utf-8-sig"), file_name="연도별약가.csv")
             with st.expander("📉 가격 인하폭 Top 20 / 급여중지(삭제) 목록"):
                 hist = pr[(pr["제품코드"].isin(codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
@@ -499,9 +499,9 @@ with t_price:
                 drop["인하율%"] = ((drop["최신가"] - drop["최초가"]) / drop["최초가"] * 100).round(1)
                 drop = drop.join(latest.set_index("제품코드")[["제품명", "업체명"]]).reset_index()
                 st.dataframe(drop.nsmallest(20, "인하율%")[["제품명", "업체명", "최초가", "최신가", "인하율%"]],
-                             use_container_width=True, height=240, hide_index=True)
+                             width="stretch", height=240, hide_index=True)
                 deleted = latest[latest["급여구분"] == "삭제"][["제품명", "업체명", "주성분명", "적용일자"]]
-                st.dataframe(deleted.sort_values("적용일자", ascending=False).head(30), use_container_width=True, height=200, hide_index=True)
+                st.dataframe(deleted.sort_values("적용일자", ascending=False).head(30), width="stretch", height=200, hide_index=True)
 
 # ══════════════════════════ AI 분석 (Gemini) ══════════════════════════
 with t_ai:
@@ -571,5 +571,5 @@ with t_status:
         ("약가(상한금액 이력)", prc, "Drive API → price.parquet (177,562행)"),
         ("공단 약가협상 완료(공식)", nego, "NHIS → nego.parquet"),
     ]
-    st.dataframe(pd.DataFrame(rows, columns=["항목", "상태", "비고"]), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(rows, columns=["항목", "상태", "비고"]), hide_index=True, width="stretch")
     st.caption("성분 조인 키 = 영문 성분명 첫 단어. 한글 성분 검색은 허가데이터로 영문키 변환.")
