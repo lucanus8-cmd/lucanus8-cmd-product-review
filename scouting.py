@@ -148,7 +148,7 @@ with t_search:
             k[3].metric("성분 수", f"{hit[cfg['ing']].nunique()} 종")
         else:
             st.info(f"{src1} 매출 매칭 없음 (허가/특허/임상/약가는 아래 확인)")
-        tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사"])
+        tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사", "🧬 DMF(동일성분)"])
         with tabs[0]:
             if HAS_REG:
                 ap = ss.load_approval(); m = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
@@ -302,6 +302,45 @@ with t_search:
                     ordered = prefer + [c for c in m.columns if c not in prefer]
                     view = m[ordered].rename(columns={c: label.get(c, c) for c in ordered})
                     st.dataframe(view, use_container_width=True, height=320, hide_index=True)
+        with tabs[5]:
+            dmf = ss.load_dmf()
+            if dmf is None or dmf.empty:
+                st.info("DMF 데이터 미연결 (구글시트의 DMF 탭이 서비스계정에 공유됐는지 확인)")
+            else:
+                ing_col = ss._dmf_ing_col(dmf)
+                # 동일성분 한글명 수집: 허가(주성분)에서 검색어에 해당하는 성분명을 모은다
+                kor_ings = set()
+                if HAS_REG:
+                    ap = ss.load_approval()
+                    hitap = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
+                    for v in hitap["주성분"].dropna().astype(str):
+                        for t in re.split(r"[,/()]|및|\+|\s", v):
+                            t = t.strip()
+                            if len(t) >= 2:
+                                kor_ings.add(t)
+                # 매칭: 성분 한글명/업체명에 검색어 직접 매칭 + 동일성분(허가 주성분) 매칭
+                name_cols = [c for c in [ing_col, "ENTP_NAME"] if c]
+                m = contains(dmf, name_cols, q) if name_cols else dmf.iloc[0:0]
+                if ing_col and kor_ings:
+                    same = dmf[dmf[ing_col].astype(str).apply(
+                        lambda s: any(k and (k in s or s in k) for k in kor_ings))]
+                    m = pd.concat([m, same]).drop_duplicates()
+                st.caption(f"동일성분 DMF {len(m):,}건 (전체 {len(dmf):,}건 · 매일 갱신)"
+                           + (f" · 매칭 성분: {', '.join(sorted(kor_ings)[:6])}" if kor_ings else ""))
+                if m.empty:
+                    st.info("동일성분 DMF 매칭 없음")
+                else:
+                    label = {
+                        "INGR_KOR_NAME": "성분(한글)", "INGR_KOR_NA": "성분(한글)", "INGR_NAME": "성분",
+                        "ENTP_NAME": "업체명(수입/제조)", "MNFCTR_NAME": "제조사", "MNFCTR_NAM": "제조사",
+                        "MANUF_COUNTRY_CODE_NM": "제조국", "DMF_PERMIT_DATE": "등록일",
+                        "DMF_PERMIT_NO": "DMF번호", "DMF_PERMIT_ID": "DMF번호",
+                    }
+                    prefer = [c for c in [ing_col, "ENTP_NAME"] if c and c in m.columns]
+                    ordered = prefer + [c for c in m.columns if c not in prefer]
+                    view = m[ordered].rename(columns={c: label.get(c, c) for c in ordered})
+                    st.dataframe(view, use_container_width=True, height=320, hide_index=True)
+                    st.caption("※ 동일성분 매칭은 허가 주성분(한글)과 DMF 성분명 기준입니다.")
 
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
 with t_sugg:
