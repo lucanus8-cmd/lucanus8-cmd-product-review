@@ -29,8 +29,27 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly",
           "https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 def _creds():
+    import base64
+    import json
     from google.oauth2 import service_account
-    # 1) 배포: st.secrets["gcp_service_account"] 우선 사용
+    # 0) 가장 견고한 방식: 전체 JSON을 base64로 인코딩한 단일 값.
+    #    (여러 줄 PEM 붙여넣기에서 생기는 문자 손상/스마트문장부호 문제를 원천 차단)
+    b64 = None
+    try:
+        b64 = st.secrets.get("gcp_service_account_b64", None)
+    except Exception:
+        b64 = None
+    if b64:
+        try:
+            info = json.loads(base64.b64decode(str(b64).strip()))
+            return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        except Exception as e:
+            raise RuntimeError(
+                "Secrets의 gcp_service_account_b64 처리에 실패했습니다.\n"
+                f"원인: {type(e).__name__}: {e}\n"
+                "→ base64 값이 잘리지 않고 한 줄로 온전히 들어갔는지 확인하세요."
+            ) from e
+    # 1) 배포: st.secrets["gcp_service_account"] 테이블 사용
     raw = None
     try:
         raw = st.secrets["gcp_service_account"]
