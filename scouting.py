@@ -326,8 +326,21 @@ with t_sugg:
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 with t_sales:
-    import sales_analysis
-    sales_analysis.render()
+    # 매출(IQVIA·UBIST)은 데이터가 커서 메모리를 많이 쓴다.
+    # 무료 플랜 안정성을 위해 버튼을 눌렀을 때만 불러온다(기본은 미로딩).
+    if st.session_state.get("_load_sales"):
+        import sales_analysis
+        sales_analysis.render()
+        if st.button("🧹 매출 데이터 닫기(메모리 절약)", key="btn_unload_sales"):
+            st.session_state["_load_sales"] = False
+            st.cache_data.clear()
+            st.rerun()
+    else:
+        st.info("매출 분석 데이터(IQVIA·UBIST)는 용량이 커서 필요할 때만 불러옵니다.\n\n"
+                "아래 버튼을 누르면 매출 대시보드가 열립니다.")
+        if st.button("📊 매출 분석 불러오기", key="btn_load_sales", type="primary"):
+            st.session_state["_load_sales"] = True
+            st.rerun()
 
 # ══════════════════════════ 특허 분석 ══════════════════════════
 with t_patent:
