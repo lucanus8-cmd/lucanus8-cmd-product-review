@@ -171,6 +171,14 @@ def _approval_opts(basis):
         return []
     return sorted({c for c in (_ing_core(x) for x in ap["주성분"].dropna()) if len(c) >= 2})
 
+def _filter_opts(opts, kw, cap=300):
+    """검색어로 옵션을 좁혀 상위 cap개만 반환(대용량 목록 셀렉트박스 버벅임 방지). 띄어쓰기 무시."""
+    if not kw:
+        return opts[:cap]
+    k = re.sub(r"\s+", "", str(kw)).lower()
+    out = [o for o in opts if k in re.sub(r"\s+", "", o).lower()]
+    return out[:cap]
+
 def _sel_cores(basis, sel):
     """선택값 → 동일성분 코어 토큰 집합. 제품명이면 그 품목의 주성분들을 코어로."""
     if basis == "성분":
@@ -275,7 +283,11 @@ if PAGE == "search":
     c0, c1, c2 = st.columns([1, 3, 1])
     basis = c0.radio("검색 기준", ["제품명", "주성분"], key="s_basis")
     _opts = _approval_opts(basis)
-    sel = c1.selectbox(f"허가 제품목록에서 {basis} 선택 (입력해 검색)", ["(선택하세요)"] + _opts, key="s_sel")
+    _kw = c1.text_input(f"{basis} 검색어 입력(일부만)", key="s_kw", placeholder="예: 리피토 / 아토르바스타틴")
+    _fopts = _filter_opts(_opts, _kw)
+    _cap_note = f" · 상위 {len(_fopts)}개 표시" if len(_fopts) >= 300 else ""
+    sel = c1.selectbox(f"허가 {basis} 선택 ({len(_opts):,}개 중 검색{_cap_note})",
+                       ["(선택하세요)"] + _fopts, key="s_sel")
     src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], key="s1")
     q = "" if sel == "(선택하세요)" else sel
     # 선택값 해석: 제품명이면 '브랜드 핵심어'(숫자/괄호 앞) + 그 품목의 동일성분,
@@ -739,10 +751,13 @@ if PAGE == "price":
         pr = ss.load_price()
         # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
         st.markdown("**🔎 약가 변동 그래프** · 성분 선택 시 오리지널(신약) 기준, 제품 선택 시 해당 제품")
-        _pc = st.columns([1, 3])
+        _pc = st.columns([1, 1, 2])
         _pbasis = _pc[0].radio("기준", ["성분", "제품"], key="ptrend_basis", horizontal=True)
         _popts = _approval_opts("주성분" if _pbasis == "성분" else "제품명")
-        _psel = _pc[1].selectbox(f"허가 제품목록에서 {_pbasis} 선택", ["(선택하세요)"] + _popts, key="ptrend_sel")
+        _pkw = _pc[1].text_input(f"{_pbasis} 검색어", key="ptrend_kw", placeholder="일부만 입력")
+        _pfo = _filter_opts(_popts, _pkw)
+        _psel = _pc[2].selectbox(f"허가 {_pbasis} 선택 ({len(_popts):,}개 중 검색)",
+                                 ["(선택하세요)"] + _pfo, key="ptrend_sel")
         if _psel and _psel != "(선택하세요)" and "급여구분" in pr.columns:
             _codes, _title = _price_trend_codes(pr, _pbasis, _psel)
             _h = pr[(pr["제품코드"].isin(_codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
