@@ -233,26 +233,31 @@ HOME_TILES = [
 ]
 
 if PAGE is None:
-    st.markdown("""
-    <style>
-    .hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:36px 8px;max-width:900px;margin:5vh auto 0;}
-    .htile,.htile:hover,.htile *{text-decoration:none !important;}
-    .htile{display:flex;flex-direction:column;align-items:center;}
-    .hcircle{width:132px;height:132px;border-radius:50%;background:#fff;border:1px solid #edeff3;
-             box-shadow:0 2px 10px rgba(20,30,55,.06);display:flex;align-items:center;justify-content:center;
-             transition:box-shadow .15s, border-color .15s, transform .15s;}
-    .htile:hover .hcircle{border-color:#c7d2fe;box-shadow:0 10px 24px rgba(59,130,246,.22);transform:translateY(-2px);}
-    .hsq{width:88px;height:88px;border-radius:22px;display:flex;align-items:center;justify-content:center;
-         color:#fff;font-weight:800;font-size:38px;letter-spacing:-.02em;}
-    .hlabel{margin-top:14px;color:#5b6472;font-size:15px;font-weight:600;}
-    @media (max-width:760px){.hgrid{grid-template-columns:repeat(2,1fr);gap:28px 8px;}}
-    </style>""", unsafe_allow_html=True)
-    _tiles = "".join(
-        f'<a class="htile" href="?page={k}" target="_self">'
-        f'<div class="hcircle"><div class="hsq" style="background:{col}">{ic}</div></div>'
-        f'<div class="hlabel">{lb}</div></a>'
-        for ic, lb, k, col in HOME_TILES)
-    st.markdown(f'<div class="hgrid">{_tiles}</div>', unsafe_allow_html=True)
+    # st.button 기반(페이지 새로고침 없이 전환 → 로그인 상태 유지). 각 버튼을 원형 아이콘으로 스타일.
+    _css = ["<style>",
+            ".hlabel{text-align:center;color:#5b6472;font-size:15px;font-weight:600;margin:12px 0 26px;}"]
+    for _ic, _lb, _k, _col in HOME_TILES:
+        _kc = f"st-key-home_{_k}"
+        _css.append(
+            f".{_kc}{{width:132px;height:132px;border-radius:50%;background:#fff;border:1px solid #edeff3;"
+            f"box-shadow:0 2px 10px rgba(20,30,55,.06);display:flex;align-items:center;justify-content:center;"
+            f"margin:0 auto;transition:box-shadow .15s,border-color .15s,transform .15s;}}"
+            f".{_kc}:hover{{border-color:#c7d2fe;box-shadow:0 10px 24px rgba(59,130,246,.22);transform:translateY(-2px);}}"
+            f".{_kc} div[data-testid='stButton']{{width:100%;display:flex;justify-content:center;}}"
+            f".{_kc} button{{background:{_col} !important;color:#fff !important;width:88px !important;height:88px !important;"
+            f"min-height:88px !important;border:none !important;border-radius:22px !important;box-shadow:none !important;padding:0 !important;margin:0 auto !important;}}"
+            f".{_kc} button:hover{{background:{_col} !important;filter:brightness(1.06);}}"
+            f".{_kc} button p{{font-size:34px !important;font-weight:800 !important;line-height:1;margin:0;letter-spacing:-.02em;}}")
+    _css.append("</style>")
+    st.markdown("".join(_css), unsafe_allow_html=True)
+    st.markdown("<div style='height:4vh'></div>", unsafe_allow_html=True)
+    for _r in range(0, len(HOME_TILES), 4):
+        _cols = st.columns(4)
+        for _i, (_ic, _lb, _k, _col) in enumerate(HOME_TILES[_r:_r + 4]):
+            with _cols[_i]:
+                if st.button(_ic, key=f"home_{_k}"):
+                    st.query_params["page"] = _k; st.rerun()
+                st.markdown(f"<div class='hlabel'>{_lb}</div>", unsafe_allow_html=True)
     st.stop()
 
 # ── 진입 후: 상단 텍스트 네비 (홈 + 8개, 글자만) ──
