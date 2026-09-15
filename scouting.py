@@ -604,12 +604,16 @@ with t_ai:
             ap = ss.load_approval(); am = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
             if not am.empty:
                 parts.append(f"[허가] {len(am):,}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {int((am['신약구분']=='신약').sum())}건")
-            keys = ss.resolve_keys(qterm); pt = ss.load_patent()
-            reg = pt[pt['_key'].isin(keys) & pt['DOMESTIC_PATENT_STATUS'].str.contains('등록', na=False) & pt['_exp'].notna()]
-            if not reg.empty:
-                mat = reg[reg['PATENT_GB_CODE'].str.contains('물질', na=False)]['_exp'].max()
-                use = reg[reg['PATENT_GB_CODE'].str.contains('용도', na=False)]['_exp'].max()
-                parts.append(f"[특허] 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+            pt = ss.load_patent()
+            pm = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)  # 특허 탭과 동일한 텍스트 매칭
+            keys = ss.resolve_keys(qterm)
+            if keys:
+                pm = pd.concat([pm, pt[pt['_key'].isin(keys)]]).drop_duplicates()
+            reg = pm[pm['DOMESTIC_PATENT_STATUS'].astype(str).str.contains('등록', na=False) & pm['_exp'].notna()]
+            if not pm.empty:
+                mat = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('물질', na=False)]['_exp'].max()
+                use = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('용도', na=False)]['_exp'].max()
+                parts.append(f"[특허] 매칭 {len(pm)}건 · 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
         if HAS_PRICE:
             pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], qterm)
             ls = mp[mp['급여구분'] == '급여'].sort_values('적용일자').groupby('제품코드').tail(1)
@@ -657,12 +661,19 @@ with t_ai:
             pass
         try:
             if HAS_REG:
-                keys = ss.resolve_keys(qterm); pt = ss.load_patent()
-                reg = pt[pt["_key"].isin(keys) & pt["DOMESTIC_PATENT_STATUS"].str.contains("등록", na=False) & pt["_exp"].notna()]
-                if not reg.empty:
-                    mat = reg[reg["PATENT_GB_CODE"].str.contains("물질", na=False)]["_exp"].max()
-                    use = reg[reg["PATENT_GB_CODE"].str.contains("용도", na=False)]["_exp"].max()
-                    L.append(f"[특허] 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                pt = ss.load_patent()
+                pm = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)  # 특허 탭과 동일한 텍스트 매칭
+                keys = ss.resolve_keys(qterm)
+                if keys:
+                    pm = pd.concat([pm, pt[pt["_key"].isin(keys)]]).drop_duplicates()
+                reg = pm[pm["DOMESTIC_PATENT_STATUS"].astype(str).str.contains("등록", na=False) & pm["_exp"].notna()]
+                if not pm.empty:
+                    mat = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("물질", na=False)]["_exp"].max()
+                    use = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("용도", na=False)]["_exp"].max()
+                    pats = ", ".join(pm["PATENTEE"].dropna().astype(str).unique()[:5]) if "PATENTEE" in pm.columns else ""
+                    L.append(f"[특허] 매칭 {len(pm)}건 · 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                    if pats:
+                        L.append(f"  특허권자: {pats}")
         except Exception:
             pass
         try:
