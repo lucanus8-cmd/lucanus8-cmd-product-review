@@ -620,22 +620,132 @@ with t_ai:
                 parts.append(f"[공단 약가협상 완료 연도(공식)] {', '.join(ny)}")
         return "\n".join(parts) if parts else "(데이터 매칭 없음)"
 
+    def build_review_context(qterm):
+        """제품 검토서 양식용 데이터 수집(항목별)."""
+        L = []
+        try:
+            if HAS_REG:
+                ap = ss.load_approval(); am = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
+                if not am.empty:
+                    gubun = ", ".join(am["전문/일반"].dropna().astype(str).unique()[:3]) if "전문/일반" in am.columns else ""
+                    ings = ", ".join(am["주성분"].dropna().astype(str).unique()[:6]) if "주성분" in am.columns else ""
+                    newd = int((am["신약구분"] == "신약").sum()) if "신약구분" in am.columns else 0
+                    reps = ", ".join(am["품목명"].dropna().astype(str).unique()[:8])
+                    L.append(f"[허가] 매칭 {len(am)}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {newd}건")
+                    L.append(f"  허가분류(전문/일반): {gubun or '미상'}")
+                    L.append(f"  주성분: {ings or '미상'}")
+                    L.append(f"  대표 품목명: {reps}")
+        except Exception:
+            pass
+        try:
+            if HAS_PRICE:
+                pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], qterm)
+                ls = mp[mp["급여구분"] == "급여"].sort_values("적용일자").groupby("제품코드").tail(1)
+                if not ls.empty:
+                    L.append(f"[약가] 급여 품목 {ls['제품코드'].nunique()}개 · 상한금액 {ls['금액'].min():,.0f}~{ls['금액'].max():,.0f}원")
+        except Exception:
+            pass
+        try:
+            if hasattr(ss, "rejdge_available") and ss.rejdge_available():
+                rj = ss.load_rejdge()
+                ncols = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in rj.columns] or [c for c in rj.columns if "NAME" in c.upper()]
+                rm = contains(rj, ncols, qterm) if ncols else rj.iloc[0:0]
+                if not rm.empty:
+                    show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE", "CODE"])][:5]
+                    L.append(f"[PMS·재심사] 매칭 {len(rm)}건 · 예시: {rm.iloc[0][show].to_dict() if show else '컬럼확인필요'}")
+        except Exception:
+            pass
+        try:
+            if HAS_REG:
+                keys = ss.resolve_keys(qterm); pt = ss.load_patent()
+                reg = pt[pt["_key"].isin(keys) & pt["DOMESTIC_PATENT_STATUS"].str.contains("등록", na=False) & pt["_exp"].notna()]
+                if not reg.empty:
+                    mat = reg[reg["PATENT_GB_CODE"].str.contains("물질", na=False)]["_exp"].max()
+                    use = reg[reg["PATENT_GB_CODE"].str.contains("용도", na=False)]["_exp"].max()
+                    L.append(f"[특허] 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+        except Exception:
+            pass
+        try:
+            cl = ss.load_clinical(); cm = contains(cl, ["제품명", "성분명"], qterm)
+            if not cm.empty:
+                steps = ", ".join(cm["CLINIC_STEP_NM"].dropna().astype(str).value_counts().head(6).index) if "CLINIC_STEP_NM" in cm.columns else ""
+                L.append(f"[임상·동일성분] {len(cm)}건 · 단계: {steps or '미상'}")
+        except Exception:
+            pass
+        try:
+            df, yr, cfg = get("IQVIA"); hit = sales_search(df, cfg, qterm)
+            if not hit.empty and yr:
+                last5 = yr[-5:]; s = hit[last5].sum()
+                mm = " · ".join(f"{year_of(y)}년 {s[y] / 1e6:,.0f}" for y in last5)
+                L.append(f"[매출·IQVIA 최근5개년(백만원)] {mm}")
+        except Exception:
+            pass
+        try:
+            if hasattr(ss, "dmf_available") and ss.dmf_available():
+                dmf = ss.load_dmf(); ic = ss._dmf_ing_col(dmf)
+                dm = contains(dmf, [c for c in [ic, "ENTP_NAME"] if c], qterm) if (ic or "ENTP_NAME" in dmf.columns) else dmf.iloc[0:0]
+                if not dm.empty and "ENTP_NAME" in dm.columns:
+                    ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:20])
+                    L.append(f"[DMF 등록업체(동일성분)] {ents}")
+        except Exception:
+            pass
+        return "\n".join(L) if L else "(데이터 매칭 없음)"
+
+    REVIEW_TEMPLATE = ("제품명 | 허가분류 | 약가 | 주성분/함량 | 효능/효과 | PMS | 용법/용량 | "
+                       "관련 특허 | 임상시험 진행 현황(동일성분) | 매출액(최근 5개년 연간, 백만원) | DMF 등록 업체")
+
     if not gemini_ai.available():
         st.info("Gemini API 키가 없습니다. 배포 시 Secrets에 `GEMINI_API_KEY`를 설정하면 활성화됩니다.")
     else:
         st.caption(f"모델: {gemini_ai.model_name()}")
-    aq = st.text_input("분석할 제품/성분", key="ai_term", placeholder="예: 미라베그론 / atorvastatin")
-    question = st.text_area("질문", height=90, key="ai_question",
-        value="개발(제네릭·개량신약) 관점에서 시장성·경쟁·특허·약가를 종합 검토하고, 개발 우선순위 의견을 줘.")
-    if st.button("AI 분석 실행", key="ai_run", type="primary"):
-        ctx = build_ai_context(aq)
-        with st.expander("📎 AI에 전달된 데이터 근거", expanded=False):
-            st.text(ctx)
-        with st.spinner("Gemini 분석 중…"):
-            ok, ans = gemini_ai.analyze(
-                f"[데이터 근거]\n{ctx}\n\n[질문]\n{question}",
-                system="너는 제약 개발 검토 분석가다. 제공된 데이터 근거로만 한국어로 간결·정확하게 분석하라. 데이터에 없는 사실은 추정임을 명시하라.")
-        st.markdown(ans) if ok else st.error(ans)
+
+    mode = st.radio("모드", ["💬 자유 질문", "📋 제품 검토서(양식)"], horizontal=True, key="ai_mode")
+    aq = st.text_input("제품/성분 (자유 질문은 비워도 됨 · 제품 검토서는 필수)", key="ai_term",
+                       placeholder="예: 미라베그론 / atorvastatin")
+
+    if mode == "💬 자유 질문":
+        question = st.text_area("질문 (무엇이든)", height=100, key="ai_question",
+            value="이 제품/성분의 개발(제네릭·개량신약) 관점 시장성·경쟁·특허·약가를 종합 검토해줘.")
+        if st.button("AI 분석 실행", key="ai_run", type="primary"):
+            ctx = build_ai_context(aq) if aq else ""
+            if ctx:
+                with st.expander("📎 AI에 전달된 데이터 근거", expanded=False):
+                    st.text(ctx)
+            prompt = (f"[연결된 데이터 근거]\n{ctx}\n\n" if ctx else "") + f"[질문]\n{question}"
+            with st.spinner("Gemini 분석 중…"):
+                ok, ans = gemini_ai.analyze(
+                    prompt,
+                    system="너는 제약 산업 전문 분석가다. 한국어로 정확하고 실용적으로 답하라. "
+                           "연결된 데이터 근거가 있으면 우선 활용하고, 없거나 부족하면 너의 전문 지식(효능·기전·규제·시장 등)을 "
+                           "자유롭게 활용해 답하라. 단, 데이터에 근거한 사실과 일반 지식·추정을 구분해서 표기하라.")
+            st.markdown(ans) if ok else st.error(ans)
+    else:
+        st.caption("제품/성분을 입력하고 실행하면, 연결된 데이터를 종합해 아래 양식으로 검토서를 만듭니다.")
+        if st.button("📋 제품 검토서 생성", key="ai_review", type="primary"):
+            if not aq.strip():
+                st.warning("제품/성분을 입력하세요.")
+            else:
+                data = build_review_context(aq)
+                with st.expander("📎 검토서에 사용된 데이터 근거", expanded=False):
+                    st.text(data)
+                with st.spinner("Gemini 검토서 작성 중…"):
+                    ok, ans = gemini_ai.analyze(
+                        f"[대상] {aq}\n\n[연결된 데이터]\n{data}\n\n"
+                        f"위 데이터로 아래 항목의 '제품 검토서'를 작성하라. 반드시 **마크다운 표**(항목 | 내용) 형식으로, "
+                        f"아래 11개 항목을 순서대로 모두 포함하라:\n{REVIEW_TEMPLATE}\n\n"
+                        "- 각 항목은 연결된 데이터를 우선 사용하고, 데이터에 없는 항목(효능/효과·용법/용량 등)은 "
+                        "너의 의약품 전문 지식으로 채우되 '(참고)'라고 표기하라.\n"
+                        "- PMS는 재심사 시작 기간 및 진행연도 중심으로.\n"
+                        "- 매출액은 최근 5개년 연간(백만원)으로.\n"
+                        "- 데이터가 전혀 없는 항목은 '자료 없음'으로.",
+                        system="너는 제약 제품 검토 담당자다. 정확하고 간결한 한국어로 표를 작성하라. 없는 수치를 지어내지 마라.")
+                if ok:
+                    st.markdown("### 📋 제품 검토서")
+                    st.markdown(ans)
+                    st.download_button("⬇️ 검토서 다운로드(.md)", ans,
+                                       file_name=f"제품검토_{aq}.md", mime="text/markdown", key="ai_dl")
+                else:
+                    st.error(ans)
 
 # ══════════════════════════ 상태 ══════════════════════════
 with t_status:
