@@ -131,7 +131,6 @@ st.markdown(
     "<div style='color:#9aa3b2;font-size:11px;margin-bottom:6px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
     unsafe_allow_html=True)
 
-# ── 아이콘 버튼 홈 (탭 대신 아이콘 클릭으로 이동) ──
 PAGES = [
     ("🔍", "제품 종합분석", "search"),
     ("🎯", "제품 제안", "sugg"),
@@ -143,16 +142,34 @@ PAGES = [
     ("ℹ️", "상태", "status"),
 ]
 if "page" not in st.session_state:
-    st.session_state["page"] = "search"
-_per_row = 4
-for _r in range(0, len(PAGES), _per_row):
-    _cols = st.columns(_per_row)
-    for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + _per_row]):
-        if _cols[_i].button(f"{_icon}  {_label}", key=f"nav_{_key}", use_container_width=True,
-                            type=("primary" if st.session_state["page"] == _key else "secondary")):
-            st.session_state["page"] = _key
-            st.rerun()
+    st.session_state["page"] = None   # 처음엔 홈(세부창 숨김)
 PAGE = st.session_state["page"]
+
+if PAGE is None:
+    # ── 홈: 큰 아이콘만 표시 (세부 분석창 숨김) ──
+    st.markdown("<style>div.stButton > button{height:130px;font-size:19px;font-weight:700;"
+                "border-radius:18px;line-height:1.7;}</style>", unsafe_allow_html=True)
+    st.write("")
+    for _r in range(0, len(PAGES), 4):
+        _cols = st.columns(4)
+        for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
+            if _cols[_i].button(f"{_icon}\n\n{_label}", key=f"home_{_key}", use_container_width=True):
+                st.session_state["page"] = _key
+                st.rerun()
+    st.stop()
+
+# ── 진입 후: 상단 작은 아이콘 네비 (홈 + 8개) ──
+_nav = st.columns(len(PAGES) + 1)
+if _nav[0].button("🏠", key="nav_home", use_container_width=True, help="홈으로"):
+    st.session_state["page"] = None
+    st.rerun()
+for _i, (_icon, _label, _key) in enumerate(PAGES):
+    if _nav[_i + 1].button(_icon, key=f"nav_{_key}", use_container_width=True,
+                           help=_label, type=("primary" if PAGE == _key else "secondary")):
+        st.session_state["page"] = _key
+        st.rerun()
+_curname = next((l for ic, l, k in PAGES if k == PAGE), "")
+st.markdown(f"<div style='font-size:15px;font-weight:700;margin:4px 0 2px'>{_curname}</div>", unsafe_allow_html=True)
 st.divider()
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
