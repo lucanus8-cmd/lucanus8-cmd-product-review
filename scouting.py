@@ -125,6 +125,33 @@ def yearly_matrix(price_df, codes, name_map):
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 
+@st.cache_data(show_spinner="허가 목록 준비 중…")
+def _approval_opts(basis):
+    """허가 제품목록에서 선택용 옵션(제품명/주성분) 정렬 리스트."""
+    if not HAS_REG:
+        return []
+    ap = ss.load_approval()
+    col = "품목명" if basis == "제품명" else "주성분"
+    if col not in ap.columns:
+        return []
+    return sorted({str(x).strip() for x in ap[col].dropna() if str(x).strip()})
+
+def _price_trend_codes(pr, basis, term):
+    """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
+    if basis == "제품":
+        sub = pr[pr["제품명"].astype(str).str.contains(re.escape(term), case=False, na=False)]
+        return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
+    keys = ss.resolve_keys(term)
+    origs = ss.original_products(keys) if keys else []
+    pref = {re.split(r"[0-9]", re.sub(r"\s", "", o))[0] for o in origs}
+    pref = {p for p in pref if len(p) >= 2}
+    if pref:
+        sub = pr[pr["제품명"].astype(str).apply(
+            lambda n: any(re.sub(r"\s", "", str(n)).startswith(p) for p in pref))]
+    else:
+        sub = pr[pr["주성분명"].astype(str).str.contains(re.escape(term), case=False, na=False)]
+    return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
+
 # 좌측 상단 제목
 st.markdown(
     "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
@@ -180,9 +207,12 @@ st.markdown("<hr style='border:none;border-top:2px solid #3b82f6;margin:.4rem 0 
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
 if PAGE == "search":
-    c1, c2 = st.columns([3, 1])
-    q = c1.text_input("제품명 또는 성분 검색", placeholder="예: 미라베그론 / mirabegron / 베타미가")
-    src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s1")
+    c0, c1, c2 = st.columns([1, 3, 1])
+    basis = c0.radio("검색 기준", ["제품명", "주성분"], key="s_basis")
+    _opts = _approval_opts(basis)
+    sel = c1.selectbox(f"허가 제품목록에서 {basis} 선택 (입력해 검색)", ["(선택하세요)"] + _opts, key="s_sel")
+    src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], key="s1")
+    q = "" if sel == "(선택하세요)" else sel
     if q:
         df, yr, cfg = get(src1)
         hit = sales_search(df, cfg, q)
@@ -561,11 +591,35 @@ if PAGE == "clinical":
 
 # ══════════════════════════ 약가 분석 ══════════════════════════
 if PAGE == "price":
-    st.subheader("💊 약가 분석 — 조건별 · 연도별")
+    st.subheader("💊 약가 분석")
     if not HAS_PRICE:
         st.info("약가 데이터 미연결")
     else:
         pr = ss.load_price()
+        # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
+        st.markdown("**🔎 약가 변동 그래프** · 성분 선택 시 오리지널(신약) 기준, 제품 선택 시 해당 제품")
+        _pc = st.columns([1, 3])
+        _pbasis = _pc[0].radio("기준", ["성분", "제품"], key="ptrend_basis", horizontal=True)
+        _popts = _approval_opts("주성분" if _pbasis == "성분" else "제품명")
+        _psel = _pc[1].selectbox(f"허가 제품목록에서 {_pbasis} 선택", ["(선택하세요)"] + _popts, key="ptrend_sel")
+        if _psel and _psel != "(선택하세요)" and "급여구분" in pr.columns:
+            _codes, _title = _price_trend_codes(pr, _pbasis, _psel)
+            _h = pr[(pr["제품코드"].isin(_codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
+            if _h.empty:
+                st.info("해당 급여 약가 이력이 없습니다.")
+            else:
+                _show = list(_h.groupby("제품명").size().sort_values(ascending=False).index[:30])
+                _fig = go.Figure()
+                for _nm, _g in _h[_h["제품명"].isin(_show)].groupby("제품명"):
+                    _fig.add_trace(go.Scatter(x=_g["적용일자"], y=_g["금액"], mode="lines+markers",
+                                              name=str(_nm)[:26], line_shape="hv"))
+                _fig.update_layout(height=430, title=_title, yaxis_title="상한금액(원)",
+                                   legend=dict(orientation="h", y=-0.3), hovermode="x unified")
+                st.plotly_chart(_fig, use_container_width=True)
+                st.caption(f"대상 품목 {_h['제품코드'].nunique()}개 · 그래프는 이력 많은 상위 30개 표시")
+        st.divider()
+
+        st.markdown("**📋 조건별 최신 약가 · 연도별**")
         def _ser(name):  # 컬럼이 없어도 안전하게 빈 시리즈 반환
             return pr[name] if name in pr.columns else pd.Series([], dtype=object)
         latest = pr.sort_values("적용일자").groupby("제품코드").tail(1).copy()
