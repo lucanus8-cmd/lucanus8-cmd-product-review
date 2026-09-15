@@ -274,11 +274,21 @@ if PAGE == "search":
     elif q:  # 주성분(코어) 선택
         cores = {_ing_core(q)} if len(_ing_core(q)) >= 2 else set()
         ing_keys = ss.resolve_keys(q)
-    # 동일성분 허가행에서 영문키 보강(주성분 영문이 일부 품목에만 있는 경우 대비)
-    if HAS_REG and cores:
+    # 동일성분 허가행에서 영문키 보강 + 보험코드(EDI) 수집(제품명/띄어쓰기와 무관한 확실한 조인키)
+    edis_self, edis_same = set(), set()
+    if HAS_REG and (cores or basis == "제품명"):
         _ap0 = ss.load_approval()
-        _same = _ap0[_ap0.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core).isin(cores)]
-        ing_keys |= {k for k in (ss.ing_key(x) for x in _same.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
+        _edic = next((c for c in ["보험코드(EDI)", "보험코드", "보험EDI코드", "EDI코드", "주보험코드"] if c in _ap0.columns), None)
+        _digits = lambda s: re.sub(r"\D", "", str(s))
+        if basis == "제품명" and _edic:
+            edis_self = {_digits(x) for x in _ap0[_ap0.get("품목명", pd.Series(dtype=str)).astype(str) == q][_edic].dropna()}
+        if cores:
+            _same = _ap0[_ap0.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core).isin(cores)]
+            ing_keys |= {k for k in (ss.ing_key(x) for x in _same.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
+            if _edic:
+                edis_same = {_digits(x) for x in _same[_edic].dropna()}
+        edis_self = {e for e in edis_self if len(e) >= 6}
+        edis_same = {e for e in edis_same if len(e) >= 6}
 
     def _ing_union(df, base):
         """동일성분(영문 _key) 매칭 행을 기존 결과에 추가(있는 것만 더함, 제거 없음)."""
@@ -304,13 +314,25 @@ if PAGE == "search":
                      r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$", "", q_brand)
         _terms = {t for t in {q_brand, _bt} if len(t) >= 2}
         _prodn = _nospace(df[cfg["prod"]])   # 띄어쓰기 차이 흡수(예: '가스모틴 에스알정' ↔ '가스모틴에스알정')
+        # 매출 파일의 보험EDI 코드 컬럼(있으면 이름/띄어쓰기와 무관하게 조인)
+        _secol = next((c for c in df.columns
+                       if "EDI" in str(c).upper() or ("보험" in str(c) and "코드" in str(c))
+                       or str(c).strip() in ("보험코드", "주보험코드", "약가코드", "코드")), None)
+        _sedi = df[_secol].astype(str).str.replace(r"\D", "", regex=True) if _secol else None
         _pm = pd.Series(False, index=df.index)
         for _t in _terms:
             _pm = _pm | _prodn.str.contains(_t, case=False, na=False, regex=False)
+        if _sedi is not None and edis_self:            # 선택 제품의 EDI 직접 조인
+            _pm = _pm | _sedi.isin(edis_self)
         hit, _by_ing = df[_pm], False
-        if hit.empty and cores and cfg["ing"] in df.columns:   # 제품명 매칭 실패 → 동일성분 매출로 폴백
-            hit = df[df[cfg["ing"]].astype(str).map(_ing_core).isin(cores)]
-            _by_ing = not hit.empty
+        if hit.empty and (cores or edis_same):         # 제품명 매칭 실패 → 동일성분 매출로 폴백
+            _fm = pd.Series(False, index=df.index)
+            if cores and cfg["ing"] in df.columns:
+                _ingc = df[cfg["ing"]].astype(str)
+                _fm = _ingc.map(_ing_core).isin(cores) | _ingc.apply(lambda s: any(c in s for c in cores))
+            if _sedi is not None and edis_same:
+                _fm = _fm | _sedi.isin(edis_same)
+            hit = df[_fm]; _by_ing = not hit.empty
         if not hit.empty:
             s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
             k = st.columns(4)
@@ -324,6 +346,12 @@ if PAGE == "search":
         else:
             st.info(f"{src1} 매출 매칭 없음 — 이 제품/성분이 {src1} 매출 파일에 없을 수 있어요 "
                     f"(‘매출 분석’ 탭에서 직접 검색해 확인). 허가/특허/임상/약가는 아래 확인)")
+            # 진단: 앞 두 글자가 같은 매출 제품명 후보를 보여줘(자료엔 있는데 이름 표기가 다른 경우 확인용)
+            _stub = (_bt or q_brand)[:2]
+            if len(_stub) >= 2:
+                _cand = sorted(df.loc[_prodn.str.startswith(_stub, na=False), cfg["prod"]].astype(str).unique())[:12]
+                if _cand:
+                    st.caption(f"참고 · {src1}에서 ‘{_stub}…’로 시작하는 제품명: " + ", ".join(_cand))
         tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사(PMS)", "🧬 DMF(동일성분)"])
         with tabs[0]:
             if HAS_REG:
