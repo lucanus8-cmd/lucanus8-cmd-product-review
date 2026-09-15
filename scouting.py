@@ -79,13 +79,14 @@ def contains(df, cols, q):
     m = pd.Series(False, index=df.index)
     for c in cols:
         if c in df.columns:
-            m |= df[c].astype(str).str.contains(q, case=False, na=False)
+            # regex=False: 품목명에 괄호/대괄호 등 특수문자가 있어도 리터럴 검색(정규식 오류 방지)
+            m |= df[c].astype(str).str.contains(str(q), case=False, na=False, regex=False)
     return df[m]
 
 def sales_search(df, cfg, q):
     """제품명/성분명 + (한글↔영문 성분키) 매칭."""
-    m = df[cfg["prod"]].astype(str).str.contains(q, case=False, na=False) | \
-        df[cfg["ing"]].astype(str).str.contains(q, case=False, na=False)
+    m = df[cfg["prod"]].astype(str).str.contains(str(q), case=False, na=False, regex=False) | \
+        df[cfg["ing"]].astype(str).str.contains(str(q), case=False, na=False, regex=False)
     keys = ss.resolve_keys(q)
     if keys:
         m = m | df[cfg["ing"]].astype(str).map(ss.ing_key).isin(keys)
@@ -139,7 +140,7 @@ def _approval_opts(basis):
 def _price_trend_codes(pr, basis, term):
     """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
     if basis == "제품":
-        sub = pr[pr["제품명"].astype(str).str.contains(re.escape(term), case=False, na=False)]
+        sub = pr[pr["제품명"].astype(str).str.contains(str(term), case=False, na=False, regex=False)]
         return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
     keys = ss.resolve_keys(term)
     origs = ss.original_products(keys) if keys else []
@@ -149,7 +150,7 @@ def _price_trend_codes(pr, basis, term):
         sub = pr[pr["제품명"].astype(str).apply(
             lambda n: any(re.sub(r"\s", "", str(n)).startswith(p) for p in pref))]
     else:
-        sub = pr[pr["주성분명"].astype(str).str.contains(re.escape(term), case=False, na=False)]
+        sub = pr[pr["주성분명"].astype(str).str.contains(str(term), case=False, na=False, regex=False)]
     return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
 
 # 좌측 상단 제목
@@ -213,9 +214,46 @@ if PAGE == "search":
     sel = c1.selectbox(f"허가 제품목록에서 {basis} 선택 (입력해 검색)", ["(선택하세요)"] + _opts, key="s_sel")
     src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], key="s1")
     q = "" if sel == "(선택하세요)" else sel
+    # 선택값 해석: 제품명이면 데이터셋 매칭용 '브랜드 핵심어'(숫자/괄호 앞) + 동일성분 키,
+    #            주성분이면 그대로 사용. (전체 품목명은 매출·약가·재심사와 글자가 달라 매칭 안 됨)
+    q_brand, ing_keys, kor_ings = q, set(), set()
+    if q and basis == "제품명":
+        q_brand = re.split(r"[0-9(\[]", re.sub(r"\s+", "", q))[0] or q
+        if HAS_REG:
+            _r = ss.load_approval()
+            _r = _r[_r["품목명"] == q]
+            ing_keys = {k for k in (ss.ing_key(x) for x in _r["주성분(영문)"].dropna()) if k}
+    elif q:  # 주성분 선택
+        ing_keys = ss.resolve_keys(q)
+        kor_ings.add(q)
+    # 동일성분 한글 성분어(약가 주성분명·임상 성분명은 한글이라 영문 _key로는 못 붙음)
+    if HAS_REG and ing_keys:
+        _ap0 = ss.load_approval()
+        for _v in _ap0[_ap0["_key"].isin(ing_keys)]["주성분"].dropna().astype(str):
+            for _t in re.split(r"[,/()]|및|\+|\s", _v):
+                _t = _t.strip()
+                if len(_t) >= 2:
+                    kor_ings.add(_t)
+
+    def _ing_union(df, base):
+        """동일성분(영문 _key) 매칭 행을 기존 결과에 추가(있는 것만 더함, 제거 없음)."""
+        if ing_keys and "_key" in df.columns:
+            add = df[df["_key"].isin(ing_keys)]
+            if not add.empty:
+                return pd.concat([base, add]).drop_duplicates()
+        return base
+
+    def _kor_union(df, base, col):
+        """동일성분 한글명(col) 매칭 행을 기존 결과에 추가(약가·임상용)."""
+        if kor_ings and col in df.columns:
+            add = df[df[col].astype(str).apply(lambda s: any(k in s for k in kor_ings))]
+            if not add.empty:
+                return pd.concat([base, add]).drop_duplicates()
+        return base
+
     if q:
         df, yr, cfg = get(src1)
-        hit = sales_search(df, cfg, q)
+        hit = sales_search(df, cfg, q_brand)
         if not hit.empty:
             s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
             k = st.columns(4)
@@ -228,14 +266,14 @@ if PAGE == "search":
         tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사(PMS)", "🧬 DMF(동일성분)"])
         with tabs[0]:
             if HAS_REG:
-                ap = ss.load_approval(); m = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
+                ap = ss.load_approval(); m = _ing_union(ap, contains(ap, ["품목명", "주성분", "주성분(영문)"], q))
                 st.caption(f"허가 {len(m):,}건 · 업체 {m['업체명'].nunique()}곳 · 신약 {int((m['신약구분']=='신약').sum())}건")
                 cc = [c for c in ["품목명", "업체명", "허가일자", "전문/일반", "주성분", "신약구분", "상태", "보험코드(EDI)"] if c in m.columns]
                 st.dataframe(m[cc].sort_values("허가일자", ascending=False), use_container_width=True, height=300, hide_index=True)
             else: st.info("허가 데이터 미연결")
         with tabs[1]:
             if HAS_REG:
-                pt = ss.load_patent(); m = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q).copy()
+                pt = ss.load_patent(); m = _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)).copy()
                 m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
                 st.caption(f"특허 {len(m):,}건 · 등록 {int(m['DOMESTIC_PATENT_STATUS'].str.contains('등록', na=False).sum())}건")
                 cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
@@ -245,8 +283,12 @@ if PAGE == "search":
             else: st.info("특허 데이터 미연결")
         with tabs[2]:
             if HAS_REG:
-                cl = ss.load_clinical(); m = contains(cl, ["제품명", "성분명"], q)
-                st.caption(f"임상 {len(m):,}건 · 생동(제네릭 개발) {int(m['CLINIC_STEP_NM'].str.contains('생동', na=False).sum())}건")
+                cl = ss.load_clinical()
+                if "성분명" in cl.columns:
+                    cl = cl.copy(); cl["_key"] = cl["성분명"].map(ss.ing_key)
+                m = _kor_union(cl, _ing_union(cl, contains(cl, ["제품명", "성분명"], q)), "성분명")
+                _step = m["CLINIC_STEP_NM"] if "CLINIC_STEP_NM" in m.columns else pd.Series([], dtype=str)
+                st.caption(f"임상 {len(m):,}건 · 생동(제네릭 개발) {int(_step.astype(str).str.contains('생동', na=False).sum())}건")
                 cmap = {"제품명": "제품명", "성분명": "성분명", "CLINIC_STEP_NM": "단계", "TRGT_DISS_NM": "대상질환",
                         "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
                 cc = {k2: v for k2, v in cmap.items() if k2 in m.columns}
@@ -257,11 +299,12 @@ if PAGE == "search":
             if not HAS_PRICE:
                 st.info("약가 데이터 미연결")
             else:
-                pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], q).copy()
+                pr = ss.load_price()
+                mp = _kor_union(pr, contains(pr, ["제품명", "주성분명"], q_brand), "주성분명").copy()
                 if mp.empty:
                     st.info("약가 매칭 없음")
                 else:
-                    keys = {k for k in mp["_key"].unique() if k}
+                    keys = {k for k in mp["_key"].unique() if k} or set(ing_keys)
                     st.caption(f"약가 매칭 {len(mp):,}건 · 제품 {mp['제품코드'].nunique()}개 · 성분키 {len(keys)}개")
                     counts = mp[mp["급여구분"] == "급여"]["제품명"].value_counts()
                     if counts.empty:
@@ -269,7 +312,7 @@ if PAGE == "search":
                     opts = list(counts.index)
                     # 오리지널(신약) 우선 기본 선택, 없으면 최초 등재 품목
                     default_idx = 0
-                    rkeys = ss.resolve_keys(q)
+                    rkeys = ing_keys or ss.resolve_keys(q)
                     origs = ss.original_products(rkeys) if rkeys else []
                     prefixes = {re.split(r"[0-9]", re.sub(r"\s", "", o))[0] for o in origs}
                     prefixes = {p for p in prefixes if len(p) >= 2}
@@ -361,7 +404,7 @@ if PAGE == "search":
             else:
                 name_cols = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in rj.columns] \
                     or [c for c in rj.columns if "NAME" in c.upper()]
-                m = contains(rj, name_cols, q) if name_cols else rj.iloc[0:0]
+                m = contains(rj, name_cols, q_brand) if name_cols else rj.iloc[0:0]
                 st.caption(f"재심사 매칭 {len(m):,}건 (전체 {len(rj):,}건)")
                 if m.empty:
                     st.info("재심사 매칭 없음")
@@ -486,7 +529,7 @@ if PAGE == "patent":
         pt = isin(pt, "DOMESTIC_PATENT_STATUS", msel(f[1], "상태", pt["DOMESTIC_PATENT_STATUS"], "p_stat", default=["등록"]))
         patee = f[2].text_input("특허권자 검색", key="p_ee")
         kw = f[3].text_input("품목/성분 검색", key="p_kw")
-        if patee: pt = pt[pt["PATENTEE"].astype(str).str.contains(patee, case=False, na=False)]
+        if patee: pt = pt[pt["PATENTEE"].astype(str).str.contains(patee, case=False, na=False, regex=False)]
         if kw: pt = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], kw)
         pt = pt[pt["_exp"].notna()]
         if pt.empty:
@@ -553,7 +596,7 @@ if PAGE == "clinical":
         if stat_c: m = isin(m, stat_c, f_stat)
         if dis_c:  m = isin(m, dis_c, f_dis)
         if dev_c and dev_kw:
-            m = m[m[dev_c].astype(str).str.contains(dev_kw, case=False, na=False)]
+            m = m[m[dev_c].astype(str).str.contains(dev_kw, case=False, na=False, regex=False)]
         if kw:
             m = contains(m, [c for c in [prod_c, ing_c] if c], kw)
 
@@ -631,7 +674,7 @@ if PAGE == "price":
         ent = f[3].text_input("업체 검색", key="pr_ent")
         kw = st.text_input("제품/성분 검색", key="pr_kw")
         if ent and "업체명" in latest.columns:
-            latest = latest[latest["업체명"].astype(str).str.contains(ent, case=False, na=False)]
+            latest = latest[latest["업체명"].astype(str).str.contains(ent, case=False, na=False, regex=False)]
         if kw: latest = contains(latest, ["제품명", "주성분명"], kw)
         if latest.empty:
             st.warning("조건에 맞는 약가 없음")
