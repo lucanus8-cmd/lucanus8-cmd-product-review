@@ -125,10 +125,10 @@ def yearly_matrix(price_df, codes, name_map):
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 
-# 좌측 상단 작은 제목
+# 좌측 상단 제목
 st.markdown(
-    "<div style='color:#5b6472;font-size:13px;font-weight:700;letter-spacing:.02em'>🔎 제품 검토</div>"
-    "<div style='color:#9aa3b2;font-size:11px;margin-bottom:6px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
+    "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
+    "<div style='color:#9aa3b2;font-size:12px;margin-bottom:8px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
     unsafe_allow_html=True)
 
 PAGES = [
@@ -146,25 +146,23 @@ if "page" not in st.session_state:
 PAGE = st.session_state["page"]
 
 if PAGE is None:
-    # ── 홈: 큰 아이콘 타일만 표시 (세부 분석창 숨김) ──
+    # ── 홈: 글자를 넣은 큰 타일 (세부 분석창 숨김) ──
     st.markdown(
         "<style>"
-        "div.stButton > button{height:96px;font-size:44px;border-radius:18px;"
-        "border:1px solid #e6e8ee;background:#ffffff;box-shadow:0 1px 3px rgba(20,30,55,.06);"
-        "transition:border-color .15s, box-shadow .15s;}"
-        "div.stButton > button:hover{border-color:#3b82f6;box-shadow:0 4px 14px rgba(59,130,246,.18);}"
+        "div.stButton > button{height:104px;font-size:22px;font-weight:700;color:#1f2a44;"
+        "border-radius:18px;border:1px solid #e6e8ee;background:#ffffff;"
+        "box-shadow:0 1px 3px rgba(20,30,55,.06);transition:border-color .15s, box-shadow .15s, color .15s;}"
+        "div.stButton > button:hover{border-color:#3b82f6;color:#2563eb;"
+        "box-shadow:0 4px 14px rgba(59,130,246,.18);}"
         "</style>", unsafe_allow_html=True)
     st.write("")
     for _r in range(0, len(PAGES), 4):
         _cols = st.columns(4)
         for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
-            with _cols[_i]:
-                if st.button(_icon, key=f"home_{_key}", use_container_width=True):
-                    st.session_state["page"] = _key
-                    st.rerun()
-                st.markdown(
-                    f"<div style='text-align:center;font-size:16px;font-weight:600;"
-                    f"color:#374151;margin:2px 0 14px'>{_label}</div>", unsafe_allow_html=True)
+            if _cols[_i].button(_label, key=f"home_{_key}", use_container_width=True):
+                st.session_state["page"] = _key
+                st.rerun()
+        st.write("")
     st.stop()
 
 # ── 진입 후: 상단 텍스트 네비 (홈 + 8개, 글자만) ──
