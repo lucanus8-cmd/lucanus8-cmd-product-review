@@ -125,14 +125,38 @@ def yearly_matrix(price_df, codes, name_map):
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 
-st.title("🔎 제품 검토")
-st.caption("매출: IQVIA·UBIST · 허가/특허/임상: 식약처 · 약가: 심평원 + NHIS 협상완료(공식)")
+# 좌측 상단 작은 제목
+st.markdown(
+    "<div style='color:#5b6472;font-size:13px;font-weight:700;letter-spacing:.02em'>🔎 제품 검토</div>"
+    "<div style='color:#9aa3b2;font-size:11px;margin-bottom:6px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
+    unsafe_allow_html=True)
 
-t_search, t_sugg, t_sales, t_patent, t_clinical, t_price, t_ai, t_status = st.tabs(
-    ["🔍 제품 종합분석", "🎯 제품 제안", "💰 매출 분석", "⚖️ 특허 분석", "🧪 임상 분석", "💊 약가 분석", "🤖 AI 분석", "ℹ️ 상태"])
+# ── 아이콘 버튼 홈 (탭 대신 아이콘 클릭으로 이동) ──
+PAGES = [
+    ("🔍", "제품 종합분석", "search"),
+    ("🎯", "제품 제안", "sugg"),
+    ("💰", "매출 분석", "sales"),
+    ("⚖️", "특허 분석", "patent"),
+    ("🧪", "임상 분석", "clinical"),
+    ("💊", "약가 분석", "price"),
+    ("🤖", "AI 분석", "ai"),
+    ("ℹ️", "상태", "status"),
+]
+if "page" not in st.session_state:
+    st.session_state["page"] = "search"
+_per_row = 4
+for _r in range(0, len(PAGES), _per_row):
+    _cols = st.columns(_per_row)
+    for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + _per_row]):
+        if _cols[_i].button(f"{_icon}  {_label}", key=f"nav_{_key}", use_container_width=True,
+                            type=("primary" if st.session_state["page"] == _key else "secondary")):
+            st.session_state["page"] = _key
+            st.rerun()
+PAGE = st.session_state["page"]
+st.divider()
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
-with t_search:
+if PAGE == "search":
     c1, c2 = st.columns([3, 1])
     q = c1.text_input("제품명 또는 성분 검색", placeholder="예: 미라베그론 / mirabegron / 베타미가")
     src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s1")
@@ -334,7 +358,7 @@ with t_search:
                                  use_container_width=True, height=320, hide_index=True)
 
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
-with t_sugg:
+if PAGE == "sugg":
     st.subheader("🎯 제품 제안 — 조건 필터")
     a, b = st.columns(2)
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
@@ -380,7 +404,7 @@ with t_sugg:
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료 조건을 직접 필터링합니다.")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
-with t_sales:
+if PAGE == "sales":
     # 매출(IQVIA·UBIST)은 데이터가 커서 메모리를 많이 쓴다.
     # 무료 플랜 안정성을 위해 버튼을 눌렀을 때만 불러온다(기본은 미로딩).
     if st.session_state.get("_load_sales"):
@@ -398,7 +422,7 @@ with t_sales:
             st.rerun()
 
 # ══════════════════════════ 특허 분석 ══════════════════════════
-with t_patent:
+if PAGE == "patent":
     st.subheader("⚖️ 특허 분석 — 조건별")
     if not HAS_REG:
         st.info("특허 데이터 미연결")
@@ -440,7 +464,7 @@ with t_patent:
             st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), use_container_width=True, height=360, hide_index=True)
 
 # ══════════════════════════ 임상 분석 ══════════════════════════
-with t_clinical:
+if PAGE == "clinical":
     st.subheader("🧪 임상 분석 — 조건별")
     try:
         cl = ss.load_clinical().copy()
@@ -513,7 +537,7 @@ with t_clinical:
             st.dataframe(view, use_container_width=True, height=380, hide_index=True)
 
 # ══════════════════════════ 약가 분석 ══════════════════════════
-with t_price:
+if PAGE == "price":
     st.subheader("💊 약가 분석 — 조건별 · 연도별")
     if not HAS_PRICE:
         st.info("약가 데이터 미연결")
@@ -585,7 +609,7 @@ with t_price:
                 st.dataframe(deleted.sort_values("적용일자", ascending=False).head(30), use_container_width=True, height=200, hide_index=True)
 
 # ══════════════════════════ AI 분석 (Gemini) ══════════════════════════
-with t_ai:
+if PAGE == "ai":
     import gemini_ai
     st.subheader("🤖 AI 분석 (Gemini)")
 
@@ -824,7 +848,7 @@ with t_ai:
                     st.error(ans)
 
 # ══════════════════════════ 상태 ══════════════════════════
-with t_status:
+if PAGE == "status":
     st.subheader("데이터 연결 상태")
     reg = "✅ 연결" if HAS_REG else "⏳"
     prc = "✅ 연결" if HAS_PRICE else "⏳"
