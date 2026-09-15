@@ -589,6 +589,52 @@ with t_ai:
     import gemini_ai
     st.subheader("🤖 AI 분석 (Gemini)")
 
+    def _kor_ings(qterm):
+        """검색어에 해당하는 허가 주성분(한글) 토큰 집합 (동일성분 매칭용)."""
+        kor = set()
+        try:
+            if HAS_REG:
+                ap = ss.load_approval(); hitap = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
+                for v in hitap["주성분"].dropna().astype(str):
+                    for t in re.split(r"[,/()]|및|\+|\s", v):
+                        t = t.strip()
+                        if len(t) >= 2:
+                            kor.add(t)
+        except Exception:
+            pass
+        return kor
+
+    def _dmf_match(qterm):
+        """DMF 동일성분 매칭 (DMF 탭과 동일 로직). 매칭 DF 또는 None."""
+        try:
+            if not (hasattr(ss, "dmf_available") and ss.dmf_available()):
+                return None
+            dmf = ss.load_dmf()
+            if dmf is None or dmf.empty:
+                return None
+            ic = ss._dmf_ing_col(dmf)
+            m = contains(dmf, [c for c in [ic, "ENTP_NAME"] if c], qterm)
+            kor = _kor_ings(qterm)
+            if ic and kor:
+                same = dmf[dmf[ic].astype(str).apply(lambda s: any(k and (k in s or s in k) for k in kor))]
+                m = pd.concat([m, same]).drop_duplicates()
+            return m
+        except Exception:
+            return None
+
+    def _pms_match(qterm):
+        """재심사(PMS) 매칭 DF 또는 None."""
+        try:
+            if not (hasattr(ss, "rejdge_available") and ss.rejdge_available()):
+                return None
+            rj = ss.load_rejdge()
+            if rj is None or rj.empty:
+                return None
+            ncols = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in rj.columns] or [c for c in rj.columns if "NAME" in c.upper()]
+            return contains(rj, ncols, qterm) if ncols else None
+        except Exception:
+            return None
+
     def build_ai_context(qterm):
         parts = []
         if not qterm:
@@ -622,6 +668,30 @@ with t_ai:
             ny = ss.nego_years(qterm) if hasattr(ss, 'nego_available') and ss.nego_available() else []
             if ny:
                 parts.append(f"[공단 약가협상 완료 연도(공식)] {', '.join(ny)}")
+        # 임상(동일성분)
+        try:
+            cl = ss.load_clinical(); cm = contains(cl, ["제품명", "성분명"], qterm)
+            if not cm.empty:
+                steps = ", ".join(cm["CLINIC_STEP_NM"].dropna().astype(str).value_counts().head(6).index) if "CLINIC_STEP_NM" in cm.columns else ""
+                parts.append(f"[임상·동일성분] {len(cm)}건 · 단계: {steps or '미상'}")
+        except Exception:
+            pass
+        # 재심사(PMS)
+        try:
+            rm = _pms_match(qterm)
+            if rm is not None and not rm.empty:
+                show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE"])][:4]
+                parts.append(f"[PMS·재심사] 매칭 {len(rm)}건" + (f" · 예시 {rm.iloc[0][show].to_dict()}" if show else ""))
+        except Exception:
+            pass
+        # DMF(동일성분)
+        try:
+            dm = _dmf_match(qterm)
+            if dm is not None and not dm.empty and "ENTP_NAME" in dm.columns:
+                ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:15])
+                parts.append(f"[DMF 등록업체(동일성분)] {len(dm)}건 · {ents}")
+        except Exception:
+            pass
         return "\n".join(parts) if parts else "(데이터 매칭 없음)"
 
     def build_review_context(qterm):
@@ -650,13 +720,10 @@ with t_ai:
         except Exception:
             pass
         try:
-            if hasattr(ss, "rejdge_available") and ss.rejdge_available():
-                rj = ss.load_rejdge()
-                ncols = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in rj.columns] or [c for c in rj.columns if "NAME" in c.upper()]
-                rm = contains(rj, ncols, qterm) if ncols else rj.iloc[0:0]
-                if not rm.empty:
-                    show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE", "CODE"])][:5]
-                    L.append(f"[PMS·재심사] 매칭 {len(rm)}건 · 예시: {rm.iloc[0][show].to_dict() if show else '컬럼확인필요'}")
+            rm = _pms_match(qterm)
+            if rm is not None and not rm.empty:
+                show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE", "CODE"])][:5]
+                L.append(f"[PMS·재심사] 매칭 {len(rm)}건 · 예시: {rm.iloc[0][show].to_dict() if show else '컬럼확인필요'}")
         except Exception:
             pass
         try:
@@ -692,12 +759,10 @@ with t_ai:
         except Exception:
             pass
         try:
-            if hasattr(ss, "dmf_available") and ss.dmf_available():
-                dmf = ss.load_dmf(); ic = ss._dmf_ing_col(dmf)
-                dm = contains(dmf, [c for c in [ic, "ENTP_NAME"] if c], qterm) if (ic or "ENTP_NAME" in dmf.columns) else dmf.iloc[0:0]
-                if not dm.empty and "ENTP_NAME" in dm.columns:
-                    ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:20])
-                    L.append(f"[DMF 등록업체(동일성분)] {ents}")
+            dm = _dmf_match(qterm)
+            if dm is not None and not dm.empty and "ENTP_NAME" in dm.columns:
+                ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:20])
+                L.append(f"[DMF 등록업체(동일성분)] {len(dm)}건 · {ents}")
         except Exception:
             pass
         return "\n".join(L) if L else "(데이터 매칭 없음)"
