@@ -149,13 +149,14 @@ if PAGE is None:
     # ── 홈: 아이콘+글자를 넣은 큰 타일 (세부 분석창 숨김, 가운데 느낌으로 위 여백) ──
     st.markdown(
         "<style>"
-        "div.stButton > button{height:128px;font-size:26px;font-weight:800;color:#1f2a44;"
-        "border-radius:20px;border:1px solid #e6e8ee;background:#ffffff;"
+        "div.stButton > button{height:150px;font-size:32px;font-weight:800;color:#1f2a44;"
+        "border-radius:22px;border:1px solid #e6e8ee;background:#ffffff;"
         "box-shadow:0 1px 3px rgba(20,30,55,.06);transition:border-color .15s, box-shadow .15s, color .15s;}"
+        "div.stButton > button p{font-size:32px !important;font-weight:800 !important;}"
         "div.stButton > button:hover{border-color:#3b82f6;color:#2563eb;"
         "box-shadow:0 6px 18px rgba(59,130,246,.20);}"
         "</style>", unsafe_allow_html=True)
-    st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)  # 위 여백(가운데 느낌)
+    st.markdown("<div style='height:16vh'></div>", unsafe_allow_html=True)  # 위 여백(가운데 느낌)
     for _r in range(0, len(PAGES), 4):
         _cols = st.columns(4)
         for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
