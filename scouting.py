@@ -75,18 +75,25 @@ SRC = {
 def get(src):
     cfg = SRC[src]; df, yr = cfg["load"](); return df, yr, cfg
 
+def _nospace(sr):
+    """시리즈의 공백 제거(띄어쓰기 차이 흡수)."""
+    return sr.astype(str).str.replace(r"\s+", "", regex=True)
+
 def contains(df, cols, q):
+    # 띄어쓰기 차이 흡수: 검색어·대상 모두 공백 제거 후 리터럴 검색
+    # (regex=False: 품목명에 괄호/대괄호 등 특수문자가 있어도 정규식 오류 없이 검색)
+    qn = re.sub(r"\s+", "", str(q))
     m = pd.Series(False, index=df.index)
     for c in cols:
         if c in df.columns:
-            # regex=False: 품목명에 괄호/대괄호 등 특수문자가 있어도 리터럴 검색(정규식 오류 방지)
-            m |= df[c].astype(str).str.contains(str(q), case=False, na=False, regex=False)
+            m |= _nospace(df[c]).str.contains(qn, case=False, na=False, regex=False)
     return df[m]
 
 def sales_search(df, cfg, q):
-    """제품명/성분명 + (한글↔영문 성분키) 매칭."""
-    m = df[cfg["prod"]].astype(str).str.contains(str(q), case=False, na=False, regex=False) | \
-        df[cfg["ing"]].astype(str).str.contains(str(q), case=False, na=False, regex=False)
+    """제품명/성분명 + (한글↔영문 성분키) 매칭. 띄어쓰기 차이는 무시."""
+    qn = re.sub(r"\s+", "", str(q))
+    m = _nospace(df[cfg["prod"]]).str.contains(qn, case=False, na=False, regex=False) | \
+        _nospace(df[cfg["ing"]]).str.contains(qn, case=False, na=False, regex=False)
     keys = ss.resolve_keys(q)
     if keys:
         m = m | df[cfg["ing"]].astype(str).map(ss.ing_key).isin(keys)
@@ -177,7 +184,8 @@ def _sel_cores(basis, sel):
 def _price_trend_codes(pr, basis, term):
     """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
     if basis == "제품":
-        sub = pr[pr["제품명"].astype(str).str.contains(str(term), case=False, na=False, regex=False)]
+        tn = re.sub(r"\s+", "", str(term))
+        sub = pr[_nospace(pr["제품명"]).str.contains(tn, case=False, na=False, regex=False)]
         return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
     # 성분: 코어(염/코드 제거) 기준으로 오리지널 우선, 없으면 동일성분 전체
     core = _ing_core(term)
@@ -295,9 +303,10 @@ if PAGE == "search":
                      r"주사액|주사|프리필드시린지|건조시럽|시럽|과립|산제|산|점안액|점비액|점이액|"
                      r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$", "", q_brand)
         _terms = {t for t in {q_brand, _bt} if len(t) >= 2}
+        _prodn = _nospace(df[cfg["prod"]])   # 띄어쓰기 차이 흡수(예: '가스모틴 에스알정' ↔ '가스모틴에스알정')
         _pm = pd.Series(False, index=df.index)
         for _t in _terms:
-            _pm = _pm | df[cfg["prod"]].astype(str).str.contains(_t, case=False, na=False, regex=False)
+            _pm = _pm | _prodn.str.contains(_t, case=False, na=False, regex=False)
         hit, _by_ing = df[_pm], False
         if hit.empty and cores and cfg["ing"] in df.columns:   # 제품명 매칭 실패 → 동일성분 매출로 폴백
             hit = df[df[cfg["ing"]].astype(str).map(_ing_core).isin(cores)]
