@@ -290,16 +290,31 @@ if PAGE == "search":
 
     if q:
         df, yr, cfg = get(src1)
-        hit = sales_search(df, cfg, q_brand)
+        # 매출 매칭: ① 브랜드 코어 ② 제형어(정/캡슐/주 등) 제거한 더 짧은 브랜드 토큰으로 제품명 검색
+        _bt = re.sub(r"(서방정|속붕정|장용정|설하정|츄어블정|구강붕해정|정제|정|연질캡슐|경질캡슐|캡슐|"
+                     r"주사액|주사|프리필드시린지|건조시럽|시럽|과립|산제|산|점안액|점비액|점이액|"
+                     r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$", "", q_brand)
+        _terms = {t for t in {q_brand, _bt} if len(t) >= 2}
+        _pm = pd.Series(False, index=df.index)
+        for _t in _terms:
+            _pm = _pm | df[cfg["prod"]].astype(str).str.contains(_t, case=False, na=False, regex=False)
+        hit, _by_ing = df[_pm], False
+        if hit.empty and cores and cfg["ing"] in df.columns:   # 제품명 매칭 실패 → 동일성분 매출로 폴백
+            hit = df[df[cfg["ing"]].astype(str).map(_ing_core).isin(cores)]
+            _by_ing = not hit.empty
         if not hit.empty:
             s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
             k = st.columns(4)
-            k[0].metric(f"최신연도({year_of(yr[-1])}) 매출", f"{s.iloc[-1]/1e8:,.1f} 억")
+            k[0].metric(("동일성분 " if _by_ing else "") + f"최신연도({year_of(yr[-1])}) 매출", f"{s.iloc[-1]/1e8:,.1f} 억")
             k[1].metric("매출 CAGR", f"{cg:+.1f}%" if cg is not None else "—")
             k[2].metric("매출상 제조사", f"{hit[cfg['maker']].nunique()} 곳")
-            k[3].metric("성분 수", f"{hit[cfg['ing']].nunique()} 종")
+            k[3].metric("품목 수" if _by_ing else "성분 수",
+                        f"{len(hit)} 품목" if _by_ing else f"{hit[cfg['ing']].nunique()} 종")
+            if _by_ing:
+                st.caption("※ 제품명 직접 매칭이 없어 '동일성분' 매출을 합산해 보여줍니다.")
         else:
-            st.info(f"{src1} 매출 매칭 없음 (허가/특허/임상/약가는 아래 확인)")
+            st.info(f"{src1} 매출 매칭 없음 — 이 제품/성분이 {src1} 매출 파일에 없을 수 있어요 "
+                    f"(‘매출 분석’ 탭에서 직접 검색해 확인). 허가/특허/임상/약가는 아래 확인)")
         tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사(PMS)", "🧬 DMF(동일성분)"])
         with tabs[0]:
             if HAS_REG:
