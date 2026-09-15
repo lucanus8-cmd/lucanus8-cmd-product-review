@@ -216,41 +216,53 @@ PAGES = [
     ("🤖", "AI 분석", "ai"),
     ("ℹ️", "상태", "status"),
 ]
-if "page" not in st.session_state:
-    st.session_state["page"] = None   # 처음엔 홈(세부창 숨김)
-PAGE = st.session_state["page"]
+# 페이지 상태는 URL 쿼리(?page=)로 관리 → 홈의 원형 아이콘(HTML 링크) 클릭으로도 전환됨
+_qp = st.query_params.get("page")
+PAGE = None if _qp in (None, "", "home") else _qp
+
+# 홈 타일: (글자, 라벨, 키, 색) — UBIST 스타일 원형 아이콘
+HOME_TILES = [
+    ("종", "제품 종합분석", "search", "#5b6ef5"),
+    ("제", "제품 제안", "sugg", "#e8842a"),
+    ("매", "매출 분석", "sales", "#4e9e63"),
+    ("특", "특허 분석", "patent", "#8b5cf6"),
+    ("임", "임상 분석", "clinical", "#5fb0e8"),
+    ("약", "약가 분석", "price", "#c9376b"),
+    ("AI", "AI 분석", "ai", "#1c2030"),
+    ("상", "상태", "status", "#6b7280"),
+]
 
 if PAGE is None:
-    # ── 홈: 아이콘+글자를 넣은 큰 타일 (세부 분석창 숨김, 가운데 느낌으로 위 여백) ──
-    st.markdown(
-        "<style>"
-        "div.stButton > button{height:150px;font-size:32px;font-weight:800;color:#1f2a44;"
-        "border-radius:22px;border:1px solid #e6e8ee;background:#ffffff;"
-        "box-shadow:0 1px 3px rgba(20,30,55,.06);transition:border-color .15s, box-shadow .15s, color .15s;}"
-        "div.stButton > button p{font-size:32px !important;font-weight:800 !important;}"
-        "div.stButton > button:hover{border-color:#3b82f6;color:#2563eb;"
-        "box-shadow:0 6px 18px rgba(59,130,246,.20);}"
-        "</style>", unsafe_allow_html=True)
-    st.markdown("<div style='height:16vh'></div>", unsafe_allow_html=True)  # 위 여백(가운데 느낌)
-    for _r in range(0, len(PAGES), 4):
-        _cols = st.columns(4)
-        for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
-            if _cols[_i].button(f"{_icon}  {_label}", key=f"home_{_key}", use_container_width=True):
-                st.session_state["page"] = _key
-                st.rerun()
-        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+    .hgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:36px 8px;max-width:900px;margin:5vh auto 0;}
+    .htile,.htile:hover,.htile *{text-decoration:none !important;}
+    .htile{display:flex;flex-direction:column;align-items:center;}
+    .hcircle{width:132px;height:132px;border-radius:50%;background:#fff;border:1px solid #edeff3;
+             box-shadow:0 2px 10px rgba(20,30,55,.06);display:flex;align-items:center;justify-content:center;
+             transition:box-shadow .15s, border-color .15s, transform .15s;}
+    .htile:hover .hcircle{border-color:#c7d2fe;box-shadow:0 10px 24px rgba(59,130,246,.22);transform:translateY(-2px);}
+    .hsq{width:88px;height:88px;border-radius:22px;display:flex;align-items:center;justify-content:center;
+         color:#fff;font-weight:800;font-size:38px;letter-spacing:-.02em;}
+    .hlabel{margin-top:14px;color:#5b6472;font-size:15px;font-weight:600;}
+    @media (max-width:760px){.hgrid{grid-template-columns:repeat(2,1fr);gap:28px 8px;}}
+    </style>""", unsafe_allow_html=True)
+    _tiles = "".join(
+        f'<a class="htile" href="?page={k}" target="_self">'
+        f'<div class="hcircle"><div class="hsq" style="background:{col}">{ic}</div></div>'
+        f'<div class="hlabel">{lb}</div></a>'
+        for ic, lb, k, col in HOME_TILES)
+    st.markdown(f'<div class="hgrid">{_tiles}</div>', unsafe_allow_html=True)
     st.stop()
 
 # ── 진입 후: 상단 텍스트 네비 (홈 + 8개, 글자만) ──
 _nav = st.columns(len(PAGES) + 1)
-if _nav[0].button("홈", key="nav_home", use_container_width=True):
-    st.session_state["page"] = None
-    st.rerun()
+if _nav[0].button("🏠 홈", key="nav_home", use_container_width=True):
+    st.query_params["page"] = "home"; st.rerun()
 for _i, (_icon, _label, _key) in enumerate(PAGES):
     if _nav[_i + 1].button(_label, key=f"nav_{_key}", use_container_width=True,
                            type=("primary" if PAGE == _key else "secondary")):
-        st.session_state["page"] = _key
-        st.rerun()
+        st.query_params["page"] = _key; st.rerun()
 st.markdown("<hr style='border:none;border-top:2px solid #3b82f6;margin:.4rem 0 1rem'>", unsafe_allow_html=True)
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
