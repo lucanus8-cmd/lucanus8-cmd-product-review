@@ -126,23 +126,62 @@ def yearly_matrix(price_df, codes, name_map):
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 
+# 염·수화물 접미어(성분 코어 추출용) — 긴 것부터 매칭
+_SALT_SUFFIX = sorted([
+    "브롬화수소산염", "메탄술폰산염", "타르타르산염", "말레산염", "푸마르산염", "숙신산염",
+    "베실산염", "메실산염", "토실산염", "글루콘산염", "구연산염", "시트르산염", "주석산염",
+    "아세트산염", "초산염", "젖산염", "염산염", "황산염", "인산염", "질산염", "탄산염", "중탄산염",
+    "이나트륨", "일나트륨", "칼슘", "칼륨", "나트륨", "마그네슘", "아연",
+    "삼수화물", "이수화물", "일수화물", "반수화물", "사수화물", "수화물", "무수물", "무수", "염",
+], key=len, reverse=True)
+
+def _ing_core(s):
+    """성분명 정규화 → 코어 토큰. '[코드]'·괄호·공백·염/수화물 접미어 제거, 조합제는 첫 성분."""
+    s = re.sub(r"\[[^\]]*\]", "", str(s or ""))   # [M270797] 등 코드 제거
+    s = re.sub(r"\([^)]*\)", "", s)                # (…) 제거
+    s = re.sub(r"\s+", "", s)
+    s = re.split(r"[/,]|및|\+", s)[0]              # 조합제 → 첫 성분
+    changed = True
+    while changed:                                 # 염+수화물 중첩 표기 반복 제거
+        changed = False
+        for suf in _SALT_SUFFIX:
+            if s.endswith(suf) and len(s) > len(suf) + 1:
+                s = s[: -len(suf)]; changed = True
+                break
+    return s.strip()
+
 @st.cache_data(show_spinner="허가 목록 준비 중…")
 def _approval_opts(basis):
-    """허가 제품목록에서 선택용 옵션(제품명/주성분) 정렬 리스트."""
+    """허가 제품목록에서 선택용 옵션. 제품명=품목명 전체, 주성분=코어(코드/염 제거·중복 제거)."""
     if not HAS_REG:
         return []
     ap = ss.load_approval()
-    col = "품목명" if basis == "제품명" else "주성분"
-    if col not in ap.columns:
+    if basis == "제품명":
+        if "품목명" not in ap.columns:
+            return []
+        return sorted({str(x).strip() for x in ap["품목명"].dropna() if str(x).strip()})
+    if "주성분" not in ap.columns:
         return []
-    return sorted({str(x).strip() for x in ap[col].dropna() if str(x).strip()})
+    return sorted({c for c in (_ing_core(x) for x in ap["주성분"].dropna()) if len(c) >= 2})
+
+def _sel_cores(basis, sel):
+    """선택값 → 동일성분 코어 토큰 집합. 제품명이면 그 품목의 주성분들을 코어로."""
+    if basis == "성분":
+        return {_ing_core(sel)} if _ing_core(sel) else set()
+    if not HAS_REG:
+        return set()
+    ap = ss.load_approval()
+    row = ap[ap.get("품목명", pd.Series(dtype=str)).astype(str) == str(sel)]
+    return {c for c in (_ing_core(x) for x in row.get("주성분", pd.Series(dtype=str)).dropna()) if len(c) >= 2}
 
 def _price_trend_codes(pr, basis, term):
     """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
     if basis == "제품":
         sub = pr[pr["제품명"].astype(str).str.contains(str(term), case=False, na=False, regex=False)]
         return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
-    keys = ss.resolve_keys(term)
+    # 성분: 코어(염/코드 제거) 기준으로 오리지널 우선, 없으면 동일성분 전체
+    core = _ing_core(term)
+    keys = ss.resolve_keys(term) | ss.resolve_keys(core)
     origs = ss.original_products(keys) if keys else []
     pref = {re.split(r"[0-9]", re.sub(r"\s", "", o))[0] for o in origs}
     pref = {p for p in pref if len(p) >= 2}
@@ -150,7 +189,7 @@ def _price_trend_codes(pr, basis, term):
         sub = pr[pr["제품명"].astype(str).apply(
             lambda n: any(re.sub(r"\s", "", str(n)).startswith(p) for p in pref))]
     else:
-        sub = pr[pr["주성분명"].astype(str).str.contains(str(term), case=False, na=False, regex=False)]
+        sub = pr[pr["주성분명"].astype(str).map(_ing_core) == core] if core else pr.iloc[0:0]
     return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
 
 # 좌측 상단 제목
@@ -214,26 +253,24 @@ if PAGE == "search":
     sel = c1.selectbox(f"허가 제품목록에서 {basis} 선택 (입력해 검색)", ["(선택하세요)"] + _opts, key="s_sel")
     src1 = c2.radio("매출 자료원", ["IQVIA", "UBIST"], key="s1")
     q = "" if sel == "(선택하세요)" else sel
-    # 선택값 해석: 제품명이면 데이터셋 매칭용 '브랜드 핵심어'(숫자/괄호 앞) + 동일성분 키,
-    #            주성분이면 그대로 사용. (전체 품목명은 매출·약가·재심사와 글자가 달라 매칭 안 됨)
-    q_brand, ing_keys, kor_ings = q, set(), set()
+    # 선택값 해석: 제품명이면 '브랜드 핵심어'(숫자/괄호 앞) + 그 품목의 동일성분,
+    #            주성분(코어)이면 그 코어. 동일성분은 성분 '코어'(코드/염/수화물 제거)로 매칭한다.
+    q_brand, ing_keys, cores = q, set(), set()
     if q and basis == "제품명":
         q_brand = re.split(r"[0-9(\[]", re.sub(r"\s+", "", q))[0] or q
         if HAS_REG:
             _r = ss.load_approval()
-            _r = _r[_r["품목명"] == q]
-            ing_keys = {k for k in (ss.ing_key(x) for x in _r["주성분(영문)"].dropna()) if k}
-    elif q:  # 주성분 선택
+            _r = _r[_r.get("품목명", pd.Series(dtype=str)).astype(str) == q]
+            ing_keys = {k for k in (ss.ing_key(x) for x in _r.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
+            cores = {c for c in (_ing_core(x) for x in _r.get("주성분", pd.Series(dtype=str)).dropna()) if len(c) >= 2}
+    elif q:  # 주성분(코어) 선택
+        cores = {_ing_core(q)} if len(_ing_core(q)) >= 2 else set()
         ing_keys = ss.resolve_keys(q)
-        kor_ings.add(q)
-    # 동일성분 한글 성분어(약가 주성분명·임상 성분명은 한글이라 영문 _key로는 못 붙음)
-    if HAS_REG and ing_keys:
+    # 동일성분 허가행에서 영문키 보강(주성분 영문이 일부 품목에만 있는 경우 대비)
+    if HAS_REG and cores:
         _ap0 = ss.load_approval()
-        for _v in _ap0[_ap0["_key"].isin(ing_keys)]["주성분"].dropna().astype(str):
-            for _t in re.split(r"[,/()]|및|\+|\s", _v):
-                _t = _t.strip()
-                if len(_t) >= 2:
-                    kor_ings.add(_t)
+        _same = _ap0[_ap0.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core).isin(cores)]
+        ing_keys |= {k for k in (ss.ing_key(x) for x in _same.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
 
     def _ing_union(df, base):
         """동일성분(영문 _key) 매칭 행을 기존 결과에 추가(있는 것만 더함, 제거 없음)."""
@@ -244,9 +281,9 @@ if PAGE == "search":
         return base
 
     def _kor_union(df, base, col):
-        """동일성분 한글명(col) 매칭 행을 기존 결과에 추가(약가·임상용)."""
-        if kor_ings and col in df.columns:
-            add = df[df[col].astype(str).apply(lambda s: any(k in s for k in kor_ings))]
+        """동일성분 코어(col을 정규화해 비교) 매칭 행을 추가(약가 주성분명·임상 성분명용)."""
+        if cores and col in df.columns:
+            add = df[df[col].astype(str).map(_ing_core).isin(cores)]
             if not add.empty:
                 return pd.concat([base, add]).drop_duplicates()
         return base
@@ -266,14 +303,16 @@ if PAGE == "search":
         tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이벤트", "🔁 재심사(PMS)", "🧬 DMF(동일성분)"])
         with tabs[0]:
             if HAS_REG:
-                ap = ss.load_approval(); m = _ing_union(ap, contains(ap, ["품목명", "주성분", "주성분(영문)"], q))
+                ap = ss.load_approval()
+                m = _kor_union(ap, _ing_union(ap, contains(ap, ["품목명", "주성분", "주성분(영문)"], q)), "주성분")
                 st.caption(f"허가 {len(m):,}건 · 업체 {m['업체명'].nunique()}곳 · 신약 {int((m['신약구분']=='신약').sum())}건")
                 cc = [c for c in ["품목명", "업체명", "허가일자", "전문/일반", "주성분", "신약구분", "상태", "보험코드(EDI)"] if c in m.columns]
                 st.dataframe(m[cc].sort_values("허가일자", ascending=False), use_container_width=True, height=300, hide_index=True)
             else: st.info("허가 데이터 미연결")
         with tabs[1]:
             if HAS_REG:
-                pt = ss.load_patent(); m = _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)).copy()
+                pt = ss.load_patent()
+                m = _kor_union(pt, _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)), "INGR_NAME").copy()
                 m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
                 st.caption(f"특허 {len(m):,}건 · 등록 {int(m['DOMESTIC_PATENT_STATUS'].str.contains('등록', na=False).sum())}건")
                 cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
@@ -424,23 +463,13 @@ if PAGE == "search":
                 st.info("DMF 데이터 미연결 (구글시트의 DMF 탭이 서비스계정에 공유됐는지 확인)")
             else:
                 ing_col = ss._dmf_ing_col(dmf)
-                kor_ings = set()
-                if HAS_REG:
-                    ap = ss.load_approval()
-                    hitap = contains(ap, ["품목명", "주성분", "주성분(영문)"], q)
-                    for v in hitap["주성분"].dropna().astype(str):
-                        for t in re.split(r"[,/()]|및|\+|\s", v):
-                            t = t.strip()
-                            if len(t) >= 2:
-                                kor_ings.add(t)
                 name_cols = [c for c in [ing_col, "ENTP_NAME"] if c]
                 m = contains(dmf, name_cols, q) if name_cols else dmf.iloc[0:0]
-                if ing_col and kor_ings:
-                    same = dmf[dmf[ing_col].astype(str).apply(
-                        lambda s: any(k and (k in s or s in k) for k in kor_ings))]
+                if ing_col and cores:  # 동일성분(코어) DMF 추가
+                    same = dmf[dmf[ing_col].astype(str).map(_ing_core).isin(cores)]
                     m = pd.concat([m, same]).drop_duplicates()
                 st.caption(f"동일성분 DMF {len(m):,}건 (전체 {len(dmf):,}건)"
-                           + (f" · 매칭 성분: {', '.join(sorted(kor_ings)[:6])}" if kor_ings else ""))
+                           + (f" · 매칭 성분: {', '.join(sorted(cores)[:6])}" if cores else ""))
                 if m.empty:
                     st.info("동일성분 DMF 매칭 없음")
                 else:
@@ -722,10 +751,12 @@ if PAGE == "price":
                 last = hist.groupby("제품코드").last()["금액"].rename("최신가")
                 drop = pd.concat([first, last], axis=1).dropna()
                 drop["인하율%"] = ((drop["최신가"] - drop["최초가"]) / drop["최초가"] * 100).round(1)
-                drop = drop.join(latest.set_index("제품코드")[["제품명", "업체명"]]).reset_index()
-                st.dataframe(drop.nsmallest(20, "인하율%")[["제품명", "업체명", "최초가", "최신가", "인하율%"]],
+                _meta = [c for c in ["제품명", "업체명"] if c in latest.columns]
+                drop = drop.join(latest.set_index("제품코드")[_meta]).reset_index()
+                st.dataframe(drop.nsmallest(20, "인하율%")[[c for c in ["제품명", "업체명", "최초가", "최신가", "인하율%"] if c in drop.columns]],
                              use_container_width=True, height=240, hide_index=True)
-                deleted = latest[latest["급여구분"] == "삭제"][["제품명", "업체명", "주성분명", "적용일자"]]
+                _dcols = [c for c in ["제품명", "업체명", "주성분명", "적용일자"] if c in latest.columns]
+                deleted = latest[latest["급여구분"] == "삭제"][_dcols]
                 st.dataframe(deleted.sort_values("적용일자", ascending=False).head(30), use_container_width=True, height=200, hide_index=True)
 
 # ══════════════════════════ AI 분석 (Gemini) ══════════════════════════
@@ -734,16 +765,18 @@ if PAGE == "ai":
     st.subheader("🤖 AI 분석 (Gemini)")
 
     def _kor_ings(qterm):
-        """검색어에 해당하는 허가 주성분(한글) 토큰 집합 (동일성분 매칭용)."""
+        """검색어에 해당하는 허가 주성분 코어(코드/염 제거) 집합 (동일성분 매칭용)."""
         kor = set()
         try:
             if HAS_REG:
                 ap = ss.load_approval(); hitap = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
                 for v in hitap["주성분"].dropna().astype(str):
-                    for t in re.split(r"[,/()]|및|\+|\s", v):
-                        t = t.strip()
-                        if len(t) >= 2:
-                            kor.add(t)
+                    c = _ing_core(v)
+                    if len(c) >= 2:
+                        kor.add(c)
+            c0 = _ing_core(qterm)
+            if len(c0) >= 2:
+                kor.add(c0)
         except Exception:
             pass
         return kor
@@ -760,7 +793,7 @@ if PAGE == "ai":
             m = contains(dmf, [c for c in [ic, "ENTP_NAME"] if c], qterm)
             kor = _kor_ings(qterm)
             if ic and kor:
-                same = dmf[dmf[ic].astype(str).apply(lambda s: any(k and (k in s or s in k) for k in kor))]
+                same = dmf[dmf[ic].astype(str).map(_ing_core).isin(kor)]
                 m = pd.concat([m, same]).drop_duplicates()
             return m
         except Exception:
