@@ -146,30 +146,37 @@ if "page" not in st.session_state:
 PAGE = st.session_state["page"]
 
 if PAGE is None:
-    # ── 홈: 큰 아이콘만 표시 (세부 분석창 숨김) ──
-    st.markdown("<style>div.stButton > button{height:130px;font-size:19px;font-weight:700;"
-                "border-radius:18px;line-height:1.7;}</style>", unsafe_allow_html=True)
+    # ── 홈: 큰 아이콘 타일만 표시 (세부 분석창 숨김) ──
+    st.markdown(
+        "<style>"
+        "div.stButton > button{height:96px;font-size:44px;border-radius:18px;"
+        "border:1px solid #e6e8ee;background:#ffffff;box-shadow:0 1px 3px rgba(20,30,55,.06);"
+        "transition:border-color .15s, box-shadow .15s;}"
+        "div.stButton > button:hover{border-color:#3b82f6;box-shadow:0 4px 14px rgba(59,130,246,.18);}"
+        "</style>", unsafe_allow_html=True)
     st.write("")
     for _r in range(0, len(PAGES), 4):
         _cols = st.columns(4)
         for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
-            if _cols[_i].button(f"{_icon}\n\n{_label}", key=f"home_{_key}", use_container_width=True):
-                st.session_state["page"] = _key
-                st.rerun()
+            with _cols[_i]:
+                if st.button(_icon, key=f"home_{_key}", use_container_width=True):
+                    st.session_state["page"] = _key
+                    st.rerun()
+                st.markdown(
+                    f"<div style='text-align:center;font-size:16px;font-weight:600;"
+                    f"color:#374151;margin:2px 0 14px'>{_label}</div>", unsafe_allow_html=True)
     st.stop()
 
-# ── 진입 후: 상단 작은 아이콘 네비 (홈 + 8개) ──
+# ── 진입 후: 상단 텍스트 네비 (홈 + 8개, 글자만) ──
 _nav = st.columns(len(PAGES) + 1)
-if _nav[0].button("🏠", key="nav_home", use_container_width=True, help="홈으로"):
+if _nav[0].button("홈", key="nav_home", use_container_width=True):
     st.session_state["page"] = None
     st.rerun()
 for _i, (_icon, _label, _key) in enumerate(PAGES):
-    if _nav[_i + 1].button(_icon, key=f"nav_{_key}", use_container_width=True,
-                           help=_label, type=("primary" if PAGE == _key else "secondary")):
+    if _nav[_i + 1].button(_label, key=f"nav_{_key}", use_container_width=True,
+                           type=("primary" if PAGE == _key else "secondary")):
         st.session_state["page"] = _key
         st.rerun()
-_curname = next((l for ic, l, k in PAGES if k == PAGE), "")
-st.markdown(f"<div style='font-size:15px;font-weight:700;margin:4px 0 2px'>{_curname}</div>", unsafe_allow_html=True)
 st.divider()
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
