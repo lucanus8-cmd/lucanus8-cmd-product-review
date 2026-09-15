@@ -146,23 +146,23 @@ if "page" not in st.session_state:
 PAGE = st.session_state["page"]
 
 if PAGE is None:
-    # ── 홈: 글자를 넣은 큰 타일 (세부 분석창 숨김) ──
+    # ── 홈: 아이콘+글자를 넣은 큰 타일 (세부 분석창 숨김, 가운데 느낌으로 위 여백) ──
     st.markdown(
         "<style>"
-        "div.stButton > button{height:104px;font-size:22px;font-weight:700;color:#1f2a44;"
-        "border-radius:18px;border:1px solid #e6e8ee;background:#ffffff;"
+        "div.stButton > button{height:128px;font-size:26px;font-weight:800;color:#1f2a44;"
+        "border-radius:20px;border:1px solid #e6e8ee;background:#ffffff;"
         "box-shadow:0 1px 3px rgba(20,30,55,.06);transition:border-color .15s, box-shadow .15s, color .15s;}"
         "div.stButton > button:hover{border-color:#3b82f6;color:#2563eb;"
-        "box-shadow:0 4px 14px rgba(59,130,246,.18);}"
+        "box-shadow:0 6px 18px rgba(59,130,246,.20);}"
         "</style>", unsafe_allow_html=True)
-    st.write("")
+    st.markdown("<div style='height:9vh'></div>", unsafe_allow_html=True)  # 위 여백(가운데 느낌)
     for _r in range(0, len(PAGES), 4):
         _cols = st.columns(4)
         for _i, (_icon, _label, _key) in enumerate(PAGES[_r:_r + 4]):
-            if _cols[_i].button(_label, key=f"home_{_key}", use_container_width=True):
+            if _cols[_i].button(f"{_icon}  {_label}", key=f"home_{_key}", use_container_width=True):
                 st.session_state["page"] = _key
                 st.rerun()
-        st.write("")
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     st.stop()
 
 # ── 진입 후: 상단 텍스트 네비 (홈 + 8개, 글자만) ──
@@ -175,7 +175,7 @@ for _i, (_icon, _label, _key) in enumerate(PAGES):
                            type=("primary" if PAGE == _key else "secondary")):
         st.session_state["page"] = _key
         st.rerun()
-st.divider()
+st.markdown("<hr style='border:none;border-top:2px solid #3b82f6;margin:.4rem 0 1rem'>", unsafe_allow_html=True)
 
 # ══════════════════════════ 제품 종합분석 ══════════════════════════
 if PAGE == "search":
