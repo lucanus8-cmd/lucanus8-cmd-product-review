@@ -136,6 +136,7 @@ def nego_years(prodname):
 REJDGE_SHEET_ID = "1UDZJamAl9UJnnNNgb-HfuSdLu3Cb_-ybVQvmuVqYfQE"
 REJDGE_TAB = "재심사"
 DMF_SHEET_ID = REJDGE_SHEET_ID  # 같은 스프레드시트로 가정(다르면 이 값만 교체)
+DMF_XLSX_ID = "1Zi2IJmuCCFRWusctSWn42FE2fZ1CYLti"  # 업로드한 DMF 전체 목록 엑셀
 
 def _sheet_values(sheet_id, tab):
     import bootstrap
@@ -169,37 +170,82 @@ def rejdge_available():
     except Exception:
         return False
 
+def _norm_dmf_cols(df):
+    """DMF 자료의 다양한 컬럼명을 표준명으로 정규화(성분/업체/제조원/제조국/등록일/번호)."""
+    ren, used = {}, set()
+    for c in df.columns:
+        cs = str(c).strip(); u = cs.upper()
+        if ("성분" in cs or "원료의약품" in cs or "원료명" in cs or "INGR" in u) and "INGR_KOR_NAME" not in used:
+            ren[c] = "INGR_KOR_NAME"; used.add("INGR_KOR_NAME")
+        elif ("제조원" in cs or "제조소" in cs or "원제조" in cs or "MNFCTR" in u) and "MNFCTR_NAME" not in used:
+            ren[c] = "MNFCTR_NAME"; used.add("MNFCTR_NAME")
+        elif ("제조국" in cs or "국가" in cs or "원산지" in cs or "COUNTRY" in u) and "MANUF_COUNTRY_CODE_NM" not in used:
+            ren[c] = "MANUF_COUNTRY_CODE_NM"; used.add("MANUF_COUNTRY_CODE_NM")
+        elif ("업소" in cs or "업체" in cs or "수입" in cs or "신고" in cs or "ENTP" in u) and "ENTP_NAME" not in used:
+            ren[c] = "ENTP_NAME"; used.add("ENTP_NAME")
+        elif ("등록일" in cs or "일자" in cs or ("DATE" in u)) and "DMF_PERMIT_DATE" not in used:
+            ren[c] = "DMF_PERMIT_DATE"; used.add("DMF_PERMIT_DATE")
+        elif ("등록번호" in cs or "공고번호" in cs or ("번호" in cs) or ("DMF" in u)) and "DMF_PERMIT_NO" not in used:
+            ren[c] = "DMF_PERMIT_NO"; used.add("DMF_PERMIT_NO")
+    return df.rename(columns=ren)
+
+def _load_dmf_sheet():
+    """구글시트의 DMF 탭(API 수집분) 자동 탐지해 읽음."""
+    import bootstrap
+    from googleapiclient.discovery import build
+    creds = bootstrap._creds()
+    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    meta = (sheets.spreadsheets().get(spreadsheetId=DMF_SHEET_ID,
+            fields="sheets.properties(title)").execute())
+    titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    cand = [t for t in titles if not t.startswith("_") and t != REJDGE_TAB]
+    pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t or "원약" in t), None)
+    if pick is None:
+        for t in cand:
+            head = (sheets.spreadsheets().values()
+                    .get(spreadsheetId=DMF_SHEET_ID, range=f"{t}!1:1").execute()
+                    .get("values", [[]]))
+            hdr = " ".join(str(c).upper() for c in (head[0] if head else []))
+            if any(k in hdr for k in ("DMF", "INGR_KOR", "INGR_NAME", "원료", "제조원", "제조소", "성분")):
+                pick = t; break
+    if pick is None and len(cand) == 1:
+        pick = cand[0]
+    if pick is None:
+        return pd.DataFrame()
+    return _norm_dmf_cols(_values_to_df(_sheet_values(DMF_SHEET_ID, pick)))
+
+def _load_dmf_xlsx():
+    """업로드한 DMF 전체 목록 엑셀을 서비스계정으로 읽어 정규화."""
+    import bootstrap
+    from googleapiclient.discovery import build
+    creds = bootstrap._creds()
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    df = pd.read_excel(bootstrap._download(drive, DMF_XLSX_ID), dtype=str).fillna("")
+    df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
+    df = df[[c for c in df.columns if c and not c.startswith("Unnamed")]]
+    return _norm_dmf_cols(df)
+
 @st.cache_data(ttl=6 * 3600, show_spinner="DMF 로딩 중…")
 def load_dmf():
-    """DMF 탭을 자동 탐지(이름 DMF/원료 또는 헤더 DMF_/INGR_KOR_NA)해 읽음. 실패 시 빈 DF."""
-    try:
-        import bootstrap
-        from googleapiclient.discovery import build
-        creds = bootstrap._creds()
-        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        meta = (sheets.spreadsheets().get(spreadsheetId=DMF_SHEET_ID,
-                fields="sheets.properties(title)").execute())
-        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
-        cand = [t for t in titles if not t.startswith("_") and t != REJDGE_TAB]
-        # 1) 탭 이름으로 인식
-        pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t or "원약" in t), None)
-        # 2) 헤더 신호로 인식(표기 폭넓게 허용)
-        if pick is None:
-            for t in cand:
-                head = (sheets.spreadsheets().values()
-                        .get(spreadsheetId=DMF_SHEET_ID, range=f"{t}!1:1").execute()
-                        .get("values", [[]]))
-                hdr = " ".join(str(c).upper() for c in (head[0] if head else []))
-                if any(k in hdr for k in ("DMF", "INGR_KOR", "INGR_NAME", "원료", "제조원", "제조소", "성분")):
-                    pick = t; break
-        # 3) 재심사 외 후보가 하나뿐이면 그 탭을 DMF로 사용
-        if pick is None and len(cand) == 1:
-            pick = cand[0]
-        if pick is None:
-            return pd.DataFrame()
-        return _values_to_df(_sheet_values(DMF_SHEET_ID, pick))
-    except Exception:
+    """DMF = 구글시트(API 수집분) + 업로드 엑셀(전체 목록)을 합쳐서 반환. 실패분은 건너뜀."""
+    frames = []
+    for _fn in (_load_dmf_sheet, _load_dmf_xlsx):
+        try:
+            d = _fn()
+            if d is not None and not d.empty:
+                frames.append(d)
+        except Exception:
+            pass
+    if not frames:
         return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+    # 성분·업체·번호 기준 중복 제거(가능한 컬럼만)
+    keys = [c for c in ["INGR_KOR_NAME", "ENTP_NAME", "DMF_PERMIT_NO"] if c in out.columns]
+    if keys:
+        out = out.drop_duplicates(subset=keys)
+    else:
+        out = out.drop_duplicates()
+    return out.reset_index(drop=True)
 
 def dmf_available():
     try:
