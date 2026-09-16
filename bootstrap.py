@@ -129,8 +129,11 @@ def _parse_ubist(buf):
         r0 = str(r0).strip() if pd.notna(r0) else ""
         r1 = str(r1).strip() if pd.notna(r1) else ""
         if r0 in METRICS:
-            mq = re.search(r"(\d{4})\s*년\s*(\d)\s*분기", r1)
-            my = re.search(r"(\d{4})\s*년", r1)
+            # 분기 표기 변형 허용: "2023년 4분기", "2023년 4/4분기", "2023 4Q", "2023년4/4" 등
+            mq = (re.search(r"(\d{4})\s*년?\s*([1-4])\s*/?\s*4?\s*분기", r1)
+                  or re.search(r"(\d{4})\D*?Q\s*([1-4])", r1, re.IGNORECASE)
+                  or re.search(r"(\d{4})\D*?([1-4])\s*/\s*4", r1))
+            my = re.search(r"(\d{4})", r1)
             cols.append(f"{r0}_{mq.group(1)}Q{mq.group(2)}" if mq else
                         (f"{r0}_{my.group(1)}Q0" if my else f"{r0}_{r1}"))
         else:
@@ -146,12 +149,18 @@ def _parse_ubist(buf):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     df = df.dropna(subset=["제품명"]); df = df[df["제품명"].astype(str).str.strip() != ""]
     for metric in METRICS:
-        qc = {}
+        # 연간 합계 = 해당 metric의 그 연도 모든 기간 컬럼 합(Q1~Q4는 물론 분기표기 인식 실패분 Q0,
+        # 중복표기 _1 등도 포함) → 특정 분기 헤더가 조금 달라도 연간에서 누락되지 않도록.
+        yc = {}
         for c in df.columns:
-            m = re.match(rf"{re.escape(metric)}_(\d{{4}})Q([1-4])$", c)
-            if m:
-                qc.setdefault(m.group(1), []).append(c)
-        for yr, cs in qc.items():
+            if not c.startswith(metric + "_"):
+                continue
+            if re.search(r"\d{4}년$", c):      # 이미 만든 연간 결과 컬럼은 제외
+                continue
+            ym = re.search(r"(\d{4})", c)
+            if ym:
+                yc.setdefault(ym.group(1), []).append(c)
+        for yr, cs in yc.items():
             df[f"{metric}_{yr}년"] = df[cs].sum(axis=1)
     if "성분" in df.columns:
         pat = re.compile(r"(\d+\.?\d*\s?(?:mg|mcg|µg|ug|g|ml|mL|L|IU|단위|%|㎎|㎍|㎕|㎖|㏖|㎏|㎗))", re.IGNORECASE)
