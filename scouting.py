@@ -546,13 +546,22 @@ if PAGE == "search":
                 ing_col = ss._dmf_ing_col(dmf)
                 name_cols = [c for c in [ing_col, "ENTP_NAME"] if c]
                 m = contains(dmf, name_cols, q) if name_cols else dmf.iloc[0:0]
-                if ing_col and cores:  # 동일성분(코어) DMF 추가
-                    same = dmf[dmf[ing_col].astype(str).map(_ing_core).isin(cores)]
+                if ing_col and cores:  # 동일성분: 코어 일치 또는 부분일치(염/영문 병기 등 흡수)
+                    def _dmf_hit(s):
+                        sc = _ing_core(s); sn = re.sub(r"\s+", "", str(s))
+                        return any(c and (c == sc or c in sn or (len(c) >= 3 and c in sc)) for c in cores)
+                    same = dmf[dmf[ing_col].astype(str).apply(_dmf_hit)]
                     m = pd.concat([m, same]).drop_duplicates()
                 st.caption(f"동일성분 DMF {len(m):,}건 (전체 {len(dmf):,}건)"
                            + (f" · 매칭 성분: {', '.join(sorted(cores)[:6])}" if cores else ""))
                 if m.empty:
                     st.info("동일성분 DMF 매칭 없음")
+                    # 진단: DMF 성분 컬럼과 실제 표기 예시(왜 매칭 안 되는지 확인용)
+                    if ing_col:
+                        _samp = sorted({str(x).strip() for x in dmf[ing_col].dropna() if str(x).strip()})[:12]
+                        st.caption(f"· DMF 성분 컬럼: **{ing_col}** · 표기 예시: {', '.join(_samp) if _samp else '(비어있음)'}")
+                    else:
+                        st.caption(f"· DMF 성분 컬럼을 못 찾음 · 전체 컬럼: {', '.join(map(str, dmf.columns))}")
                 else:
                     label = {"INGR_KOR_NAME": "성분(한글)", "INGR_KOR_NA": "성분(한글)", "INGR_NAME": "성분",
                              "ENTP_NAME": "업체명(수입/제조)", "MNFCTR_NAME": "제조사", "MNFCTR_NAM": "제조사",
