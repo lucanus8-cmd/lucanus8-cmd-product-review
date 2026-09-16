@@ -1079,14 +1079,17 @@ with tabs[0]:
         safe_rname = re.sub(r'[:*?"<>|]', "_", summary)[:40]
         rc1, rc2 = st.columns(2)
         with rc1:
-            word_bytes = build_word(summary, export_blocks, report_text)
-            st.download_button(
-                "📝 워드(.docx) 보고서 — 그래프·표 포함",
-                data=word_bytes,
-                file_name=f"매출보고서_{safe_rname}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
-            )
+            try:
+                word_bytes = build_word(summary, export_blocks, report_text)
+                st.download_button(
+                    "📝 워드(.docx) 보고서 — 그래프·표 포함",
+                    data=word_bytes,
+                    file_name=f"매출보고서_{safe_rname}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True,
+                )
+            except Exception as _e:
+                st.caption("📝 워드 보고서 생성 모듈(python-docx) 준비 중 — 아래 텍스트(.txt) 보고서를 이용하세요.")
         with rc2:
             st.download_button(
                 "📄 텍스트(.txt) 보고서",
