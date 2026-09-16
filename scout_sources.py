@@ -181,15 +181,20 @@ def load_dmf():
                 fields="sheets.properties(title)").execute())
         titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
         cand = [t for t in titles if not t.startswith("_") and t != REJDGE_TAB]
-        pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t), None)
+        # 1) 탭 이름으로 인식
+        pick = next((t for t in cand if "DMF" in t.upper() or "원료" in t or "원약" in t), None)
+        # 2) 헤더 신호로 인식(표기 폭넓게 허용)
         if pick is None:
             for t in cand:
                 head = (sheets.spreadsheets().values()
                         .get(spreadsheetId=DMF_SHEET_ID, range=f"{t}!1:1").execute()
                         .get("values", [[]]))
                 hdr = " ".join(str(c).upper() for c in (head[0] if head else []))
-                if "DMF_" in hdr or "INGR_KOR_NA" in hdr:
+                if any(k in hdr for k in ("DMF", "INGR_KOR", "INGR_NAME", "원료", "제조원", "제조소", "성분")):
                     pick = t; break
+        # 3) 재심사 외 후보가 하나뿐이면 그 탭을 DMF로 사용
+        if pick is None and len(cand) == 1:
+            pick = cand[0]
         if pick is None:
             return pd.DataFrame()
         return _values_to_df(_sheet_values(DMF_SHEET_ID, pick))
@@ -203,8 +208,13 @@ def dmf_available():
         return False
 
 def _dmf_ing_col(df):
-    return next((c for c in ["INGR_KOR_NAME", "INGR_KOR_NA", "INGR_NAME", "INGR_KOR"]
-                 if c in df.columns), None)
+    # 영문/한글 성분 컬럼 폭넓게 인식
+    cand = ["INGR_KOR_NAME", "INGR_KOR_NA", "INGR_NAME", "INGR_KOR", "성분명", "주성분", "원료성분", "성분"]
+    hit = next((c for c in cand if c in df.columns), None)
+    if hit:
+        return hit
+    # 컬럼명에 '성분'이 포함된 첫 컬럼
+    return next((c for c in df.columns if "성분" in str(c) or "INGR" in str(c).upper()), None)
 
 @st.cache_data
 def pva_official():
