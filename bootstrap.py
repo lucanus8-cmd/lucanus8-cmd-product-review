@@ -18,7 +18,7 @@ SAVED = BASE / "saved_data"
 
 # 이미 공유해주신 드라이브 소스들
 IQVIA_ID = "1AfN8A8XXJoulm6PPctjKWRsetGD5MSYt"
-UBIST_ID = "1RsXTofGdZPVLRqClUlpa9JD0JOm67nPj"
+UBIST_ID = "1Mfzz4qFjd1xtBGDt30xM2NHaXWvN8Ycv"  # 2023 2분기 포함 새 파일
 PRICE_XLSX_ID = "1u9gfxs7NyuQebBn4WEOyBCUQ0zQvYqYf"
 # 매월 고시 약가 엑셀을 넣는 드라이브 폴더(HIRA). 파일명에 시행일(예: (2026.9.1.))이 들어감.
 HIRA_PRICE_FOLDER_ID = "10LCp9oVtdJPBf34stPbqqzlAm3W1_lPG"
@@ -103,12 +103,19 @@ def _creds():
 
 def _download(drive, fid):
     from googleapiclient.http import MediaIoBaseDownload
-    req = drive.files().get_media(fileId=fid, supportsAllDrives=True)
-    buf = io.BytesIO(); dl = MediaIoBaseDownload(buf, req, chunksize=10 * 1024 * 1024)
-    done = False
-    while not done:
-        _, done = dl.next_chunk()
-    buf.seek(0); return buf
+    def _pull(req):
+        buf = io.BytesIO(); dl = MediaIoBaseDownload(buf, req, chunksize=10 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = dl.next_chunk()
+        buf.seek(0); return buf
+    try:
+        return _pull(drive.files().get_media(fileId=fid, supportsAllDrives=True))
+    except Exception:
+        # 구글 시트(네이티브)로 저장된 경우 xlsx로 내보내기(＜10MB 제한)
+        return _pull(drive.files().export_media(
+            fileId=fid,
+            mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
 
 # ── 매출 파서 (app.py 로직 복제) ──────────────────────────────────────────
 def _parse_iqvia(buf):
