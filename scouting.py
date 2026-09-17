@@ -223,18 +223,29 @@ def _pms_expiry_maps():
 
     def _dt(x):
         a = pd.to_datetime(x, format="%Y%m%d", errors="coerce")
-        return a.fillna(pd.to_datetime(x, errors="coerce"))
+        d = a.fillna(pd.to_datetime(x, errors="coerce"))
+        # 비현실적 날짜는 버린다(이후 날짜 덧셈에서 표현범위 초과로 터지는 것 방지)
+        return d.where((d > pd.Timestamp("1900-01-01")) & (d < pd.Timestamp("2200-01-01")))
 
     end_c = next((c for c in ["REEXAM_END_DATE", "REEXAM_END_DT"] if c in rj.columns), None)
     st_c = next((c for c in ["REEXAM_START_DATE", "REEXAM_START_DT"] if c in rj.columns), None)
     cd_c = next((c for c in ["REEXAM_CODE_NM", "REEXAM_CODE_NAME", "REEXAM_CD_NM"] if c in rj.columns), None)
-    if end_c:
-        exp = _dt(rj[end_c])
-    elif st_c:
-        yrs = (rj[cd_c].astype(str).str.extract(r"(\d+)\s*년")[0].astype(float)
-               if cd_c else pd.Series(6.0, index=rj.index))
-        exp = _dt(rj[st_c]) + pd.to_timedelta(yrs.fillna(6.0) * 365.25, unit="D")
-    else:
+    try:
+        if end_c:
+            exp = _dt(rj[end_c])
+        elif st_c:
+            # 재심사기간은 '재심사대상(6년)'처럼 괄호 안 값만 인정한다.
+            # 그냥 (\d+)년 으로 잡으면 문장 속 '1998년' 같은 연도를 기간으로 오인해
+            # 시작일+1998년이 되어 날짜 표현범위를 벗어난다.
+            if cd_c:
+                yrs = rj[cd_c].astype(str).str.extract(r"\(\s*(\d{1,2})\s*년")[0].astype(float)
+            else:
+                yrs = pd.Series(float("nan"), index=rj.index)
+            yrs = yrs.where(yrs.between(1, 15), 6.0)   # 비정상/미확인은 기본 6년
+            exp = _dt(rj[st_c]) + pd.to_timedelta(yrs * 365.25, unit="D")
+        else:
+            return {}, {}, {}
+    except Exception:
         return {}, {}, {}
 
     d = pd.DataFrame({"nm": rj["ITEM_NAME"].astype(str), "exp": exp}).dropna(subset=["exp"])
@@ -673,7 +684,10 @@ if PAGE == "sugg":
                    .agg(lambda x: next((str(v).strip() for v in x
                                         if str(v).strip() and str(v).strip().lower() != "nan"), "")))
         m["ATC"] = m[name].map(_amap).fillna("")
-    _pmaps = _pms_expiry_maps()
+    try:
+        _pmaps = _pms_expiry_maps()
+    except Exception:
+        _pmaps = ({}, {}, {})
     if any(_pmaps):
         m["_pms"] = m[name].map(lambda v: _pms_lookup(v, unit, _pmaps))
 
