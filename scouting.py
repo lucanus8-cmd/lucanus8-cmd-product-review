@@ -726,9 +726,21 @@ if PAGE == "sugg":
         return k
     m["_key"] = m[name].map(_rowkey)
     if HAS_REG:
-        _pbk = ss.patent_by_key()
-        _pbk = _pbk[_pbk["_key"].astype(str).str.len() > 0]
-        m = m.merge(_pbk, on="_key", how="left")
+        # 단일제 후보에는 단일 성분 품목의 특허만 반영한다.
+        # (조인키가 영문 성분명의 첫 단어라, 그대로 두면 그 성분이 들어간 복합제
+        #  특허까지 단일제에 붙어 실제보다 늦게 풀리는 것처럼 보인다)
+        def _ingname(v):
+            return _p2i.get(v, v) if unit == "제품별" else v
+        m["_solo"] = m[name].map(lambda v: ss.is_single_ing(_ingname(v)))
+        _parts = []
+        for _solo, _pbk in ((True, ss.patent_by_key(single_only=True)),
+                            (False, ss.patent_by_key())):
+            _sub = m[m["_solo"] == _solo]
+            if _sub.empty:
+                continue
+            _pbk = _pbk[_pbk["_key"].astype(str).str.len() > 0]
+            _parts.append(_sub.merge(_pbk, on="_key", how="left"))
+        m = pd.concat(_parts, ignore_index=True) if _parts else m.drop(columns=["_solo"])
 
     # ATC(매출자료 기준) · PMS 만료일 추가
     _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
@@ -805,8 +817,9 @@ if PAGE == "sugg":
                        file_name=f"제품제안_{src2}_{unit}.csv")
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
                "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준 · "
-               "특허 만료일은 **그 성분이 들어간 품목 전체**의 존속 등록특허 중 가장 늦은 날짜라, "
-               "단일제 후보에도 복합제·염특허 만료일이 잡힐 수 있습니다(‘특허 근거 표시’로 확인)")
+               "특허 만료일=존속 중인 등록특허 중 가장 늦은 날짜(소멸·무효 제외). "
+               "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다 "
+               "(‘특허 근거 표시’로 어느 특허인지 확인)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":

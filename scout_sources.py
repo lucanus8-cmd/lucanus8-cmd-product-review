@@ -89,6 +89,10 @@ def load_patent():
         if blank.any() and k2:
             df.loc[blank, "_key"] = kor[blank].map(lambda c: k2.get(c, ""))
     df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
+    # 단일 성분 품목의 특허인지 (복합제 특허가 단일제 성분에 섞이는 것을 막는 데 사용)
+    df["_single"] = [is_single_ing(a, b)
+                     for a, b in zip(df.get("INGR_NAME", pd.Series("", index=df.index)),
+                                     df.get("INGR_ENG_NAME", pd.Series("", index=df.index)))]
     return df
 
 @st.cache_data(show_spinner="임상 로딩 중…")
@@ -136,12 +140,16 @@ def _latest_with_src(sub, label):
                          f"근거_{label}": top.apply(_src, axis=1)})
 
 @st.cache_data
-def patent_by_key():
+def patent_by_key(single_only=False):
     """성분(키)별 등록특허 만료: 물질/용도/전체 최종 만료일과 그 근거 특허.
-    주의 — 키는 영문 성분명의 첫 단어라, 그 성분이 들어간 복합제 특허도 함께 묶인다.
-    (예: 아토르바스타틴 단일제 키에 '아토르바스타틴+에제티미브' 복합제 특허가 포함)
-    그래서 어느 특허에서 온 날짜인지 '근거_' 열로 함께 돌려준다."""
+
+    키는 영문 성분명의 첫 단어라, 그 성분이 들어간 복합제 특허도 같은 키로 묶인다
+    (예: 아토르바스타틴 단일제 키에 '아토르바스타틴+에제티미브' 복합제 특허가 포함).
+    single_only=True면 단일 성분 품목의 특허만 집계해 단일제 후보에 복합제 특허가
+    붙지 않게 한다. 어느 특허에서 온 날짜인지는 '근거_' 열로 함께 돌려준다."""
     pt = load_patent()
+    if single_only:
+        pt = pt[pt["_single"]]
     reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
     out = pd.DataFrame({"특허만료_전체": g["_exp"].max(), "등록특허수": g.size()})
