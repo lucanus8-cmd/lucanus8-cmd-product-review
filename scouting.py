@@ -788,15 +788,25 @@ if PAGE == "sugg":
     _pms_lbl = "PMS 만료(오리지널)" if unit == "성분별" else "PMS 만료"
     if "_pms" in res.columns:
         res[_pms_lbl] = pd.to_datetime(res["_pms"]).dt.date.astype("string")
+    if HAS_REG:
+        res["물질특허 근거"] = res.get("근거_물질", pd.Series("", index=res.index)).fillna("")
+        res["용도특허 근거"] = res.get("근거_용도", pd.Series("", index=res.index)).fillna("")
     cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
             + ["시장규모(억)", "CAGR(%)"]
             + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
             + ([_pms_lbl] if _pms_lbl in res.columns else []))
+    src_cols = ["물질특허 근거", "용도특허 근거"] if HAS_REG else []
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
-    st.dataframe(res[cols].head(200), use_container_width=True, height=430, hide_index=True)
-    st.download_button("⬇️ CSV", res[cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"제품제안_{src2}_{unit}.csv")
+    show_src = st.checkbox("특허 근거 표시 (그 만료일이 어느 품목·유형의 특허에서 왔는지)",
+                           value=False, key="sugg_src") if HAS_REG else False
+    vcols = cols + (src_cols if show_src else [])
+    st.dataframe(res[vcols].head(200), use_container_width=True, height=430, hide_index=True)
+    st.download_button("⬇️ CSV", res[cols + src_cols].to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"제품제안_{src2}_{unit}.csv")
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
-               "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준")
+               "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준 · "
+               "특허 만료일은 **그 성분이 들어간 품목 전체**의 존속 등록특허 중 가장 늦은 날짜라, "
+               "단일제 후보에도 복합제·염특허 만료일이 잡힐 수 있습니다(‘특허 근거 표시’로 확인)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":

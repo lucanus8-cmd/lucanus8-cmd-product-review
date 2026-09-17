@@ -119,20 +119,35 @@ def active_patent_mask(sr):
     t = sr.astype(str)
     return t.str.contains("등록", na=False) & ~t.str.contains(_DEAD_RE, na=False)
 
+def _latest_with_src(sub, label):
+    """키별 최종 만료일 + 그 날짜가 어느 특허에서 왔는지(품목명·유형·특허권자)."""
+    if sub.empty:
+        return pd.DataFrame(columns=[f"특허만료_{label}", f"근거_{label}"])
+    idx = sub.groupby("_key")["_exp"].idxmax()
+    top = sub.loc[idx].set_index("_key")
+
+    def _src(r):
+        bits = [str(r.get("품목명", "")).strip(),
+                str(r.get("PATENT_GB_CODE", "")).strip(),
+                str(r.get("PATENTEE", "")).strip()]
+        return " · ".join(b for b in bits if b and b.lower() != "nan")
+
+    return pd.DataFrame({f"특허만료_{label}": top["_exp"],
+                         f"근거_{label}": top.apply(_src, axis=1)})
+
 @st.cache_data
 def patent_by_key():
-    """성분(키)별 등록특허 만료: 물질특허 만료(최종), 전체 만료(최종), 등록특허수."""
+    """성분(키)별 등록특허 만료: 물질/용도/전체 최종 만료일과 그 근거 특허.
+    주의 — 키는 영문 성분명의 첫 단어라, 그 성분이 들어간 복합제 특허도 함께 묶인다.
+    (예: 아토르바스타틴 단일제 키에 '아토르바스타틴+에제티미브' 복합제 특허가 포함)
+    그래서 어느 특허에서 온 날짜인지 '근거_' 열로 함께 돌려준다."""
     pt = load_patent()
     reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
-    out = pd.DataFrame({
-        "특허만료_전체": g["_exp"].max(),
-        "등록특허수": g.size(),
-    })
-    mat = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("물질", na=False)]
-    out["특허만료_물질"] = mat.groupby("_key")["_exp"].max()
-    use = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("용도", na=False)]
-    out["특허만료_용도"] = use.groupby("_key")["_exp"].max()
+    out = pd.DataFrame({"특허만료_전체": g["_exp"].max(), "등록특허수": g.size()})
+    gb = reg["PATENT_GB_CODE"].astype(str)
+    out = out.join(_latest_with_src(reg[gb.str.contains("물질", na=False)], "물질"))
+    out = out.join(_latest_with_src(reg[gb.str.contains("용도", na=False)], "용도"))
     return out.reset_index()
 
 def resolve_keys(q):
