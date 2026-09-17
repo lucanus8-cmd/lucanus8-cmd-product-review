@@ -732,13 +732,31 @@ if PAGE == "sugg":
         def _ingname(v):
             return _p2i.get(v, v) if unit == "제품별" else v
         m["_solo"] = m[name].map(lambda v: ss.is_single_ing(_ingname(v)))
+
+        def _pbk_for(solo):
+            """성분별은 오리지널(신약) 품목의 특허만 본다.
+            제네릭사가 따로 낸 염·제형 특허가 그 성분 전체를 막는 것처럼 보이지
+            않도록. 오리지널 품목이 허가자료에 없는 성분은 전체 기준으로 보되
+            근거에 표시한다."""
+            base = ss.patent_by_key(single_only=solo)
+            if unit != "성분별":
+                return base
+            orig = ss.patent_by_key(single_only=solo, original_only=True)
+            _, _, okeys = ss.original_items()
+            rest = base[~base["_key"].isin(okeys)].copy()
+            for c in ("근거_물질", "근거_용도"):
+                if c in rest.columns:
+                    rest[c] = rest[c].fillna("").map(
+                        lambda t: f"⚠오리지널 미확인 · {t}" if t else "")
+            return pd.concat([orig, rest], ignore_index=True)
+
         _parts = []
-        for _solo, _pbk in ((True, ss.patent_by_key(single_only=True)),
-                            (False, ss.patent_by_key())):
+        for _solo in (True, False):
             _sub = m[m["_solo"] == _solo]
             if _sub.empty:
                 continue
-            _pbk = _pbk[_pbk["_key"].astype(str).str.len() > 0]
+            _pbk = _pbk_for(_solo)
+            _pbk = _pbk[_pbk["_key"].astype(str).str.len() > 0].drop_duplicates("_key")
             _parts.append(_sub.merge(_pbk, on="_key", how="left"))
         m = pd.concat(_parts, ignore_index=True) if _parts else m.drop(columns=["_solo"])
 
@@ -818,8 +836,9 @@ if PAGE == "sugg":
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
                "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준 · "
                "특허 만료일=존속 중인 등록특허 중 가장 늦은 날짜(소멸·무효 제외). "
-               "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다 "
-               "(‘특허 근거 표시’로 어느 특허인지 확인)")
+               "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다. "
+               "**성분별은 오리지널(신약) 품목의 특허 기준** — 오리지널 품목을 허가자료에서 찾지 못한 성분은 "
+               "전체 기준으로 표시하고 근거에 ‘⚠오리지널 미확인’으로 알립니다 (‘특허 근거 표시’로 확인)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":

@@ -61,6 +61,33 @@ def load_approval():
     df["_key"] = df["주성분(영문)"].map(ing_key)
     return df
 
+@st.cache_data
+def _kor_core_key_map():
+    """한글 성분코어 → 영문 조인키. 특허자료·허가자료의 단일 성분 행만 사용한다.
+    (조합제는 한글/영문 성분 표기 순서가 엇갈리는 자료가 있어 짝지으면 안 된다)"""
+    k2 = {}
+
+    def _feed(kor_sr, eng_sr):
+        for c0, e0 in zip(kor_sr.astype(str), eng_sr.astype(str)):
+            k = ing_key(e0)
+            c = ing_core(c0)
+            if k and len(c) >= 2 and is_single_ing(c0, e0):
+                k2.setdefault(c, k)
+
+    try:
+        pt = pd.read_parquet(SD / "patent.parquet")
+        if {"INGR_NAME", "INGR_ENG_NAME"}.issubset(pt.columns):
+            _feed(pt["INGR_NAME"], pt["INGR_ENG_NAME"])
+    except Exception:
+        pass
+    try:
+        ap = pd.read_parquet(SD / "approval.parquet")
+        if {"주성분", "주성분(영문)"}.issubset(ap.columns):
+            _feed(ap["주성분"], ap["주성분(영문)"])
+    except Exception:
+        pass
+    return k2
+
 @st.cache_data(show_spinner="특허 로딩 중…")
 def load_patent():
     df = pd.read_parquet(SD / "patent.parquet")
@@ -70,20 +97,7 @@ def load_patent():
     if "INGR_NAME" in df.columns:
         kor = df["INGR_NAME"].astype(str).map(ing_core)
         single = [is_single_ing(a, b) for a, b in zip(df["INGR_NAME"], df["INGR_ENG_NAME"])]
-        k2 = {}
-        for c, k, ok in zip(kor, df["_key"], single):
-            if ok and k and len(c) >= 2:
-                k2.setdefault(c, k)
-        try:
-            ap = load_approval()
-            _a1 = ap.get("주성분", pd.Series(dtype=str)).astype(str)
-            _a2 = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str)
-            for c0, e0, k in zip(_a1, _a2, ap["_key"]):
-                c = ing_core(c0)
-                if k and len(c) >= 2 and is_single_ing(c0, e0):
-                    k2.setdefault(c, k)
-        except Exception:
-            pass
+        k2 = _kor_core_key_map()
         # 조합제 행은 한글 첫 성분만 보고 키를 붙이면 엉뚱한 특허가 섞이므로 제외
         blank = (df["_key"].astype(str).str.len() == 0) & pd.Series(single, index=df.index)
         if blank.any() and k2:
@@ -139,8 +153,50 @@ def _latest_with_src(sub, label):
     return pd.DataFrame({f"특허만료_{label}": top["_exp"],
                          f"근거_{label}": top.apply(_src, axis=1)})
 
+def _ap_key(ap):
+    """허가자료 행의 조인키. 주성분(영문)이 비면 한글 성분명 매핑으로 보완."""
+    k = ap["_key"].astype(str)
+    blank = k.str.len() == 0
+    if blank.any() and "주성분" in ap.columns:
+        try:
+            k2 = _kor_core_key_map()
+            core = ap.loc[blank, "주성분"].astype(str).map(ing_core)
+            k = k.copy()
+            k.loc[blank] = core.map(lambda c: k2.get(c, ""))
+        except Exception:
+            pass
+    return k
+
 @st.cache_data
-def patent_by_key(single_only=False):
+def original_items():
+    """오리지널(신약) 품목의 (품목기준코드 집합, 공백제거 품목명 집합, 해당 성분키 집합)."""
+    try:
+        ap = load_approval()
+    except Exception:
+        return set(), set(), set()
+    if "신약구분" not in ap.columns:
+        return set(), set(), set()
+    new = ap[ap["신약구분"].astype(str).str.strip() == "신약"]
+    if new.empty:
+        return set(), set(), set()
+    codes = (set(new["품목기준코드"].astype(str).str.strip())
+             if "품목기준코드" in new.columns else set())
+    names = set(new["품목명"].astype(str).str.replace(r"\s+", "", regex=True))
+    keys = set(_ap_key(new)) - {""}
+    return codes - {"", "nan"}, names - {"", "nan"}, keys
+
+def original_patent_mask(pt):
+    """특허 행이 오리지널(신약) 품목의 것인지."""
+    codes, names, _ = original_items()
+    m = pd.Series(False, index=pt.index)
+    if codes and "품목기준코드" in pt.columns:
+        m |= pt["품목기준코드"].astype(str).str.strip().isin(codes)
+    if names and "품목명" in pt.columns:
+        m |= pt["품목명"].astype(str).str.replace(r"\s+", "", regex=True).isin(names)
+    return m
+
+@st.cache_data
+def patent_by_key(single_only=False, original_only=False):
     """성분(키)별 등록특허 만료: 물질/용도/전체 최종 만료일과 그 근거 특허.
 
     키는 영문 성분명의 첫 단어라, 그 성분이 들어간 복합제 특허도 같은 키로 묶인다
@@ -150,6 +206,8 @@ def patent_by_key(single_only=False):
     pt = load_patent()
     if single_only:
         pt = pt[pt["_single"]]
+    if original_only:
+        pt = pt[original_patent_mask(pt)]
     reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
     out = pd.DataFrame({"특허만료_전체": g["_exp"].max(), "등록특허수": g.size()})
