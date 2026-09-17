@@ -512,7 +512,7 @@ if PAGE == "search":
                 pt = ss.load_patent()
                 m = _kor_union(pt, _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)), "INGR_NAME").copy()
                 m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
-                st.caption(f"특허 {len(m):,}건 · 등록 {int(m['DOMESTIC_PATENT_STATUS'].str.contains('등록', na=False).sum())}건")
+                st.caption(f"특허 {len(m):,}건 · 존속 등록 {int(ss.active_patent_mask(m['DOMESTIC_PATENT_STATUS']).sum())}건")
                 cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
                         "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
                 st.dataframe(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
@@ -575,7 +575,7 @@ if PAGE == "search":
                     mat_dates, use_dates, appr, reg = [], [], None, None
                     if HAS_REG:
                         pt = ss.load_patent()
-                        reg = pt[pt["_key"].isin(sel_keys) & pt["DOMESTIC_PATENT_STATUS"].str.contains("등록", na=False) & pt["_exp"].notna()]
+                        reg = pt[pt["_key"].isin(sel_keys) & ss.active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
                         mat_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("물질", na=False)]["_exp"].dropna().unique())
                         use_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("용도", na=False)]["_exp"].dropna().unique())
                         ap = ss.load_approval()
@@ -1106,11 +1106,11 @@ if PAGE == "ai":
             keys = ss.resolve_keys(qterm)
             if keys:
                 pm = pd.concat([pm, pt[pt['_key'].isin(keys)]]).drop_duplicates()
-            reg = pm[pm['DOMESTIC_PATENT_STATUS'].astype(str).str.contains('등록', na=False) & pm['_exp'].notna()]
+            reg = pm[ss.active_patent_mask(pm['DOMESTIC_PATENT_STATUS']) & pm['_exp'].notna()]
             if not pm.empty:
                 mat = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('물질', na=False)]['_exp'].max()
                 use = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('용도', na=False)]['_exp'].max()
-                parts.append(f"[특허] 매칭 {len(pm)}건 · 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                parts.append(f"[특허] 매칭 {len(pm)}건 · 존속 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
         if HAS_PRICE:
             pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], qterm)
             ls = mp[mp['급여구분'] == '급여'].sort_values('적용일자').groupby('제품코드').tail(1)
@@ -1184,12 +1184,12 @@ if PAGE == "ai":
                 keys = ss.resolve_keys(qterm)
                 if keys:
                     pm = pd.concat([pm, pt[pt["_key"].isin(keys)]]).drop_duplicates()
-                reg = pm[pm["DOMESTIC_PATENT_STATUS"].astype(str).str.contains("등록", na=False) & pm["_exp"].notna()]
+                reg = pm[ss.active_patent_mask(pm["DOMESTIC_PATENT_STATUS"]) & pm["_exp"].notna()]
                 if not pm.empty:
                     mat = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("물질", na=False)]["_exp"].max()
                     use = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("용도", na=False)]["_exp"].max()
                     pats = ", ".join(pm["PATENTEE"].dropna().astype(str).unique()[:5]) if "PATENTEE" in pm.columns else ""
-                    L.append(f"[특허] 매칭 {len(pm)}건 · 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                    L.append(f"[특허] 매칭 {len(pm)}건 · 존속 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
                     if pats:
                         L.append(f"  특허권자: {pats}")
         except Exception:

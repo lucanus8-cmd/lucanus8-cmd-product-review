@@ -110,11 +110,20 @@ def competition_by_key():
     comp["생동수"] = comp["생동수"].fillna(0).astype(int)
     return comp.reset_index()
 
+# 특허 상태값 예: '등록', '소멸(존속기간만료)', '소멸(등록료불납)', '무효', '취하' …
+# '소멸(등록료불납)'에도 '등록'이 들어 있어 단순 포함검사로는 죽은 특허가 살아있는 것으로 잡힌다.
+_DEAD_RE = re.compile(r"소멸|무효|취하|포기|거절|각하|실효|말소")
+
+def active_patent_mask(sr):
+    """존속 중인 등록특허만 True. 소멸·무효 등은 제외한다."""
+    t = sr.astype(str)
+    return t.str.contains("등록", na=False) & ~t.str.contains(_DEAD_RE, na=False)
+
 @st.cache_data
 def patent_by_key():
     """성분(키)별 등록특허 만료: 물질특허 만료(최종), 전체 만료(최종), 등록특허수."""
     pt = load_patent()
-    reg = pt[pt["DOMESTIC_PATENT_STATUS"].astype(str).str.contains("등록", na=False) & pt["_exp"].notna()]
+    reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
     out = pd.DataFrame({
         "특허만료_전체": g["_exp"].max(),
