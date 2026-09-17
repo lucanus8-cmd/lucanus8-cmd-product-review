@@ -667,14 +667,22 @@ if PAGE == "sugg":
         m["_pms"] = m[name].map(lambda v: _pms_lookup(v, unit, _pmaps))
 
     st.markdown("**필터 조건**")
-    f1, f2, f3 = st.columns(3)
+    f1, f2, f3, f4 = st.columns(4)
     min_size = f1.number_input("① 최소 시장규모(억, 최신연도)", value=50, step=10, min_value=0)
     min_cagr = f2.number_input("② 최소 성장 CAGR(%)", value=0.0, step=5.0)
+    cy = int(TODAY.year)
     with f3:
         ptypes = st.multiselect("③ 특허 만료 기준 유형", ["물질", "용도"], default=["물질"] if HAS_REG else [])
-        cy = int(TODAY.year)
         sel_year = st.selectbox("이 연도까지 특허 만료", list(range(cy, cy + 16)), index=5,
                                 help="선택한 유형 특허가 이 연도까지 만료(또는 없음)인 후보만")
+    with f4:
+        _atc_opts = sorted({str(x).strip() for x in m.get("ATC", pd.Series(dtype=str))
+                            if str(x).strip() and str(x).strip().lower() != "nan"})
+        atc_sel = st.multiselect("④ ATC 계열", _atc_opts, default=[],
+                                 help="비우면 전체. 선택하면 해당 계열만")
+        pms_sel = st.selectbox("⑤ 이 연도까지 PMS 만료",
+                               ["적용 안 함"] + [str(y) for y in range(cy, cy + 16)], index=0,
+                               help="선택 연도까지 재심사(PMS)가 만료됐거나, PMS 대상이 아닌 후보만")
 
     res = m[(m["시장규모"] >= min_size * 1e8) & (m["CAGR"].fillna(-1e9) >= min_cagr)].copy()
     if HAS_REG and ptypes:
@@ -685,6 +693,12 @@ if PAGE == "sugg":
                     return False
             return True
         res = res[res.apply(clear_by, axis=1)]
+
+    if atc_sel and "ATC" in res.columns:
+        res = res[res["ATC"].astype(str).str.strip().isin(atc_sel)]
+    if pms_sel != "적용 안 함" and "_pms" in res.columns:
+        _pe = pd.to_datetime(res["_pms"], errors="coerce")
+        res = res[_pe.isna() | (_pe.dt.year <= int(pms_sel))]   # 만료했거나 PMS 없음
 
     res = res.sort_values("시장규모", ascending=False)
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
@@ -701,7 +715,7 @@ if PAGE == "sugg":
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     st.dataframe(res[cols].head(200), use_container_width=True, height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"제품제안_{src2}_{unit}.csv")
-    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료 조건을 직접 필터링합니다. · "
+    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
                "ATC는 매출자료 기준 · PMS 만료(추정)=재심사시작일+재심사기간(식약처 재심사 자료에 종료일 항목이 없어 산출값)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
