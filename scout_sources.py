@@ -17,6 +17,29 @@ def ing_key(s):
             return tok.upper()
     return ""
 
+_SALT_SUFFIX = sorted([
+    "브롬화수소산염", "메탄술폰산염", "타르타르산염", "말레산염", "푸마르산염", "숙신산염",
+    "베실산염", "메실산염", "토실산염", "글루콘산염", "구연산염", "시트르산염", "주석산염",
+    "아세트산염", "초산염", "젖산염", "염산염", "황산염", "인산염", "질산염", "탄산염", "중탄산염",
+    "이나트륨", "일나트륨", "칼슘", "칼륨", "나트륨", "마그네슘", "아연",
+    "삼수화물", "이수화물", "일수화물", "반수화물", "사수화물", "수화물", "무수물", "무수", "염",
+], key=len, reverse=True)
+
+def ing_core(s):
+    """한글 성분명 정규화 → 코어 토큰. '[코드]'·괄호·공백·염/수화물 접미어 제거, 조합제는 첫 성분."""
+    s = re.sub(r"\[[^\]]*\]", "", str(s or ""))   # [M270797] 등 코드 제거
+    s = re.sub(r"\([^)]*\)", "", s)                # (…) 제거
+    s = re.sub(r"\s+", "", s)
+    s = re.split(r"[/,]|및|\+", s)[0]              # 조합제 → 첫 성분
+    changed = True
+    while changed:                                 # 염+수화물 중첩 표기 반복 제거
+        changed = False
+        for suf in _SALT_SUFFIX:
+            if s.endswith(suf) and len(s) > len(suf) + 1:
+                s = s[: -len(suf)]; changed = True
+                break
+    return s.strip()
+
 def available():
     return (SD / "approval.parquet").exists()
 
@@ -30,6 +53,25 @@ def load_approval():
 def load_patent():
     df = pd.read_parquet(SD / "patent.parquet")
     df["_key"] = df["INGR_ENG_NAME"].map(ing_key)
+    # 영문 성분명이 비어 있는 행은 키가 없어 한 덩어리로 뭉친다.
+    # 같은 한글 성분명(INGR_NAME)을 쓰는 다른 행 / 허가자료로 키를 채운다.
+    if "INGR_NAME" in df.columns:
+        kor = df["INGR_NAME"].astype(str).map(ing_core)
+        k2 = {}
+        for c, k in zip(kor, df["_key"]):
+            if k and len(c) >= 2:
+                k2.setdefault(c, k)
+        try:
+            ap = load_approval()
+            for c, k in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str).map(ing_core),
+                            ap["_key"]):
+                if k and len(c) >= 2:
+                    k2.setdefault(c, k)
+        except Exception:
+            pass
+        blank = df["_key"].astype(str).str.len() == 0
+        if blank.any() and k2:
+            df.loc[blank, "_key"] = kor[blank].map(lambda c: k2.get(c, ""))
     df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
     return df
 

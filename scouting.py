@@ -133,29 +133,7 @@ def yearly_matrix(price_df, codes, name_map):
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 
-# 염·수화물 접미어(성분 코어 추출용) — 긴 것부터 매칭
-_SALT_SUFFIX = sorted([
-    "브롬화수소산염", "메탄술폰산염", "타르타르산염", "말레산염", "푸마르산염", "숙신산염",
-    "베실산염", "메실산염", "토실산염", "글루콘산염", "구연산염", "시트르산염", "주석산염",
-    "아세트산염", "초산염", "젖산염", "염산염", "황산염", "인산염", "질산염", "탄산염", "중탄산염",
-    "이나트륨", "일나트륨", "칼슘", "칼륨", "나트륨", "마그네슘", "아연",
-    "삼수화물", "이수화물", "일수화물", "반수화물", "사수화물", "수화물", "무수물", "무수", "염",
-], key=len, reverse=True)
-
-def _ing_core(s):
-    """성분명 정규화 → 코어 토큰. '[코드]'·괄호·공백·염/수화물 접미어 제거, 조합제는 첫 성분."""
-    s = re.sub(r"\[[^\]]*\]", "", str(s or ""))   # [M270797] 등 코드 제거
-    s = re.sub(r"\([^)]*\)", "", s)                # (…) 제거
-    s = re.sub(r"\s+", "", s)
-    s = re.split(r"[/,]|및|\+", s)[0]              # 조합제 → 첫 성분
-    changed = True
-    while changed:                                 # 염+수화물 중첩 표기 반복 제거
-        changed = False
-        for suf in _SALT_SUFFIX:
-            if s.endswith(suf) and len(s) > len(suf) + 1:
-                s = s[: -len(suf)]; changed = True
-                break
-    return s.strip()
+_ing_core = ss.ing_core   # 성분명 정규화(코드/염/수화물 제거) — scout_sources 공용
 
 @st.cache_data(show_spinner="허가 목록 준비 중…")
 def _approval_opts(basis):
@@ -302,26 +280,46 @@ def _pms_lookup(value, unit, maps):
 @st.cache_data(show_spinner="성분 키 매핑 중…")
 def _kor2engkey():
     """매출자료의 성분명·제품명은 한글이라 ing_key()가 빈 값이 되어 특허가 붙지 않는다.
-    허가자료(주성분 ↔ 주성분(영문))로 한글→영문 성분키를 만들어 연결한다.
+    ① 허가자료(주성분 ↔ 주성분(영문)) ② 특허자료(INGR_NAME 한글 ↔ INGR_ENG_NAME)
+    두 경로로 한글→영문 성분키를 만든다. 허가에 영문 성분명이 비어 있는 성분
+    (예: 비베그론)은 ②로 연결된다.
     반환: (성분코어→영문키, 브랜드코어→영문키)"""
     if not HAS_REG:
         return {}, {}
+    c2k, b2k = {}, {}
+
+    def _add(kor_ing, kor_name, eng_key):
+        """한글 성분코어/브랜드코어 → 영문키 등록 (먼저 넣은 쪽 우선)."""
+        if not eng_key:
+            return
+        c = _ing_core(kor_ing)
+        if len(c) >= 2:
+            c2k.setdefault(c, eng_key)
+        b = re.split(r"[0-9(\[]", re.sub(r"\s+", "", str(kor_name or "")))[0]
+        if len(b) >= 2:
+            b2k.setdefault(b, eng_key)
+
+    # ① 허가자료 우선 (품목수가 많아 표기가 대표적)
     try:
         ap = ss.load_approval()
+        eng = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str).map(ss.ing_key)
+        for c, b, k in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str),
+                           ap.get("품목명", pd.Series(dtype=str)).astype(str), eng):
+            _add(c, b, k)
     except Exception:
-        return {}, {}
-    eng = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str).map(ss.ing_key)
-    core = ap.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core)
-    nm = ap.get("품목명", pd.Series(dtype=str)).astype(str).str.replace(r"\s+", "", regex=True)
-    c2k, b2k = {}, {}
-    for c, b, k in zip(core, nm, eng):
-        if not k:
-            continue
-        if len(c) >= 2:
-            c2k.setdefault(c, k)
-        bb = re.split(r"[0-9(\[]", b)[0]
-        if len(bb) >= 2:
-            b2k.setdefault(bb, k)
+        pass
+
+    # ② 특허자료의 한글 성분명으로 보완 (허가에 영문명이 비어 있는 성분 구제)
+    try:
+        pt = ss.load_patent()
+        if "INGR_NAME" in pt.columns:
+            for c, b, k in zip(pt["INGR_NAME"].astype(str),
+                               pt.get("품목명", pd.Series(dtype=str)).astype(str),
+                               pt["_key"].astype(str)):
+                _add(c, b, k)
+    except Exception:
+        pass
+
     return c2k, b2k
 
 # 좌측 상단 제목
@@ -703,6 +701,14 @@ if PAGE == "sugg":
     # (빈 키를 그대로 두면 모든 후보가 '영문 성분명이 빈 특허' 한 덩어리에 조인되어
     #  전부 같은 만료일이 붙는다)
     _c2k, _b2k = _kor2engkey()
+    # 제품별일 때는 매출자료의 성분명 열로 제품→성분을 알아내 성분키로 연결한다
+    # (브랜드명 표기가 허가/특허 자료와 조금씩 달라 이름만으로는 잘 안 붙는다)
+    _p2i = {}
+    if unit == "제품별" and cfg.get("ing") in df.columns:
+        _p2i = (df.groupby(cfg["prod"])[cfg["ing"]]
+                  .agg(lambda x: next((str(v) for v in x if str(v).strip()
+                                       and str(v).strip().lower() != "nan"), "")).to_dict())
+
     def _rowkey(v):
         s0 = str(v or "")
         k = ss.ing_key(s0)
@@ -710,7 +716,11 @@ if PAGE == "sugg":
             return k
         if unit == "성분별":
             return _c2k.get(_ing_core(s0), "")
-        return _b2k.get(re.split(r"[0-9(\[]", re.sub(r"\s+", "", s0))[0], "")
+        b = re.split(r"[0-9(\[]", re.sub(r"\s+", "", s0))[0]
+        k = _b2k.get(b, "")
+        if not k and _p2i.get(v):                       # 브랜드명 미매칭 → 성분명으로
+            k = ss.ing_key(_p2i[v]) or _c2k.get(_ing_core(_p2i[v]), "")
+        return k
     m["_key"] = m[name].map(_rowkey)
     if HAS_REG:
         _pbk = ss.patent_by_key()
