@@ -7,6 +7,7 @@
 """
 import io
 import re
+import time
 import urllib.request
 from pathlib import Path
 import pandas as pd
@@ -282,8 +283,32 @@ def _compress_price(df):
     changed = df[prev.isna() | (prev != df["_amt"])]
     return changed.drop(columns=["_amt", "_dt"])
 
-@st.cache_resource(show_spinner="데이터 준비 중… (최초 1회, 드라이브에서 생성 — 1~2분)")
+# ── 자동 새로고침 주기(시간) ────────────────────────────────────────────────
+# 저장된 캐시가 이 시간보다 오래되면 원본(구글시트/드라이브)에서 다시 생성한다.
+MAX_AGE_H = {
+    "approval": 24, "patent": 24, "clinical": 24,   # 식약처 구글시트(매일 수집됨)
+    "price": 24, "nego": 24,                        # 약가·공단협상
+    "iqvia": 24 * 7, "ubist": 24 * 7,               # 매출(대용량·수동 업로드 → 주 1회)
+}
+
+def _cache_path(name):
+    return (SAVED / f"{name}.pkl") if name in ("iqvia", "ubist") else (SD / f"{name}.parquet")
+
+def _stale(name):
+    """캐시 파일이 없거나 MAX_AGE_H 보다 오래됐으면 True(=다시 만들어야 함)."""
+    p = _cache_path(name)
+    if not p.exists():
+        return True
+    try:
+        return (time.time() - p.stat().st_mtime) > MAX_AGE_H[name] * 3600
+    except Exception:
+        return True
+
+@st.cache_resource(ttl=3600, show_spinner="데이터 준비 중… (드라이브에서 생성 — 1~2분)")
 def ensure_data():
+    """캐시가 오래됐으면 원본에서 다시 생성(자동 새로고침).
+    ttl=1시간마다 점검하지만, 대부분은 파일 시각만 확인하고 바로 끝난다.
+    자격증명이 없거나 갱신에 실패하면 기존 데이터를 그대로 사용해 앱이 죽지 않게 한다."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
     # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
     _pp = SD / "price.parquet"
@@ -295,47 +320,88 @@ def ensure_data():
                 _pp.unlink()
             except Exception:
                 pass
-    need_scout = {n: not (SD / f"{n}.parquet").exists() for n in ["approval", "patent", "clinical", "price", "nego"]}
-    need_iqvia = not (SAVED / "iqvia.pkl").exists()
-    need_ubist = not (SAVED / "ubist.pkl").exists()
-    if not any(need_scout.values()) and not need_iqvia and not need_ubist:
+    SCOUT = ["approval", "patent", "clinical", "price", "nego"]
+    need = {n: _stale(n) for n in SCOUT + ["iqvia", "ubist"]}
+    if not any(need.values()):
         return "local"
-    from googleapiclient.discovery import build
-    creds = _creds()
-    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
-    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
-    # 허가/특허/임상
+
+    have_all = all(_cache_path(n).exists() for n in SCOUT + ["iqvia", "ubist"])
+    try:
+        from googleapiclient.discovery import build
+        creds = _creds()
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    except Exception:
+        if have_all:
+            return "local"      # 로컬/자격증명 없음 → 기존 데이터 그대로 사용
+        raise
+
+    rebuilt = []
+
+    def _try(name, fn):
+        """갱신 시도. 실패해도 기존 파일이 있으면 유지하고, 다음 주기까지 재시도를 미룬다."""
+        try:
+            fn()
+            rebuilt.append(name)
+        except Exception:
+            p = _cache_path(name)
+            if not p.exists():
+                raise           # 최초 생성 실패는 알려야 함
+            try:
+                p.touch()       # 기존 데이터 유지 + 매 시간 재시도 방지
+            except Exception:
+                pass
+
+    # 허가/특허/임상 (구글시트)
     for name in ["approval", "patent", "clinical"]:
-        if need_scout[name]:
-            _sheet_df(sheets, SHEETS[name]).to_parquet(SD / f"{name}.parquet", index=False)
+        if need[name]:
+            _try(name, lambda n=name: _sheet_df(sheets, SHEETS[n]).to_parquet(SD / f"{n}.parquet", index=False))
+
     # 약가: 기존 이력 엑셀 + HIRA 폴더의 월별 고시 엑셀을 합쳐 이력 생성
-    if need_scout["price"]:
-        base = pd.read_excel(_download(drive, PRICE_XLSX_ID),
-                             sheet_name="가격이력(변동)", dtype=str).fillna("")
-        merged = base
+    if need["price"]:
+        def _build_price():
+            base = pd.read_excel(_download(drive, PRICE_XLSX_ID),
+                                 sheet_name="가격이력(변동)", dtype=str).fillna("")
+            merged = base
+            try:
+                folder = _price_from_folder(drive)   # 월별 고시(없으면 None)
+                if folder is not None and not folder.empty:
+                    fc = _compress_price(folder)     # 폴더(월별 스냅샷)만 변동점으로 압축
+                    # 기존(base)은 컬럼·행 그대로 보존하고, base에 없는 (제품코드,적용일자)만 추가
+                    if {"제품코드", "적용일자"}.issubset(base.columns):
+                        have = set(zip(base["제품코드"].astype(str), base["적용일자"].astype(str)))
+                        keep = [not ((str(a), str(b)) in have)
+                                for a, b in zip(fc["제품코드"], fc["적용일자"])]
+                        fc = fc[keep]
+                    merged = pd.concat([base, fc], ignore_index=True)
+            except Exception:
+                merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
+            merged.to_parquet(SD / "price.parquet", index=False)
+        _try("price", _build_price)
+
+    # 공단협상(NHIS 공개자료)
+    if need["nego"]:
+        def _build_nego():
+            try:
+                _nego_df().to_parquet(SD / "nego.parquet", index=False)
+            except Exception:
+                p = SD / "nego.parquet"
+                if p.exists():
+                    p.touch()   # 스크래핑 실패 → 기존 유지
+                else:
+                    pd.DataFrame(columns=["연도", "제품명", "회사명", "협상결과", "_nm"]).to_parquet(p, index=False)
+        _try("nego", _build_nego)
+
+    # 매출(대용량)
+    if need["iqvia"]:
+        _try("iqvia", lambda: _parse_iqvia(_download(drive, IQVIA_ID)).to_pickle(SAVED / "iqvia.pkl"))
+    if need["ubist"]:
+        _try("ubist", lambda: _parse_ubist(_download(drive, UBIST_ID)).to_pickle(SAVED / "ubist.pkl"))
+
+    if rebuilt:
+        # 새로 만든 데이터가 화면에 바로 반영되도록 로더 캐시를 비운다
         try:
-            folder = _price_from_folder(drive)   # 월별 고시(없으면 None)
-            if folder is not None and not folder.empty:
-                fc = _compress_price(folder)     # 폴더(월별 스냅샷)만 변동점으로 압축
-                # 기존(base)은 컬럼·행 그대로 보존하고, base에 없는 (제품코드,적용일자)만 추가
-                if {"제품코드", "적용일자"}.issubset(base.columns):
-                    have = set(zip(base["제품코드"].astype(str), base["적용일자"].astype(str)))
-                    keep = [not ((str(a), str(b)) in have)
-                            for a, b in zip(fc["제품코드"], fc["적용일자"])]
-                    fc = fc[keep]
-                merged = pd.concat([base, fc], ignore_index=True)  # base 컬럼 유지, fc의 없는 컬럼은 NaN
+            st.cache_data.clear()
         except Exception:
-            merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
-        merged.to_parquet(SD / "price.parquet", index=False)
-    # 공단협상
-    if need_scout["nego"]:
-        try:
-            _nego_df().to_parquet(SD / "nego.parquet", index=False)
-        except Exception:
-            pd.DataFrame(columns=["연도", "제품명", "회사명", "협상결과", "_nm"]).to_parquet(SD / "nego.parquet", index=False)
-    # 매출
-    if need_iqvia:
-        _parse_iqvia(_download(drive, IQVIA_ID)).to_pickle(SAVED / "iqvia.pkl")
-    if need_ubist:
-        _parse_ubist(_download(drive, UBIST_ID)).to_pickle(SAVED / "ubist.pkl")
-    return "built"
+            pass
+    return "built" if rebuilt else "local"
