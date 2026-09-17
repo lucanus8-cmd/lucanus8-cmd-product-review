@@ -840,11 +840,12 @@ if PAGE == "patent":
                 st.caption(f"만료 연도: {lo}년 (해당 연도 특허만 존재)")
                 rng = (lo, hi)
             else:
-                d0 = min(max(lo, TODAY.year - 1), hi)   # 기본 시작값을 [lo,hi]로 클램프
-                d1 = max(min(hi, TODAY.year + 5), lo)   # 기본 끝값을 [lo,hi]로 클램프
-                if d0 > d1:
-                    d0, d1 = lo, hi
-                rng = st.slider("만료 연도 범위", lo, hi, (d0, d1), key="p_rng")
+                # 기본값은 검색 결과 전체 구간. (예전처럼 '올해±' 구간을 기본으로 두면
+                #  품목을 검색해도 일부 특허가 잘려 보여 건수가 적게 나온다)
+                # key를 구간에 묶어 검색이 바뀌면 이전 선택 범위가 따라오지 않게 한다.
+                rng = st.slider("만료 연도 범위", lo, hi, (lo, hi), key=f"p_rng_{lo}_{hi}")
+                if (rng[0], rng[1]) != (lo, hi):
+                    st.caption(f"전체 {lo}~{hi}년 중 {rng[0]}~{rng[1]}년만 보는 중")
             pt = pt[(yrs >= rng[0]) & (yrs <= rng[1])]
             pt["만료D(년)"] = ((pt["_exp"] - TODAY).dt.days / 365.25).round(1)
             k = st.columns(3)
