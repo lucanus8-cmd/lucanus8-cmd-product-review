@@ -302,10 +302,11 @@ def _kor2engkey():
     # ① 허가자료 우선 (품목수가 많아 표기가 대표적)
     try:
         ap = ss.load_approval()
-        eng = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str).map(ss.ing_key)
-        for c, b, k in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str),
-                           ap.get("품목명", pd.Series(dtype=str)).astype(str), eng):
-            _add(c, b, k)
+        _e = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str)
+        for c, b, e in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str),
+                           ap.get("품목명", pd.Series(dtype=str)).astype(str), _e):
+            if ss.is_single_ing(c, e):     # 조합제는 한글/영문 성분 순서가 엇갈려 제외
+                _add(c, b, ss.ing_key(e))
     except Exception:
         pass
 
@@ -313,10 +314,12 @@ def _kor2engkey():
     try:
         pt = ss.load_patent()
         if "INGR_NAME" in pt.columns:
-            for c, b, k in zip(pt["INGR_NAME"].astype(str),
-                               pt.get("품목명", pd.Series(dtype=str)).astype(str),
-                               pt["_key"].astype(str)):
-                _add(c, b, k)
+            for c, e, b, k in zip(pt["INGR_NAME"].astype(str),
+                                  pt.get("INGR_ENG_NAME", pd.Series(dtype=str)).astype(str),
+                                  pt.get("품목명", pd.Series(dtype=str)).astype(str),
+                                  pt["_key"].astype(str)):
+                if ss.is_single_ing(c, e):
+                    _add(c, b, k)
     except Exception:
         pass
 

@@ -40,6 +40,18 @@ def ing_core(s):
                 break
     return s.strip()
 
+_COMBO_RE = re.compile(r"[/,]|및|\+")
+
+def is_single_ing(*vals):
+    """조합제(두 성분 이상) 표기인지 판별. 한글/영문 표기 순서가 서로 달라
+    '암로디핀…/발사르탄' ↔ 'Valsartan/Amlodipine…' 처럼 엇갈리는 자료가 있어,
+    한글↔영문 성분명을 짝지을 때는 단일 성분 행만 쓴다."""
+    for v in vals:
+        t = re.sub(r"\[[^\]]*\]|\([^)]*\)", "", str(v or ""))
+        if _COMBO_RE.search(t):
+            return False
+    return True
+
 def available():
     return (SD / "approval.parquet").exists()
 
@@ -57,19 +69,23 @@ def load_patent():
     # 같은 한글 성분명(INGR_NAME)을 쓰는 다른 행 / 허가자료로 키를 채운다.
     if "INGR_NAME" in df.columns:
         kor = df["INGR_NAME"].astype(str).map(ing_core)
+        single = [is_single_ing(a, b) for a, b in zip(df["INGR_NAME"], df["INGR_ENG_NAME"])]
         k2 = {}
-        for c, k in zip(kor, df["_key"]):
-            if k and len(c) >= 2:
+        for c, k, ok in zip(kor, df["_key"], single):
+            if ok and k and len(c) >= 2:
                 k2.setdefault(c, k)
         try:
             ap = load_approval()
-            for c, k in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str).map(ing_core),
-                            ap["_key"]):
-                if k and len(c) >= 2:
+            _a1 = ap.get("주성분", pd.Series(dtype=str)).astype(str)
+            _a2 = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str)
+            for c0, e0, k in zip(_a1, _a2, ap["_key"]):
+                c = ing_core(c0)
+                if k and len(c) >= 2 and is_single_ing(c0, e0):
                     k2.setdefault(c, k)
         except Exception:
             pass
-        blank = df["_key"].astype(str).str.len() == 0
+        # 조합제 행은 한글 첫 성분만 보고 키를 붙이면 엉뚱한 특허가 섞이므로 제외
+        blank = (df["_key"].astype(str).str.len() == 0) & pd.Series(single, index=df.index)
         if blank.any() and k2:
             df.loc[blank, "_key"] = kor[blank].map(lambda c: k2.get(c, ""))
     df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
