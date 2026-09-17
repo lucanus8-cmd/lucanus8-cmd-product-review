@@ -213,7 +213,7 @@ def _price_trend_codes(pr, basis, term):
 def _pms_expiry_maps():
     """PMS 만료일 조회용 맵 3종.
     재심사 자료에 '종료일' 컬럼이 없으면 재심사시작일 + 재심사기간(년)으로 산출한다.
-    반환: (품목명(공백제거)→만료일, 브랜드코어→만료일, 성분코어→만료일)"""
+    반환: (품목명(공백제거)→만료일, 브랜드코어→만료일, 성분코어→만료일[오리지널 기준])"""
     try:
         rj = ss.load_rejdge()
     except Exception:
@@ -249,16 +249,27 @@ def _pms_expiry_maps():
         if len(b) >= 2 and (b not in brand or e > brand[b]):
             brand[b] = e
 
+    # 성분 기준 PMS = 그 성분 '오리지널(신약)' 품목의 재심사 만료일.
+    # 동일성분에 나중에 붙은 별개 재심사(새 적응증·개량신약 등) 때문에 진입 가능 시점이
+    # 과하게 늦게 잡히는 것을 막는다. 오리지널을 못 찾으면 동일성분 최댓값으로 폴백.
     core = {}
     if HAS_REG:
         try:
             ap = ss.load_approval()
-            nm2core = dict(zip(ap["품목명"].astype(str).str.replace(r"\s+", "", regex=True),
-                               ap["주성분"].astype(str).map(_ing_core)))
+            _nm = ap["품목명"].astype(str).str.replace(r"\s+", "", regex=True)
+            nm2core = dict(zip(_nm, ap["주성분"].astype(str).map(_ing_core)))
+            nm2new = (dict(zip(_nm, ap["신약구분"].astype(str).str.strip() == "신약"))
+                      if "신약구분" in ap.columns else {})
+            orig, allmax = {}, {}
             for k, e in prod.items():
                 c = nm2core.get(k)
-                if c and len(c) >= 2 and (c not in core or e > core[c]):
-                    core[c] = e
+                if not c or len(c) < 2:
+                    continue
+                if c not in allmax or e > allmax[c]:
+                    allmax[c] = e
+                if nm2new.get(k) and (c not in orig or e > orig[c]):
+                    orig[c] = e
+            core = {c: orig.get(c, allmax[c]) for c in allmax}
         except Exception:
             pass
     return prod, brand, core
@@ -682,7 +693,7 @@ if PAGE == "sugg":
                                  help="비우면 전체. 선택하면 해당 계열만")
         pms_sel = st.selectbox("⑤ 이 연도까지 PMS 만료",
                                ["적용 안 함"] + [str(y) for y in range(cy, cy + 16)], index=0,
-                               help="선택 연도까지 재심사(PMS)가 만료됐거나, PMS 대상이 아닌 후보만")
+                               help="선택 연도까지 재심사(PMS)가 만료됐거나 PMS 대상이 아닌 후보만. 성분별은 그 성분 오리지널(신약)의 재심사 기준")
 
     res = m[(m["시장규모"] >= min_size * 1e8) & (m["CAGR"].fillna(-1e9) >= min_cagr)].copy()
     if HAS_REG and ptypes:
@@ -706,17 +717,18 @@ if PAGE == "sugg":
     if HAS_REG:
         res["물질특허 만료"] = pd.to_datetime(res.get("특허만료_물질")).dt.date.astype("string")
         res["용도특허 만료"] = pd.to_datetime(res.get("특허만료_용도")).dt.date.astype("string")
+    _pms_lbl = "PMS 만료(오리지널)" if unit == "성분별" else "PMS 만료"
     if "_pms" in res.columns:
-        res["PMS 만료(추정)"] = pd.to_datetime(res["_pms"]).dt.date.astype("string")
+        res[_pms_lbl] = pd.to_datetime(res["_pms"]).dt.date.astype("string")
     cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
             + ["시장규모(억)", "CAGR(%)"]
             + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
-            + (["PMS 만료(추정)"] if "PMS 만료(추정)" in res.columns else []))
+            + ([_pms_lbl] if _pms_lbl in res.columns else []))
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     st.dataframe(res[cols].head(200), use_container_width=True, height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"제품제안_{src2}_{unit}.csv")
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
-               "ATC는 매출자료 기준 · PMS 만료(추정)=재심사시작일+재심사기간(식약처 재심사 자료에 종료일 항목이 없어 산출값)")
+               "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":
