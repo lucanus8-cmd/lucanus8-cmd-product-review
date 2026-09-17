@@ -208,6 +208,74 @@ def _price_trend_codes(pr, basis, term):
         sub = pr[pr["주성분명"].astype(str).map(_ing_core) == core] if core else pr.iloc[0:0]
     return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
 
+# ── 재심사(PMS) 만료일 ─────────────────────────────────────────────────────
+@st.cache_data(ttl=6 * 3600, show_spinner="재심사(PMS) 만료일 계산 중…")
+def _pms_expiry_maps():
+    """PMS 만료일 조회용 맵 3종.
+    재심사 자료에 '종료일' 컬럼이 없으면 재심사시작일 + 재심사기간(년)으로 산출한다.
+    반환: (품목명(공백제거)→만료일, 브랜드코어→만료일, 성분코어→만료일)"""
+    try:
+        rj = ss.load_rejdge()
+    except Exception:
+        return {}, {}, {}
+    if rj is None or rj.empty or "ITEM_NAME" not in rj.columns:
+        return {}, {}, {}
+
+    def _dt(x):
+        a = pd.to_datetime(x, format="%Y%m%d", errors="coerce")
+        return a.fillna(pd.to_datetime(x, errors="coerce"))
+
+    end_c = next((c for c in ["REEXAM_END_DATE", "REEXAM_END_DT"] if c in rj.columns), None)
+    st_c = next((c for c in ["REEXAM_START_DATE", "REEXAM_START_DT"] if c in rj.columns), None)
+    cd_c = next((c for c in ["REEXAM_CODE_NM", "REEXAM_CODE_NAME", "REEXAM_CD_NM"] if c in rj.columns), None)
+    if end_c:
+        exp = _dt(rj[end_c])
+    elif st_c:
+        yrs = (rj[cd_c].astype(str).str.extract(r"(\d+)\s*년")[0].astype(float)
+               if cd_c else pd.Series(6.0, index=rj.index))
+        exp = _dt(rj[st_c]) + pd.to_timedelta(yrs.fillna(6.0) * 365.25, unit="D")
+    else:
+        return {}, {}, {}
+
+    d = pd.DataFrame({"nm": rj["ITEM_NAME"].astype(str), "exp": exp}).dropna(subset=["exp"])
+    prod, brand = {}, {}
+    for nm, e in zip(d["nm"], d["exp"]):
+        k = re.sub(r"\s+", "", nm)
+        if not k:
+            continue
+        if k not in prod or e > prod[k]:
+            prod[k] = e
+        b = re.split(r"[0-9(\[]", k)[0]
+        if len(b) >= 2 and (b not in brand or e > brand[b]):
+            brand[b] = e
+
+    core = {}
+    if HAS_REG:
+        try:
+            ap = ss.load_approval()
+            nm2core = dict(zip(ap["품목명"].astype(str).str.replace(r"\s+", "", regex=True),
+                               ap["주성분"].astype(str).map(_ing_core)))
+            for k, e in prod.items():
+                c = nm2core.get(k)
+                if c and len(c) >= 2 and (c not in core or e > core[c]):
+                    core[c] = e
+        except Exception:
+            pass
+    return prod, brand, core
+
+def _pms_lookup(value, unit, maps):
+    """제품/성분 값 하나에 대한 PMS 만료일(없으면 None)."""
+    prod, brand, core = maps
+    s = str(value or "")
+    if unit == "제품별":
+        k = re.sub(r"\s+", "", s)
+        if k in prod:
+            return prod[k]
+        b = re.split(r"[0-9(\[]", k)[0]
+        return brand.get(b) if len(b) >= 2 else None
+    c = _ing_core(s)
+    return core.get(c) if len(c) >= 2 else None
+
 # 좌측 상단 제목
 st.markdown(
     "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
@@ -586,6 +654,18 @@ if PAGE == "sugg":
     if HAS_REG:
         m = m.merge(ss.patent_by_key(), on="_key", how="left")
 
+    # ATC(매출자료 기준) · PMS 만료일 추가
+    _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
+    _atc = cfg.get("atc1")
+    if _atc and _atc in df.columns:
+        _amap = (df.groupby(_keycol)[_atc]
+                   .agg(lambda x: next((str(v).strip() for v in x
+                                        if str(v).strip() and str(v).strip().lower() != "nan"), "")))
+        m["ATC"] = m[name].map(_amap).fillna("")
+    _pmaps = _pms_expiry_maps()
+    if any(_pmaps):
+        m["_pms"] = m[name].map(lambda v: _pms_lookup(v, unit, _pmaps))
+
     st.markdown("**필터 조건**")
     f1, f2, f3 = st.columns(3)
     min_size = f1.number_input("① 최소 시장규모(억, 최신연도)", value=50, step=10, min_value=0)
@@ -612,11 +692,17 @@ if PAGE == "sugg":
     if HAS_REG:
         res["물질특허 만료"] = pd.to_datetime(res.get("특허만료_물질")).dt.date.astype("string")
         res["용도특허 만료"] = pd.to_datetime(res.get("특허만료_용도")).dt.date.astype("string")
-    cols = [name, "시장규모(억)", "CAGR(%)"] + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
+    if "_pms" in res.columns:
+        res["PMS 만료(추정)"] = pd.to_datetime(res["_pms"]).dt.date.astype("string")
+    cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
+            + ["시장규모(억)", "CAGR(%)"]
+            + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
+            + (["PMS 만료(추정)"] if "PMS 만료(추정)" in res.columns else []))
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     st.dataframe(res[cols].head(200), use_container_width=True, height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols].to_csv(index=False).encode("utf-8-sig"), file_name=f"제품제안_{src2}_{unit}.csv")
-    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료 조건을 직접 필터링합니다.")
+    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료 조건을 직접 필터링합니다. · "
+               "ATC는 매출자료 기준 · PMS 만료(추정)=재심사시작일+재심사기간(식약처 재심사 자료에 종료일 항목이 없어 산출값)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":
