@@ -176,15 +176,25 @@ def _parse_ubist(buf):
     return df.copy()
 
 def _sheet_df(sheets_api, sid):
+    """스프레드시트에서 '데이터가 있는' 주 탭을 읽는다.
+    컬럼 수가 많은 탭부터 시도하되, 값이 비어 있는 탭(빈 시트·유지용 등)은 건너뛴다."""
     meta = sheets_api.spreadsheets().get(spreadsheetId=sid, fields="sheets.properties(title,gridProperties)").execute()
     def score(s):
-        gp = s["properties"].get("gridProperties", {}); return (gp.get("columnCount", 0), gp.get("rowCount", 0))
+        gp = s["properties"].get("gridProperties", {})
+        return (gp.get("columnCount", 0), gp.get("rowCount", 0))
     cand = [s for s in meta["sheets"] if not s["properties"]["title"].startswith("_")] or meta["sheets"]
-    tab = max(cand, key=score)["properties"]["title"]
-    vals = sheets_api.spreadsheets().values().get(spreadsheetId=sid, range=tab, valueRenderOption="FORMATTED_VALUE").execute().get("values", [])
-    cols = [str(c).split("\n")[0].strip() for c in vals[0]]
-    rows = [r + [""] * (len(cols) - len(r)) for r in vals[1:]]
-    return pd.DataFrame(rows, columns=cols)
+    for sh in sorted(cand, key=score, reverse=True):
+        tab = sh["properties"]["title"]
+        vals = (sheets_api.spreadsheets().values()
+                .get(spreadsheetId=sid, range=tab, valueRenderOption="FORMATTED_VALUE")
+                .execute().get("values", []))
+        if len(vals) < 2:          # 헤더+데이터가 없으면 빈 탭 → 다음 후보
+            continue
+        cols = [str(c).split("\n")[0].strip() for c in vals[0]]
+        n = len(cols)
+        rows = [(r + [""] * n)[:n] for r in vals[1:]]   # 짧은/긴 행 모두 안전하게
+        return pd.DataFrame(rows, columns=cols)
+    raise RuntimeError(f"데이터가 있는 탭을 찾지 못했습니다 (스프레드시트 {sid})")
 
 def _nego_df():
     board = "https://www.nhis.or.kr/nhis/together/wbhaec05500m01.do"
