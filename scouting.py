@@ -298,6 +298,32 @@ def _pms_lookup(value, unit, maps):
     c = _ing_core(s)
     return core.get(c) if len(c) >= 2 else None
 
+# ── 한글 성분/제품명 → 영문 특허키 매핑 ────────────────────────────────────
+@st.cache_data(show_spinner="성분 키 매핑 중…")
+def _kor2engkey():
+    """매출자료의 성분명·제품명은 한글이라 ing_key()가 빈 값이 되어 특허가 붙지 않는다.
+    허가자료(주성분 ↔ 주성분(영문))로 한글→영문 성분키를 만들어 연결한다.
+    반환: (성분코어→영문키, 브랜드코어→영문키)"""
+    if not HAS_REG:
+        return {}, {}
+    try:
+        ap = ss.load_approval()
+    except Exception:
+        return {}, {}
+    eng = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str).map(ss.ing_key)
+    core = ap.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core)
+    nm = ap.get("품목명", pd.Series(dtype=str)).astype(str).str.replace(r"\s+", "", regex=True)
+    c2k, b2k = {}, {}
+    for c, b, k in zip(core, nm, eng):
+        if not k:
+            continue
+        if len(c) >= 2:
+            c2k.setdefault(c, k)
+        bb = re.split(r"[0-9(\[]", b)[0]
+        if len(bb) >= 2:
+            b2k.setdefault(bb, k)
+    return c2k, b2k
+
 # 좌측 상단 제목
 st.markdown(
     "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
@@ -672,9 +698,24 @@ if PAGE == "sugg":
     m = sales_agg(df, yr, cfg["ing"] if unit == "성분별" else cfg["prod"], cfg["maker"])
     name = unit.replace("별", "")
     m = m.rename(columns={m.columns[0]: name})
-    m["_key"] = m[name].map(ss.ing_key)
+    # 매출자료의 성분/제품명은 한글이라 ing_key()가 비어 특허가 안 붙는다.
+    # 허가자료로 한글→영문 성분키를 연결하고, 빈 키는 제외한다.
+    # (빈 키를 그대로 두면 모든 후보가 '영문 성분명이 빈 특허' 한 덩어리에 조인되어
+    #  전부 같은 만료일이 붙는다)
+    _c2k, _b2k = _kor2engkey()
+    def _rowkey(v):
+        s0 = str(v or "")
+        k = ss.ing_key(s0)
+        if k:
+            return k
+        if unit == "성분별":
+            return _c2k.get(_ing_core(s0), "")
+        return _b2k.get(re.split(r"[0-9(\[]", re.sub(r"\s+", "", s0))[0], "")
+    m["_key"] = m[name].map(_rowkey)
     if HAS_REG:
-        m = m.merge(ss.patent_by_key(), on="_key", how="left")
+        _pbk = ss.patent_by_key()
+        _pbk = _pbk[_pbk["_key"].astype(str).str.len() > 0]
+        m = m.merge(_pbk, on="_key", how="left")
 
     # ATC(매출자료 기준) · PMS 만료일 추가
     _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
