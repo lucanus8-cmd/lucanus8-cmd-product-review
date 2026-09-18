@@ -167,23 +167,48 @@ def _ap_key(ap):
             pass
     return k
 
+def _ap_date(ap):
+    a = pd.to_datetime(ap.get("허가일자"), format="%Y%m%d", errors="coerce")
+    b = pd.to_datetime(ap.get("허가일자"), errors="coerce")
+    d = a.fillna(b)
+    return d.where((d > pd.Timestamp("1900-01-01")) & (d < pd.Timestamp("2200-01-01")))
+
 @st.cache_data
 def original_items():
-    """오리지널(신약) 품목의 (품목기준코드 집합, 공백제거 품목명 집합, 해당 성분키 집합)."""
+    """성분별 오리지널 품목을 찾는다.
+    1순위 신약구분='신약'. 없으면 2순위로 그 성분의 '최초 허가' 단일제 품목
+    (오래된 성분은 허가자료에 신약구분이 비어 있는 경우가 많다).
+    반환: (품목기준코드 집합, 공백제거 품목명 집합, {성분키: '신약'|'최초허가'})"""
     try:
-        ap = load_approval()
+        ap = load_approval().copy()
     except Exception:
-        return set(), set(), set()
-    if "신약구분" not in ap.columns:
-        return set(), set(), set()
-    new = ap[ap["신약구분"].astype(str).str.strip() == "신약"]
-    if new.empty:
-        return set(), set(), set()
+        return set(), set(), {}
+    ap["_k"] = _ap_key(ap)
+    ap = ap[ap["_k"].astype(str).str.len() > 0]
+    if ap.empty:
+        return set(), set(), {}
+
+    isnew = (ap["신약구분"].astype(str).str.strip() == "신약"
+             if "신약구분" in ap.columns else pd.Series(False, index=ap.index))
+    new = ap[isnew]
+    basis = {k: "신약" for k in new["_k"].unique()}
+
+    # 신약 표기가 없는 성분 → 그 성분 최초 허가 단일제를 오리지널로 본다
+    rest = ap[~ap["_k"].isin(basis)]
+    if not rest.empty and "허가일자" in rest.columns:
+        solo = [is_single_ing(a, b) for a, b in zip(rest.get("주성분", ""), rest.get("주성분(영문)", ""))]
+        rest = rest[pd.Series(solo, index=rest.index)]
+        d = _ap_date(rest)
+        rest = rest[d.notna()]
+        if not rest.empty:
+            first = rest.loc[_ap_date(rest).groupby(rest["_k"]).idxmin()]
+            basis.update({k: "최초허가" for k in first["_k"].unique()})
+            new = pd.concat([new, first])
+
     codes = (set(new["품목기준코드"].astype(str).str.strip())
              if "품목기준코드" in new.columns else set())
     names = set(new["품목명"].astype(str).str.replace(r"\s+", "", regex=True))
-    keys = set(_ap_key(new)) - {""}
-    return codes - {"", "nan"}, names - {"", "nan"}, keys
+    return codes - {"", "nan"}, names - {"", "nan"}, basis
 
 def original_patent_mask(pt):
     """특허 행이 오리지널(신약) 품목의 것인지."""

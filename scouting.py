@@ -741,13 +741,19 @@ if PAGE == "sugg":
             base = ss.patent_by_key(single_only=solo)
             if unit != "성분별":
                 return base
-            orig = ss.patent_by_key(single_only=solo, original_only=True)
-            _, _, okeys = ss.original_items()
-            rest = base[~base["_key"].isin(okeys)].copy()
-            for c in ("근거_물질", "근거_용도"):
-                if c in rest.columns:
-                    rest[c] = rest[c].fillna("").map(
-                        lambda t: f"⚠오리지널 미확인 · {t}" if t else "")
+            orig = ss.patent_by_key(single_only=solo, original_only=True).copy()
+            _, _, basis = ss.original_items()
+
+            def _mark(dfx, tag):
+                for c in ("근거_물질", "근거_용도"):
+                    if c in dfx.columns:
+                        dfx[c] = [f"{tag(k)}{t}" if t else ""
+                                  for k, t in zip(dfx["_key"], dfx[c].fillna(""))]
+                return dfx
+
+            # 신약 표기가 없어 '최초 허가 품목'을 오리지널로 본 성분은 그렇게 표시
+            orig = _mark(orig, lambda k: "" if basis.get(k) == "신약" else "ⓘ최초허가 기준 · ")
+            rest = _mark(base[~base["_key"].isin(basis)].copy(), lambda k: "⚠오리지널 미확인 · ")
             return pd.concat([orig, rest], ignore_index=True)
 
         _parts = []
@@ -837,8 +843,9 @@ if PAGE == "sugg":
                "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준 · "
                "특허 만료일=존속 중인 등록특허 중 가장 늦은 날짜(소멸·무효 제외). "
                "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다. "
-               "**성분별은 오리지널(신약) 품목의 특허 기준** — 오리지널 품목을 허가자료에서 찾지 못한 성분은 "
-               "전체 기준으로 표시하고 근거에 ‘⚠오리지널 미확인’으로 알립니다 (‘특허 근거 표시’로 확인)")
+               "**성분별은 오리지널 품목의 특허 기준** — 1순위 신약구분=‘신약’, 없으면 그 성분 최초 허가 품목"
+               "(근거에 ‘ⓘ최초허가 기준’ 표시). 둘 다 못 찾으면 전체 기준으로 표시하고 ‘⚠오리지널 미확인’으로 알립니다 "
+               "(‘특허 근거 표시’로 확인)")
 
 # ══════════════════════════ 매출 분석 (기존 app.py 4개 탭 그대로) ══════════════════════════
 if PAGE == "sales":
