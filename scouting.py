@@ -106,13 +106,40 @@ def msel(container, label, series, key, default=None):
 def isin(df, col, sel):
     return df if not sel else df[df[col].astype(str).isin(sel)]
 
+def cagr_matrix(mat, labels, min_base=1e8):
+    """calc_cagr()의 벡터 버전. 행 수가 수천 개면 행별 apply는 수 초씩 걸린다."""
+    import numpy as np
+    V = np.asarray(mat, dtype="float64")
+    V = np.nan_to_num(V, nan=0.0)
+    if V.size == 0:
+        return np.full(len(V), np.nan)
+    years = np.array([int(year_of(c)) for c in labels])
+    pos = V > 0
+    big = V >= min_base
+    has_big, npos = big.any(axis=1), pos.sum(axis=1)
+    si = np.where(has_big, big.argmax(axis=1), 0)                 # 첫 기준연도
+    ei = V.shape[1] - 1 - pos[:, ::-1].argmax(axis=1)             # 마지막 양수연도
+    r = np.arange(V.shape[0])
+    sv, ev = V[r, si], V[r, ei]
+    n = years[ei] - years[si]
+    ok = has_big & (npos >= 2) & (n > 0) & (ev > 0) & (sv > 0)
+    out = np.full(V.shape[0], np.nan)
+    out[ok] = ((ev[ok] / sv[ok]) ** (1.0 / n[ok]) - 1.0) * 100
+    return out
+
 def sales_agg(df, yr, key, maker):
     g = df.groupby(key, dropna=True)
     out = g[yr].sum()
     out["시장규모"] = out[yr[-1]]
-    out["CAGR"] = out.apply(lambda r: calc_cagr(r[yr].tolist(), yr), axis=1)
+    out["CAGR"] = cagr_matrix(out[yr].to_numpy(), yr)
     out = out.join(g[maker].nunique().rename("제조사수")).join(g.size().rename("품목수"))
     return out.reset_index()
+
+@st.cache_data(show_spinner=False)
+def sales_agg_cached(src, key, maker):
+    """집계 결과 캐시. 위젯을 만질 때마다 수천 그룹을 다시 집계하지 않도록."""
+    df, yr, _ = get(src)
+    return sales_agg(df, yr, key, maker)
 
 def yearly_matrix(price_df, codes, name_map):
     """제품코드별 연도말 상한금액 매트릭스(삭제 이후 0). 반환: 제품명 + 연도열."""
@@ -183,7 +210,8 @@ def _price_trend_codes(pr, basis, term):
         sub = pr[pr["제품명"].astype(str).apply(
             lambda n: any(re.sub(r"\s", "", str(n)).startswith(p) for p in pref))]
     else:
-        sub = pr[pr["주성분명"].astype(str).map(_ing_core) == core] if core else pr.iloc[0:0]
+        _pc = pr["_core"] if "_core" in pr.columns else ss.ing_core_series(pr["주성분명"])
+        sub = pr[_pc == core] if core else pr.iloc[0:0]
     return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
 
 # ── 재심사(PMS) 만료일 ─────────────────────────────────────────────────────
@@ -246,7 +274,7 @@ def _pms_expiry_maps():
         try:
             ap = ss.load_approval()
             _nm = ap["품목명"].astype(str).str.replace(r"\s+", "", regex=True)
-            nm2core = dict(zip(_nm, ap["주성분"].astype(str).map(_ing_core)))
+            nm2core = dict(zip(_nm, ss.ing_core_series(ap["주성분"])))
             nm2new = (dict(zip(_nm, ap["신약구분"].astype(str).str.strip() == "신약"))
                       if "신약구분" in ap.columns else {})
             orig, allmax = {}, {}
@@ -288,25 +316,31 @@ def _kor2engkey():
         return {}, {}
     c2k, b2k = {}, {}
 
-    def _add(kor_ing, kor_name, eng_key):
-        """한글 성분코어/브랜드코어 → 영문키 등록 (먼저 넣은 쪽 우선)."""
-        if not eng_key:
+    def _feed(kor_ing, kor_name, eng_key, single):
+        """한글 성분코어/브랜드코어 → 영문키 등록 (먼저 넣은 쪽 우선). 전부 벡터 연산."""
+        ok = single & (eng_key.astype(str).str.len() > 0)
+        if not ok.any():
             return
-        c = _ing_core(kor_ing)
-        if len(c) >= 2:
-            c2k.setdefault(c, eng_key)
-        b = re.split(r"[0-9(\[]", re.sub(r"\s+", "", str(kor_name or "")))[0]
-        if len(b) >= 2:
-            b2k.setdefault(b, eng_key)
+        core = ss.ing_core_series(kor_ing[ok])
+        brand = (kor_name[ok].astype(str).str.replace(r"\s+", "", regex=True)
+                 .str.split(r"[0-9(\[]", regex=True).str[0].fillna(""))
+        k = eng_key[ok].astype(str)
+        cc = pd.DataFrame({"c": core, "k": k})
+        cc = cc[cc["c"].str.len() >= 2].drop_duplicates("c")
+        for a, b in zip(cc["c"], cc["k"]):
+            c2k.setdefault(a, b)
+        bb = pd.DataFrame({"b": brand, "k": k})
+        bb = bb[bb["b"].str.len() >= 2].drop_duplicates("b")
+        for a, b in zip(bb["b"], bb["k"]):
+            b2k.setdefault(a, b)
 
     # ① 허가자료 우선 (품목수가 많아 표기가 대표적)
     try:
         ap = ss.load_approval()
-        _e = ap.get("주성분(영문)", pd.Series(dtype=str)).astype(str)
-        for c, b, e in zip(ap.get("주성분", pd.Series(dtype=str)).astype(str),
-                           ap.get("품목명", pd.Series(dtype=str)).astype(str), _e):
-            if ss.is_single_ing(c, e):     # 조합제는 한글/영문 성분 순서가 엇갈려 제외
-                _add(c, b, ss.ing_key(e))
+        _ing = ap.get("주성분", pd.Series(dtype=str))
+        _eng = ap.get("주성분(영문)", pd.Series(dtype=str))
+        _feed(_ing, ap.get("품목명", pd.Series(dtype=str)), ss.ing_key_series(_eng),
+              ss.is_single_series(_ing, _eng))   # 조합제는 한글/영문 성분 순서가 엇갈려 제외
     except Exception:
         pass
 
@@ -314,12 +348,9 @@ def _kor2engkey():
     try:
         pt = ss.load_patent()
         if "INGR_NAME" in pt.columns:
-            for c, e, b, k in zip(pt["INGR_NAME"].astype(str),
-                                  pt.get("INGR_ENG_NAME", pd.Series(dtype=str)).astype(str),
-                                  pt.get("품목명", pd.Series(dtype=str)).astype(str),
-                                  pt["_key"].astype(str)):
-                if ss.is_single_ing(c, e):
-                    _add(c, b, k)
+            _feed(pt["INGR_NAME"], pt.get("품목명", pd.Series(dtype=str)), pt["_key"],
+                  ss.is_single_series(pt["INGR_NAME"],
+                                      pt.get("INGR_ENG_NAME", pd.Series("", index=pt.index))))
     except Exception:
         pass
 
@@ -429,7 +460,9 @@ if PAGE == "search":
         if basis == "제품명" and _edic:
             edis_self = {_digits(x) for x in _ap0[_ap0.get("품목명", pd.Series(dtype=str)).astype(str) == q][_edic].dropna()}
         if cores:
-            _same = _ap0[_ap0.get("주성분", pd.Series(dtype=str)).astype(str).map(_ing_core).isin(cores)]
+            _ac = (_ap0["_core"] if "_core" in _ap0.columns
+                   else ss.ing_core_series(_ap0.get("주성분", pd.Series(dtype=str))))
+            _same = _ap0[_ac.isin(cores)]
             ing_keys |= {k for k in (ss.ing_key(x) for x in _same.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
             if _edic:
                 edis_same = {_digits(x) for x in _same[_edic].dropna()}
@@ -445,11 +478,19 @@ if PAGE == "search":
         return base
 
     def _kor_union(df, base, col):
-        """동일성분 코어(col을 정규화해 비교) 매칭 행을 추가(약가 주성분명·임상 성분명용)."""
-        if cores and col in df.columns:
-            add = df[df[col].astype(str).map(_ing_core).isin(cores)]
-            if not add.empty:
-                return pd.concat([base, add]).drop_duplicates()
+        """동일성분 코어 매칭 행을 추가(약가 주성분명·임상 성분명용).
+        로더에서 미리 만들어 둔 '_core' 열을 쓴다(없으면 그 자리에서 벡터 계산)."""
+        if not cores:
+            return base
+        if "_core" in df.columns:
+            cc = df["_core"]
+        elif col in df.columns:
+            cc = ss.ing_core_series(df[col])
+        else:
+            return base
+        add = df[cc.isin(cores)]
+        if not add.empty:
+            return pd.concat([base, add]).drop_duplicates()
         return base
 
     if q:
@@ -475,7 +516,9 @@ if PAGE == "search":
             _fm = pd.Series(False, index=df.index)
             if cores and cfg["ing"] in df.columns:
                 _ingc = df[cfg["ing"]].astype(str)
-                _fm = _ingc.map(_ing_core).isin(cores) | _ingc.apply(lambda s: any(c in s for c in cores))
+                _sub = "|".join(re.escape(c) for c in cores)      # 부분 포함(복합제 표기) 벡터 검색
+                _fm = (ss.ing_core_series(_ingc).isin(cores)
+                       | _ingc.str.contains(_sub, regex=True, na=False))
             if _sedi is not None and edis_same:
                 _fm = _fm | _sedi.isin(edis_same)
             hit = df[_fm]; _by_ing = not hit.empty
@@ -696,7 +739,7 @@ if PAGE == "sugg":
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
     df, yr, cfg = get(src2)
-    m = sales_agg(df, yr, cfg["ing"] if unit == "성분별" else cfg["prod"], cfg["maker"])
+    m = sales_agg_cached(src2, cfg["ing"] if unit == "성분별" else cfg["prod"], cfg["maker"])
     name = unit.replace("별", "")
     m = m.rename(columns={m.columns[0]: name})
     # 매출자료의 성분/제품명은 한글이라 ing_key()가 비어 특허가 안 붙는다.
@@ -712,19 +755,23 @@ if PAGE == "sugg":
                   .agg(lambda x: next((str(v) for v in x if str(v).strip()
                                        and str(v).strip().lower() != "nan"), "")).to_dict())
 
-    def _rowkey(v):
-        s0 = str(v or "")
-        k = ss.ing_key(s0)
-        if k:
-            return k
-        if unit == "성분별":
-            return _c2k.get(_ing_core(s0), "")
-        b = re.split(r"[0-9(\[]", re.sub(r"\s+", "", s0))[0]
-        k = _b2k.get(b, "")
-        if not k and _p2i.get(v):                       # 브랜드명 미매칭 → 성분명으로
-            k = ss.ing_key(_p2i[v]) or _c2k.get(_ing_core(_p2i[v]), "")
-        return k
-    m["_key"] = m[name].map(_rowkey)
+    _nm = m[name]
+    _k = ss.ing_key_series(_nm)                        # ① 영문 성분명이면 바로 키
+    _blank = _k.str.len() == 0
+    if _blank.any():
+        if unit == "성분별":                            # ② 한글 성분명 → 매핑표
+            _k.loc[_blank] = ss.ing_core_series(_nm[_blank]).map(_c2k).fillna("")
+        else:                                          # ② 브랜드명 → 매핑표
+            _b = (_nm[_blank].astype(str).str.replace(r"\s+", "", regex=True)
+                  .str.split(r"[0-9(\[]", regex=True).str[0].fillna(""))
+            _k.loc[_blank] = _b.map(_b2k).fillna("")
+            _still = (_k.str.len() == 0) & _blank       # ③ 미매칭 → 매출자료의 성분명으로
+            if _still.any() and _p2i:
+                _i = _nm[_still].map(_p2i).fillna("")
+                _ik = ss.ing_key_series(_i)
+                _ik = _ik.where(_ik.str.len() > 0, ss.ing_core_series(_i).map(_c2k).fillna(""))
+                _k.loc[_still] = _ik
+    m["_key"] = _k.fillna("")
     if HAS_REG:
         # 단일제 후보에는 단일 성분 품목의 특허만 반영한다.
         # (조인키가 영문 성분명의 첫 단어라, 그대로 두면 그 성분이 들어간 복합제
@@ -770,9 +817,9 @@ if PAGE == "sugg":
     _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
     _atc = cfg.get("atc1")
     if _atc and _atc in df.columns:
-        _amap = (df.groupby(_keycol)[_atc]
-                   .agg(lambda x: next((str(v).strip() for v in x
-                                        if str(v).strip() and str(v).strip().lower() != "nan"), "")))
+        _av = df[_atc].astype(str).str.strip()
+        _ok = _av.str.len().gt(0) & ~_av.str.lower().eq("nan")
+        _amap = df.loc[_ok, [_keycol]].assign(_a=_av[_ok]).groupby(_keycol)["_a"].first()
         m["ATC"] = m[name].map(_amap).fillna("")
     try:
         _pmaps = _pms_expiry_maps()
@@ -1116,7 +1163,7 @@ if PAGE == "ai":
             m = contains(dmf, [c for c in [ic, "ENTP_NAME"] if c], qterm)
             kor = _kor_ings(qterm)
             if ic and kor:
-                same = dmf[dmf[ic].astype(str).map(_ing_core).isin(kor)]
+                same = dmf[ss.ing_core_series(dmf[ic]).isin(kor)]
                 m = pd.concat([m, same]).drop_duplicates()
             return m
         except Exception:

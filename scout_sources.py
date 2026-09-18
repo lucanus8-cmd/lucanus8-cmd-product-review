@@ -52,13 +52,47 @@ def is_single_ing(*vals):
             return False
     return True
 
+# ── 벡터화 버전 (행 단위 파이썬 루프는 10만 건대 자료에서 수 초씩 걸린다) ──────
+_BRACKET_RE = r"\[[^\]]*\]|\([^)]*\)"
+_SUFFIX_RE = "(?:" + "|".join(re.escape(x) for x in _SALT_SUFFIX) + ")$"
+
+def ing_key_series(sr):
+    """ing_key()의 시리즈 버전. 첫 알파벳 3자 이상 토큰을 대문자로."""
+    return (sr.astype(str).str.extract(r"([A-Za-z]{3,})", expand=False)
+              .fillna("").str.upper())
+
+def ing_core_series(sr):
+    """ing_core()의 시리즈 버전."""
+    s = (sr.astype(str)
+           .str.replace(r"\[[^\]]*\]", "", regex=True)
+           .str.replace(r"\([^)]*\)", "", regex=True)
+           .str.replace(r"\s+", "", regex=True)
+           .str.split(r"[/,]|및|\+", regex=True).str[0].fillna(""))
+    for _ in range(8):                       # 염+수화물 중첩 표기 반복 제거
+        cut = s.str.replace(_SUFFIX_RE, "", regex=True)
+        nxt = cut.where(cut.str.len() >= 2, s)
+        if nxt.equals(s):
+            break
+        s = nxt
+    return s.str.strip()
+
+def is_single_series(*srs):
+    """is_single_ing()의 시리즈 버전. 모든 열이 단일 성분 표기일 때만 True."""
+    m = None
+    for sr in srs:
+        t = sr.astype(str).str.replace(_BRACKET_RE, "", regex=True)
+        one = ~t.str.contains(r"[/,]|및|\+", regex=True, na=False)
+        m = one if m is None else (m & one)
+    return m
+
 def available():
     return (SD / "approval.parquet").exists()
 
 @st.cache_data(show_spinner="허가 로딩 중…")
 def load_approval():
     df = pd.read_parquet(SD / "approval.parquet")
-    df["_key"] = df["주성분(영문)"].map(ing_key)
+    df["_key"] = ing_key_series(df["주성분(영문)"])
+    df["_core"] = ing_core_series(df["주성분"]) if "주성분" in df.columns else ""
     return df
 
 @st.cache_data
@@ -68,11 +102,12 @@ def _kor_core_key_map():
     k2 = {}
 
     def _feed(kor_sr, eng_sr):
-        for c0, e0 in zip(kor_sr.astype(str), eng_sr.astype(str)):
-            k = ing_key(e0)
-            c = ing_core(c0)
-            if k and len(c) >= 2 and is_single_ing(c0, e0):
-                k2.setdefault(c, k)
+        k = ing_key_series(eng_sr)
+        c = ing_core_series(kor_sr)
+        ok = (k.str.len() > 0) & (c.str.len() >= 2) & is_single_series(kor_sr, eng_sr)
+        pair = pd.DataFrame({"c": c[ok], "k": k[ok]}).drop_duplicates("c")
+        for cc, kk in zip(pair["c"], pair["k"]):
+            k2.setdefault(cc, kk)
 
     try:
         pt = pd.read_parquet(SD / "patent.parquet")
@@ -91,27 +126,29 @@ def _kor_core_key_map():
 @st.cache_data(show_spinner="특허 로딩 중…")
 def load_patent():
     df = pd.read_parquet(SD / "patent.parquet")
-    df["_key"] = df["INGR_ENG_NAME"].map(ing_key)
+    df["_key"] = ing_key_series(df["INGR_ENG_NAME"])
     # 영문 성분명이 비어 있는 행은 키가 없어 한 덩어리로 뭉친다.
     # 같은 한글 성분명(INGR_NAME)을 쓰는 다른 행 / 허가자료로 키를 채운다.
     if "INGR_NAME" in df.columns:
-        kor = df["INGR_NAME"].astype(str).map(ing_core)
-        single = [is_single_ing(a, b) for a, b in zip(df["INGR_NAME"], df["INGR_ENG_NAME"])]
+        kor = ing_core_series(df["INGR_NAME"])
+        single = is_single_series(df["INGR_NAME"], df["INGR_ENG_NAME"])
         k2 = _kor_core_key_map()
         # 조합제 행은 한글 첫 성분만 보고 키를 붙이면 엉뚱한 특허가 섞이므로 제외
-        blank = (df["_key"].astype(str).str.len() == 0) & pd.Series(single, index=df.index)
+        blank = (df["_key"].astype(str).str.len() == 0) & single
         if blank.any() and k2:
             df.loc[blank, "_key"] = kor[blank].map(lambda c: k2.get(c, ""))
     df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
     # 단일 성분 품목의 특허인지 (복합제 특허가 단일제 성분에 섞이는 것을 막는 데 사용)
-    df["_single"] = [is_single_ing(a, b)
-                     for a, b in zip(df.get("INGR_NAME", pd.Series("", index=df.index)),
-                                     df.get("INGR_ENG_NAME", pd.Series("", index=df.index)))]
+    df["_single"] = is_single_series(df.get("INGR_NAME", pd.Series("", index=df.index)),
+                                     df.get("INGR_ENG_NAME", pd.Series("", index=df.index)))
+    df["_core"] = kor if "INGR_NAME" in df.columns else ""
     return df
 
 @st.cache_data(show_spinner="임상 로딩 중…")
 def load_clinical():
-    return pd.read_parquet(SD / "clinical.parquet")
+    df = pd.read_parquet(SD / "clinical.parquet")
+    df["_core"] = ing_core_series(df["성분명"]) if "성분명" in df.columns else ""
+    return df
 
 @st.cache_data
 def competition_by_key():
@@ -144,14 +181,16 @@ def _latest_with_src(sub, label):
     idx = sub.groupby("_key")["_exp"].idxmax()
     top = sub.loc[idx].set_index("_key")
 
-    def _src(r):
-        bits = [str(r.get("품목명", "")).strip(),
-                str(r.get("PATENT_GB_CODE", "")).strip(),
-                str(r.get("PATENTEE", "")).strip()]
-        return " · ".join(b for b in bits if b and b.lower() != "nan")
+    def _col(name):
+        sr = top[name].astype(str).str.strip() if name in top.columns else pd.Series("", index=top.index)
+        return sr.where(~sr.str.lower().isin(["nan", ""]), "")
 
-    return pd.DataFrame({f"특허만료_{label}": top["_exp"],
-                         f"근거_{label}": top.apply(_src, axis=1)})
+    parts = [_col("품목명"), _col("PATENT_GB_CODE"), _col("PATENTEE")]
+    src = parts[0]
+    for q in parts[1:]:
+        src = src + (" · " + q).where(q.str.len() > 0, "")
+    src = src.str.replace(r"^ · +", "", regex=True)
+    return pd.DataFrame({f"특허만료_{label}": top["_exp"], f"근거_{label}": src})
 
 def _ap_key(ap):
     """허가자료 행의 조인키. 주성분(영문)이 비면 한글 성분명 매핑으로 보완."""
@@ -160,7 +199,7 @@ def _ap_key(ap):
     if blank.any() and "주성분" in ap.columns:
         try:
             k2 = _kor_core_key_map()
-            core = ap.loc[blank, "주성분"].astype(str).map(ing_core)
+            core = ing_core_series(ap.loc[blank, "주성분"])
             k = k.copy()
             k.loc[blank] = core.map(lambda c: k2.get(c, ""))
         except Exception:
@@ -196,8 +235,8 @@ def original_items():
     # 신약 표기가 없는 성분 → 그 성분 최초 허가 단일제를 오리지널로 본다
     rest = ap[~ap["_k"].isin(basis)]
     if not rest.empty and "허가일자" in rest.columns:
-        solo = [is_single_ing(a, b) for a, b in zip(rest.get("주성분", ""), rest.get("주성분(영문)", ""))]
-        rest = rest[pd.Series(solo, index=rest.index)]
+        rest = rest[is_single_series(rest.get("주성분", pd.Series("", index=rest.index)),
+                                     rest.get("주성분(영문)", pd.Series("", index=rest.index)))]
         d = _ap_date(rest)
         rest = rest[d.notna()]
         if not rest.empty:
@@ -272,7 +311,8 @@ def load_price():
     df = pd.read_parquet(SD / "price.parquet")
     df["금액"] = pd.to_numeric(df["금액"], errors="coerce")
     df["적용일자"] = pd.to_datetime(df["적용일자"], errors="coerce")
-    df["_key"] = df["주성분명"].map(ing_key)
+    df["_key"] = ing_key_series(df["주성분명"])
+    df["_core"] = ing_core_series(df["주성분명"])
     return df
 
 @st.cache_data
