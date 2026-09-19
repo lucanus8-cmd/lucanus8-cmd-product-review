@@ -1020,6 +1020,36 @@ if PAGE == "patent":
             st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), use_container_width=True, height=360, hide_index=True)
 
 # ══════════════════════════ 임상 분석 ══════════════════════════
+# ── 임상 적응증(대상질환) 키워드 검색용 통합 텍스트 ───────────────────────
+# 적응증은 한 칸에만 적히지 않는다. 대상질환명·분류·세부·기타에 더해 시험 제목과
+# 시험 목적에도 들어가므로, 이 칸들을 모두 합친 텍스트에서 찾는다.
+_DIS_COLS = ["TRGT_DISS_NM", "TRGT_DISS_CD_NM", "TRGT_DISS_DTL_CD_NM", "TRGT_DISS_DTL_ETC",
+             "CLNC_TEST_TITLE", "IVSGT_PURPS"]
+
+@st.cache_data(show_spinner=False)
+def _clinical_dis_blob():
+    """적응증 관련 칸을 하나로 합쳐 공백 제거·소문자화한 검색용 시리즈."""
+    cl = ss.load_clinical()
+    cols = [c for c in _DIS_COLS if c in cl.columns]
+    if not cols:
+        return pd.Series("", index=cl.index), []
+    b = cl[cols[0]].astype(str)
+    for c in cols[1:]:
+        b = b + " " + cl[c].astype(str)
+    return b.str.replace(r"\s+", "", regex=True).str.lower(), cols
+
+def _dis_mask(index, kw, mode):
+    """적응증 키워드 매칭 마스크. mode: '모두 포함(AND)' | '하나라도 포함(OR)'."""
+    terms = [re.sub(r"\s+", "", t).lower() for t in re.split(r"[,;\s]+", str(kw)) if t.strip()]
+    if not terms:
+        return pd.Series(True, index=index)
+    blob, _ = _clinical_dis_blob()
+    hits = [blob.str.contains(t, regex=False, na=False) for t in terms]
+    m = hits[0]
+    for h in hits[1:]:
+        m = (m & h) if mode.startswith("모두") else (m | h)
+    return m.reindex(index, fill_value=False)
+
 if PAGE == "clinical":
     st.subheader("🧪 임상 분석 — 조건별")
     try:
@@ -1051,6 +1081,14 @@ if PAGE == "clinical":
         f2 = st.columns([3, 1])
         f_dis = msel(f2[0], "대상질환", cl[dis_c], "c_dis") if dis_c else []
 
+        f3 = st.columns([3, 1.4])
+        dis_kw = f3[0].text_input(
+            "적응증 키워드 포함", key="c_dis_kw",
+            placeholder="예: 비만 당뇨   (쉼표나 띄어쓰기로 여러 개)",
+            help="대상질환명·분류·세부·기타 + 임상시험 제목·시험 목적을 한꺼번에 찾습니다. 띄어쓰기는 무시합니다.")
+        dis_mode = f3[1].radio("키워드 조건", ["모두 포함(AND)", "하나라도 포함(OR)"],
+                               key="c_dis_mode", horizontal=False)
+
         m = cl
         if step_c: m = isin(m, step_c, f_step)
         if stat_c: m = isin(m, stat_c, f_stat)
@@ -1059,6 +1097,11 @@ if PAGE == "clinical":
             m = m[m[dev_c].astype(str).str.contains(dev_kw, case=False, na=False, regex=False)]
         if kw:
             m = contains(m, [c for c in [prod_c, ing_c] if c], kw)
+        if dis_kw.strip():
+            m = m[_dis_mask(m.index, dis_kw, dis_mode)]
+            _terms = [t for t in re.split(r"[,;\s]+", dis_kw) if t.strip()]
+            st.caption(f"적응증 키워드 {'모두' if dis_mode.startswith('모두') else '하나라도'} 포함: "
+                       + " · ".join(f"‘{t}’" for t in _terms))
 
         # 요약 지표
         bio = int(m[step_c].astype(str).str.contains("생동", na=False).sum()) if step_c else 0
@@ -1085,7 +1128,9 @@ if PAGE == "clinical":
                     g2.plotly_chart(px.bar(yc, x="연도", y="건수", title="연도별 임상 승인 추이"), use_container_width=True)
 
             cmap = {"제품명": "제품명", "성분명": "성분명", "CLINIC_STEP_NM": "단계",
-                    "TRGT_DISS_NM": "대상질환", "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
+                    "TRGT_DISS_NM": "대상질환", "TRGT_DISS_DTL_CD_NM": "대상질환(세부)",
+                    "CLNC_TEST_TITLE": "임상시험 제목",
+                    "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
             cc = {k2: v for k2, v in cmap.items() if k2 in m.columns}
             view = m.rename(columns=cc)[list(cc.values())]
             if "승인일" in view.columns:
@@ -1441,17 +1486,76 @@ if PAGE == "ai":
 # ══════════════════════════ 상태 ══════════════════════════
 if PAGE == "status":
     st.subheader("데이터 연결 상태")
-    reg = "✅ 연결" if HAS_REG else "⏳"
-    prc = "✅ 연결" if HAS_PRICE else "⏳"
-    nego = "✅ 연결" if (hasattr(ss, "nego_available") and ss.nego_available()) else "⏳"
-    rows = [
-        ("매출 · IQVIA", "✅ 연결", "saved_data/iqvia.pkl (66,320행)"),
-        ("매출 · UBIST", "✅ 연결", "saved_data/ubist.pkl (52,217행)"),
-        ("허가현황", reg, "Sheets API → approval.parquet (42,992행)"),
-        ("특허현황", reg, "Sheets API → patent.parquet (120,525행)"),
-        ("임상시험", reg, "Sheets API → clinical.parquet (8,096행)"),
-        ("약가(상한금액 이력)", prc, "Drive API → price.parquet (177,562행)"),
-        ("공단 약가협상 완료(공식)", nego, "NHIS → nego.parquet"),
+    if _DATA_ERR is not None:
+        st.error(f"마지막 자동 갱신이 실패했습니다 — {type(_DATA_ERR).__name__}: {_DATA_ERR}")
+
+    import datetime as _dt
+
+    def _rows(path):
+        """행 수를 파일 메타데이터로만 센다(대용량 매출 파일은 읽지 않음)."""
+        try:
+            if path.suffix == ".parquet":
+                import pyarrow.parquet as _pq
+                return f"{_pq.ParquetFile(path).metadata.num_rows:,}행"
+            return f"{path.stat().st_size / 1e6:,.1f} MB"
+        except Exception:
+            return "—"
+
+    def _age(path):
+        try:
+            h = (_dt.datetime.now() - _dt.datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 3600
+            if h < 1:
+                return f"{int(h*60)}분 전", h
+            if h < 48:
+                return f"{h:.0f}시간 전", h
+            return f"{h/24:.0f}일 전", h
+        except Exception:
+            return "—", 1e9
+
+    _SD, _SV = Path(__file__).parent / "scout_data", Path(__file__).parent / "saved_data"
+    items = [
+        ("매출 · IQVIA", _SV / "iqvia.pkl", 24 * 7, "드라이브 엑셀 → iqvia.pkl"),
+        ("매출 · UBIST", _SV / "ubist.pkl", 24 * 7, "드라이브 엑셀 → ubist.pkl"),
+        ("허가현황", _SD / "approval.parquet", 24, "구글시트 → approval.parquet"),
+        ("특허현황", _SD / "patent.parquet", 24, "구글시트 → patent.parquet"),
+        ("임상시험", _SD / "clinical.parquet", 24, "구글시트 → clinical.parquet"),
+        ("약가(상한금액 이력)", _SD / "price.parquet", 24, "드라이브 엑셀+HIRA 폴더 → price.parquet"),
+        ("공단 약가협상", _SD / "nego.parquet", 24, "건보공단 공개자료 → nego.parquet"),
     ]
-    st.dataframe(pd.DataFrame(rows, columns=["항목", "상태", "비고"]), hide_index=True, use_container_width=True)
-    st.caption("성분 조인 키 = 영문 성분명 첫 단어. 한글 성분 검색은 허가데이터로 영문키 변환.")
+    rows, n_missing, n_stale = [], 0, 0
+    for name, path, maxh, note in items:
+        if not path.exists():
+            rows.append((name, "❌ 미연결", "—", "—", note)); n_missing += 1
+            continue
+        txt, h = _age(path)
+        if h > maxh:
+            rows.append((name, "⚠️ 오래됨", _rows(path), txt, note)); n_stale += 1
+        else:
+            rows.append((name, "✅ 연결", _rows(path), txt, note))
+
+    # 구글시트에서 바로 읽는 항목(파일 캐시 없음)
+    for name, fn, note in [("재심사(PMS)", ss.load_rejdge, "구글시트 '재심사' 탭 (실시간 조회)"),
+                           ("DMF", ss.load_dmf, "구글시트 DMF 탭 + 업로드 엑셀 (실시간 조회)")]:
+        try:
+            d = fn()
+            ok = d is not None and not d.empty
+            rows.append((name, "✅ 연결" if ok else "❌ 미연결",
+                         f"{len(d):,}행" if ok else "0행", "조회 시점", note))
+            if not ok:
+                n_missing += 1
+        except Exception as _e:
+            rows.append((name, "❌ 미연결", "—", "—", f"{note} · {type(_e).__name__}")); n_missing += 1
+
+    if n_missing == 0 and n_stale == 0:
+        st.success("모든 자료가 정상 연결돼 있습니다.")
+    else:
+        msg = []
+        if n_missing: msg.append(f"미연결 {n_missing}건")
+        if n_stale: msg.append(f"갱신 지연 {n_stale}건")
+        st.warning(" · ".join(msg) + " — 아래 표에서 확인하세요.")
+
+    st.dataframe(pd.DataFrame(rows, columns=["항목", "상태", "규모", "마지막 갱신", "경로"]),
+                 hide_index=True, use_container_width=True)
+    st.caption("‘마지막 갱신’은 서버에 저장된 자료 파일 기준입니다. 허가·특허·임상·약가는 하루 1회, "
+               "매출은 주 1회 확인합니다. ⚠️ 표시는 그 주기를 넘겼다는 뜻이며, 원본 시트 공유 설정이나 "
+               "서비스 계정 키를 확인해 주세요. · 성분 조인 키 = 영문 성분명 첫 단어.")
