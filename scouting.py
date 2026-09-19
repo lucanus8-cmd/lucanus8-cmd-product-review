@@ -36,7 +36,31 @@ def _check_password():
 _check_password()
 
 import bootstrap  # 배포 시 드라이브에서 데이터 확보 (로컬은 통과)
-bootstrap.ensure_data()
+
+# 데이터 확보 실패(자격증명 만료·시트 공유 해제·네트워크 오류 등)로 앱 전체가
+# 파이썬 오류 화면이 되면 안 된다. 원인을 사람이 읽을 수 있게 안내하고,
+# 있는 자료만으로 계속 쓸 수 있게 한다(각 탭은 '미연결' 안내를 스스로 표시).
+_DATA_ERR = None
+try:
+    bootstrap.ensure_data()
+except Exception as _e:
+    _DATA_ERR = _e
+
+def _data_status_banner():
+    if _DATA_ERR is None:
+        return
+    _sd, _sv = Path(__file__).parent / "scout_data", Path(__file__).parent / "saved_data"
+    _want = {"허가": _sd / "approval.parquet", "특허": _sd / "patent.parquet",
+             "임상": _sd / "clinical.parquet", "약가": _sd / "price.parquet",
+             "공단협상": _sd / "nego.parquet", "매출(IQVIA)": _sv / "iqvia.pkl",
+             "매출(UBIST)": _sv / "ubist.pkl"}
+    _missing = [k for k, v in _want.items() if not v.exists()]
+    st.error("데이터를 새로 받아오지 못했습니다. 아래 자료는 지금 사용할 수 없습니다."
+             + (f"\n\n**미연결:** {', '.join(_missing)}" if _missing else "")
+             + "\n\n나머지 기능은 그대로 쓸 수 있습니다. 계속 이러면 구글 시트 공유 설정과 "
+               "서비스 계정 키(Streamlit Secrets)를 확인해 주세요.")
+    with st.expander("자세한 오류 내용 (개발자용)"):
+        st.code(f"{type(_DATA_ERR).__name__}: {_DATA_ERR}")
 
 DATA_DIR = Path(__file__).parent / "saved_data"
 TODAY = pd.Timestamp.today().normalize()
@@ -154,11 +178,18 @@ def yearly_matrix(price_df, codes, name_map):
     pv = pv.reindex(columns=yrs).ffill(axis=1)
     tv = tv.reindex(columns=yrs).ffill(axis=1)
     pv = pv.where(tv != "삭제", 0)
+    pv.columns = [str(c) for c in pv.columns]   # 연도(정수)+문자열 혼합 헤더 경고 방지
     pv.insert(0, "제품명", [name_map.get(c, c) for c in pv.index])
     return pv.reset_index(drop=True)
 
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
+HAS_CLIN = ss.clinical_available()
+HAS_PAT = ss.patent_available()
+
+def has_sales(src):
+    """매출 파일(iqvia/ubist)이 실제로 있는지. 없으면 안내만 하고 넘어간다."""
+    return (DATA_DIR / {"IQVIA": "iqvia.pkl", "UBIST": "ubist.pkl"}.get(src, "")).exists()
 
 _ing_core = ss.ing_core   # 성분명 정규화(코드/염/수화물 제거) — scout_sources 공용
 
@@ -361,6 +392,7 @@ st.markdown(
     "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
     "<div style='color:#9aa3b2;font-size:12px;margin-bottom:8px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
     unsafe_allow_html=True)
+_data_status_banner()
 
 PAGES = [
     ("🔍", "제품 종합분석", "search"),
@@ -501,7 +533,9 @@ if PAGE == "search":
             return pd.concat([base, add]).drop_duplicates()
         return base
 
-    if q:
+    if q and not has_sales(src1):
+        st.info(f"{src1} 매출 자료 미연결 — 허가/특허/임상/약가는 아래에서 확인할 수 있습니다.")
+    if q and has_sales(src1):
         df, yr, cfg = get(src1)
         # 매출 매칭: ① 브랜드 코어 ② 제형어(정/캡슐/주 등) 제거한 더 짧은 브랜드 토큰으로 제품명 검색
         _bt = re.sub(r"(서방정|속붕정|장용정|설하정|츄어블정|구강붕해정|정제|정|연질캡슐|경질캡슐|캡슐|"
@@ -570,7 +604,7 @@ if PAGE == "search":
                 st.dataframe(m[cc].sort_values("허가일자", ascending=False), use_container_width=True, height=300, hide_index=True)
             else: st.info("허가 데이터 미연결")
         with tabs[1]:
-            if HAS_REG:
+            if HAS_REG and HAS_PAT:
                 pt = ss.load_patent()
                 m = _kor_union(pt, _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)), "INGR_NAME").copy()
                 m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
@@ -581,7 +615,7 @@ if PAGE == "search":
                              use_container_width=True, height=300, hide_index=True)
             else: st.info("특허 데이터 미연결")
         with tabs[2]:
-            if HAS_REG:
+            if HAS_REG and HAS_CLIN:
                 cl = ss.load_clinical()
                 if "성분명" in cl.columns:
                     cl = cl.copy(); cl["_key"] = cl["성분명"].map(ss.ing_key)
@@ -757,6 +791,9 @@ if PAGE == "sugg":
     a, b = st.columns(2)
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
+    if not has_sales(src2):
+        st.info(f"{src2} 매출 자료 미연결 — 제품 제안은 매출 자료가 있어야 동작합니다.")
+        st.stop()
     df, yr, cfg = get(src2)
     m = sales_agg_cached(src2, cfg["ing"] if unit == "성분별" else cfg["prod"], cfg["maker"])
     name = unit.replace("별", "")
@@ -917,9 +954,17 @@ if PAGE == "sugg":
 if PAGE == "sales":
     # 매출(IQVIA·UBIST)은 데이터가 커서 메모리를 많이 쓴다.
     # 무료 플랜 안정성을 위해 버튼을 눌렀을 때만 불러온다(기본은 미로딩).
-    if st.session_state.get("_load_sales"):
+    if not (has_sales("IQVIA") or has_sales("UBIST")):
+        st.info("매출 자료(IQVIA·UBIST)가 아직 연결되지 않았습니다. "
+                "‘상태’ 메뉴에서 자료 갱신 현황을 확인해 주세요.")
+    elif st.session_state.get("_load_sales"):
         import sales_analysis
-        sales_analysis.render()
+        try:
+            sales_analysis.render()
+        except Exception as _e:      # 매출 대시보드 오류가 앱 전체를 멈추지 않게
+            st.error("매출 분석을 여는 중 문제가 생겼습니다. 다른 탭은 정상 사용할 수 있습니다.")
+            with st.expander("자세한 오류 내용 (개발자용)"):
+                st.code(f"{type(_e).__name__}: {_e}")
         if st.button("🧹 매출 데이터 닫기(메모리 절약)", key="btn_unload_sales"):
             st.session_state["_load_sales"] = False
             st.cache_data.clear()
@@ -934,7 +979,7 @@ if PAGE == "sales":
 # ══════════════════════════ 특허 분석 ══════════════════════════
 if PAGE == "patent":
     st.subheader("⚖️ 특허 분석 — 조건별")
-    if not HAS_REG:
+    if not (HAS_REG and HAS_PAT):
         st.info("특허 데이터 미연결")
     else:
         pt = ss.load_patent().copy()
@@ -1206,6 +1251,8 @@ if PAGE == "ai":
         if not qterm:
             return "(제품/성분 미지정)"
         try:
+            if not has_sales("IQVIA"):
+                raise RuntimeError("IQVIA 매출 자료 미연결")
             df, yr, cfg = get("IQVIA"); hit = sales_search(df, cfg, qterm)
             if not hit.empty:
                 s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
@@ -1317,6 +1364,8 @@ if PAGE == "ai":
         except Exception:
             pass
         try:
+            if not has_sales("IQVIA"):
+                raise RuntimeError("IQVIA 매출 자료 미연결")
             df, yr, cfg = get("IQVIA"); hit = sales_search(df, cfg, qterm)
             if not hit.empty and yr:
                 last5 = yr[-5:]; s = hit[last5].sum()

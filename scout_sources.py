@@ -88,6 +88,16 @@ def is_single_series(*srs):
 def available():
     return (SD / "approval.parquet").exists()
 
+def clinical_available():
+    return (SD / "clinical.parquet").exists()
+
+def patent_available():
+    return (SD / "patent.parquet").exists()
+
+_PATENT_COLS = ["품목기준코드", "품목명", "업체명", "INGR_ENG_NAME", "INGR_NAME",
+                "DOMESTIC_PATENT_STATUS", "PATENT_GB_CODE", "PATENTEE",
+                "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE"]
+
 @st.cache_data(show_spinner="허가 로딩 중…")
 def load_approval():
     df = pd.read_parquet(SD / "approval.parquet")
@@ -125,6 +135,14 @@ def _kor_core_key_map():
 
 @st.cache_data(show_spinner="특허 로딩 중…")
 def load_patent():
+    # 파일이 없어도(시트 연결 실패 등) 앱이 죽지 않도록 빈 표를 돌려준다.
+    # 각 화면은 patent_available()로 '미연결' 안내를 따로 표시한다.
+    if not (SD / "patent.parquet").exists():
+        e = pd.DataFrame({c: pd.Series(dtype="object") for c in _PATENT_COLS})
+        e["_key"], e["_core"] = pd.Series(dtype="object"), pd.Series(dtype="object")
+        e["_single"] = pd.Series(dtype="bool")
+        e["_exp"] = pd.Series(dtype="datetime64[ns]")
+        return e
     df = pd.read_parquet(SD / "patent.parquet")
     df["_key"] = ing_key_series(df["INGR_ENG_NAME"])
     # 영문 성분명이 비어 있는 행은 키가 없어 한 덩어리로 뭉친다.
@@ -146,6 +164,8 @@ def load_patent():
 
 @st.cache_data(show_spinner="임상 로딩 중…")
 def load_clinical():
+    if not (SD / "clinical.parquet").exists():
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제품명", "성분명", "CLINIC_STEP_NM", "_core"]})
     df = pd.read_parquet(SD / "clinical.parquet")
     df["_core"] = ing_core_series(df["성분명"]) if "성분명" in df.columns else ""
     return df
