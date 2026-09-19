@@ -468,6 +468,14 @@ if PAGE == "search":
                 edis_same = {_digits(x) for x in _same[_edic].dropna()}
         edis_self = {e for e in edis_self if len(e) >= 6}
         edis_same = {e for e in edis_same if len(e) >= 6}
+    # 허가자료에 영문 성분명이 비어 있는 성분(신약 중 더러 있음)은 위에서 영문키를 못 만든다.
+    # 한글→영문 매핑표로 보강해야 영문으로 적힌 매출자료와 연결된다.
+    if cores and not ing_keys:
+        try:
+            _c2k0, _ = _kor2engkey()
+            ing_keys |= {_c2k0[c] for c in cores if _c2k0.get(c)}
+        except Exception:
+            pass
 
     def _ing_union(df, base):
         """동일성분(영문 _key) 매칭 행을 기존 결과에 추가(있는 것만 더함, 제거 없음)."""
@@ -511,17 +519,27 @@ if PAGE == "search":
             _pm = _pm | _prodn.str.contains(_t, case=False, na=False, regex=False)
         if _sedi is not None and edis_self:            # 선택 제품의 EDI 직접 조인
             _pm = _pm | _sedi.isin(edis_self)
-        hit, _by_ing = df[_pm], False
-        if hit.empty and (cores or edis_same):         # 제품명 매칭 실패 → 동일성분 매출로 폴백
-            _fm = pd.Series(False, index=df.index)
-            if cores and cfg["ing"] in df.columns:
-                _ingc = df[cfg["ing"]].astype(str)
-                _sub = "|".join(re.escape(c) for c in cores)      # 부분 포함(복합제 표기) 벡터 검색
-                _fm = (ss.ing_core_series(_ingc).isin(cores)
+
+        # 동일성분 매칭 마스크. 매출자료의 성분명은 영문(예: 'semaglutide 0.25mg')이고
+        # 검색어는 한글(세마글루티드)이라, 영문 성분키로 맞춰야 연결된다.
+        _fm = pd.Series(False, index=df.index)
+        if cfg["ing"] in df.columns:
+            _ingc = df[cfg["ing"]].astype(str)
+            if ing_keys:
+                _fm = _fm | ss.ing_key_series(_ingc).isin(ing_keys)
+            if cores:
+                _sub = "|".join(re.escape(c) for c in cores)      # 한글 표기 자료용(부분 포함)
+                _fm = (_fm | ss.ing_core_series(_ingc).isin(cores)
                        | _ingc.str.contains(_sub, regex=True, na=False))
-            if _sedi is not None and edis_same:
-                _fm = _fm | _sedi.isin(edis_same)
-            hit = df[_fm]; _by_ing = not hit.empty
+        if _sedi is not None and edis_same:
+            _fm = _fm | _sedi.isin(edis_same)
+
+        if basis == "주성분":                          # 성분으로 찾았으면 성분 매출 전체를 본다
+            hit, _by_ing = df[_fm], True
+        else:
+            hit, _by_ing = df[_pm], False
+            if hit.empty and _fm.any():                # 제품명 매칭 실패 → 동일성분 매출로 폴백
+                hit = df[_fm]; _by_ing = not hit.empty
         if not hit.empty:
             s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
             k = st.columns(4)
@@ -531,7 +549,8 @@ if PAGE == "search":
             k[3].metric("품목 수" if _by_ing else "성분 수",
                         f"{len(hit)} 품목" if _by_ing else f"{hit[cfg['ing']].nunique()} 종")
             if _by_ing:
-                st.caption("※ 제품명 직접 매칭이 없어 '동일성분' 매출을 합산해 보여줍니다.")
+                st.caption("※ 선택한 성분의 매출을 합산했습니다." if basis == "주성분"
+                           else "※ 제품명 직접 매칭이 없어 '동일성분' 매출을 합산해 보여줍니다.")
         else:
             st.info(f"{src1} 매출 매칭 없음 — 이 제품/성분이 {src1} 매출 파일에 없을 수 있어요 "
                     f"(‘매출 분석’ 탭에서 직접 검색해 확인). 허가/특허/임상/약가는 아래 확인)")
