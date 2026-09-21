@@ -99,6 +99,11 @@ SRC = {
 def get(src):
     cfg = SRC[src]; df, yr = cfg["load"](); return df, yr, cfg
 
+# 제형어(정/캡슐/액 등) — 브랜드 핵심어만 남길 때 제거한다. 긴 것이 앞에 와야 한다.
+_FORM_RE = (r"(서방정|속붕정|장용정|설하정|츄어블정|구강붕해정|정제|정|연질캡슐|경질캡슐|캡슐|"
+            r"주사액|주사|프리필드시린지|건조시럽|시럽|과립|산제|산|점안액|점비액|점이액|"
+            r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$")
+
 def _nospace(sr):
     """시리즈의 공백 제거(띄어쓰기 차이 흡수)."""
     return sr.astype(str).str.replace(r"\s+", "", regex=True)
@@ -538,9 +543,7 @@ if PAGE == "search":
     if q and has_sales(src1):
         df, yr, cfg = get(src1)
         # 매출 매칭: ① 브랜드 코어 ② 제형어(정/캡슐/주 등) 제거한 더 짧은 브랜드 토큰으로 제품명 검색
-        _bt = re.sub(r"(서방정|속붕정|장용정|설하정|츄어블정|구강붕해정|정제|정|연질캡슐|경질캡슐|캡슐|"
-                     r"주사액|주사|프리필드시린지|건조시럽|시럽|과립|산제|산|점안액|점비액|점이액|"
-                     r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$", "", q_brand)
+        _bt = re.sub(_FORM_RE, "", q_brand)
         _terms = {t for t in {q_brand, _bt} if len(t) >= 2}
         _prodn = _nospace(df[cfg["prod"]])   # 띄어쓰기 차이 흡수(예: '가스모틴 에스알정' ↔ '가스모틴에스알정')
         # 매출 파일의 보험EDI 코드 컬럼(있으면 이름/띄어쓰기와 무관하게 조인)
@@ -571,8 +574,17 @@ if PAGE == "search":
         if basis == "주성분":                          # 성분으로 찾았으면 성분 매출 전체를 본다
             hit, _by_ing = df[_fm], True
         else:
-            hit, _by_ing = df[_pm], False
-            if hit.empty and _fm.any():                # 제품명 매칭 실패 → 동일성분 매출로 폴백
+            hit, _by_ing, _by_pref = df[_pm], False, False
+            if hit.empty and _terms:
+                # 허가명에만 붙은 추가 표기(예: '…에스현탁액' ↔ '…현탁액') 때문에 글자 포함으로는
+                # 안 걸리는 경우가 있다. 양쪽에서 제형어를 떼고, 매출 제품명이 허가명의
+                # '앞부분'과 정확히 같으면 같은 브랜드로 본다(4자 이상일 때만).
+                _pb = _prodn.str.replace(_FORM_RE, "", regex=True)
+                _pref = {t[:k] for t in _terms for k in range(4, len(t) + 1)}
+                _pm2 = _pb.isin(_pref) if _pref else pd.Series(False, index=df.index)
+                if _pm2.any():
+                    hit, _by_pref = df[_pm2], True
+            if hit.empty and _fm.any():                # 그래도 없으면 → 동일성분 매출로 폴백
                 hit = df[_fm]; _by_ing = not hit.empty
         if not hit.empty:
             s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
@@ -585,6 +597,9 @@ if PAGE == "search":
             if _by_ing:
                 st.caption("※ 선택한 성분의 매출을 합산했습니다." if basis == "주성분"
                            else "※ 제품명 직접 매칭이 없어 '동일성분' 매출을 합산해 보여줍니다.")
+            elif _by_pref:
+                _names = ", ".join(sorted(hit[cfg["prod"]].astype(str).unique())[:8])
+                st.caption(f"※ 제품명 표기가 자료마다 달라, 앞부분이 같은 제품으로 매칭했습니다 → {_names}")
         else:
             st.info(f"{src1} 매출 매칭 없음 — 이 제품/성분이 {src1} 매출 파일에 없을 수 있어요 "
                     f"(‘매출 분석’ 탭에서 직접 검색해 확인). 허가/특허/임상/약가는 아래 확인)")
