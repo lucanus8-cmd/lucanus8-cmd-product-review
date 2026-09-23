@@ -601,13 +601,18 @@ if UBIST_SAVED.exists() or UBIST_CACHE.exists():
             build_cache("ubist")
     ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
 
+# UBIST의 ATC 열 이름은 자료 판마다 다를 수 있어(ATC / ATC코드 등) 실제 열에서 찾는다
+UBIST_ATC_COL = next((c for c in (ubist_df.columns if ubist_df is not None else [])
+                      if "ATC" in str(c).upper()), None)
+MKT_UBIST_MAP["ATC"] = UBIST_ATC_COL
+
 # ATC 선택 옵션 목록 (다중선택용)
 @st.cache_data
 def _atc_opts(cache_mtime, kind):
     if kind == "iqvia" and iqvia_df is not None and "ATC 4(한글)" in iqvia_df.columns:
         return sorted(iqvia_df["ATC 4(한글)"].dropna().astype(str).unique().tolist())
-    if kind == "ubist" and ubist_df is not None and "ATC" in ubist_df.columns:
-        return sorted(ubist_df["ATC"].dropna().astype(str).unique().tolist())
+    if kind == "ubist" and ubist_df is not None and UBIST_ATC_COL:
+        return sorted(ubist_df[UBIST_ATC_COL].dropna().astype(str).unique().tolist())
     return []
 
 iqvia_atc_opts = _atc_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
@@ -646,15 +651,16 @@ with tabs[0]:
     FILTER_FIELDS = ["제품명", "성분명", "제조사", "용량", "ATC", "급여구분"]
     IQVIA_FIELD = {"제품명": "제품명", "성분명": "성분명", "제조사": "회사명",
                    "용량": "용량", "ATC": "ATC 4(한글)", "급여구분": "급여구분"}
-    # UBIST는 ATC 분류 체계(대괄호 코드)가 IQVIA와 달라 ATC 필터는 IQVIA에만 적용
+    # UBIST는 ATC 분류 체계가 IQVIA와 달라, UBIST를 볼 때는 UBIST 자신의 ATC 목록에서 고른다
+    # (두 자료의 ATC 코드를 섞어 쓰지 않으므로 체계 차이 문제는 생기지 않는다)
     UBIST_FIELD = {"제품명": "제품명", "성분명": "성분", "제조사": "제조사명",
-                   "용량": "용량", "ATC": None, "급여구분": "급여구분"}
+                   "용량": "용량", "ATC": UBIST_ATC_COL, "급여구분": "급여구분"}
 
     # 자료원별 제품명/ATC 목록
     if dash_source == "IQVIA":
         _opts = {"제품명": iqvia_prod_opts, "ATC": iqvia_atc_opts}
     else:
-        _opts = {"제품명": ubist_prod_opts}
+        _opts = {"제품명": ubist_prod_opts, "ATC": ubist_atc_opts}
 
     st.markdown("**🔎 검색 조건** (제품명·ATC는 목록에서 선택 · 여러 조건은 AND)")
     active_filters = render_filters(
@@ -677,6 +683,11 @@ with tabs[0]:
 
     def apply_filters(df, field_map):
         """AND 조건으로 마스크 적용. 적용 가능한 조건이 하나도 없으면 빈 결과."""
+        _na = sorted({f["field"] for f in active_filters
+                      if not field_map.get(f["field"]) or field_map.get(f["field"]) not in df.columns})
+        if _na:
+            st.warning(f"이 자료원에는 **{', '.join(_na)}** 항목이 없어 그 조건은 적용할 수 없습니다. "
+                       "다른 기준으로 바꾸거나 조건을 지워 주세요.")
         return df[make_filter_mask(df, active_filters, field_map, require_any=False)]
 
     # IQVIA 제품 검색
@@ -1120,7 +1131,7 @@ with tabs[1]:
         atc_opts_for_filter = iqvia_atc_opts
     else:
         src_df = ubist_df
-        atc_levels = ["ATC"] if (ubist_df is not None and "ATC" in ubist_df.columns) else []
+        atc_levels = [UBIST_ATC_COL] if (ubist_df is not None and UBIST_ATC_COL) else []
         mfr_field, prod_grp = "제조사명", ["제품명", "성분"]
         year_cols = sorted([c for c in (ubist_num_cols or []) if "처방조제액" in c])
         period_cols = year_cols
