@@ -257,10 +257,21 @@ def _price_from_folder(drive):
         if d is None:
             continue
         try:
-            df = pd.read_excel(_download(drive, f["id"]), dtype=str).fillna("")
+            raw = pd.read_excel(_download(drive, f["id"]), dtype=str, header=None)
         except Exception:
             continue
-        df.columns = [str(c).replace("\n", "").strip() for c in df.columns]
+        # 심평원 고시 파일은 맨 윗줄이 제목('2026년10월1일_(22,062)_공개용…')이고
+        # 머리글이 그 아래에 있다. '제품코드'가 들어간 줄을 머리글로 잡는다.
+        hdr = None
+        for _i in range(min(10, len(raw))):
+            if any("제품코드" in str(x) for x in raw.iloc[_i].tolist()):
+                hdr = _i
+                break
+        if hdr is None:
+            continue  # 약가 파일이 아님
+        df = raw.iloc[hdr + 1:].copy().fillna("")
+        # 머리글의 줄바꿈·공백 제거(' 상한금액표 금액 ' 처럼 띄어쓰기가 섞여 있다)
+        df.columns = [re.sub(r"\s+", "", str(c)) for c in raw.iloc[hdr].tolist()]
         code_c = _find(df.columns, ["제품코드"])
         amt_c = _find(df.columns, ["상한금액표금액", "상한금액", "금액"])
         if not code_c or not amt_c:
