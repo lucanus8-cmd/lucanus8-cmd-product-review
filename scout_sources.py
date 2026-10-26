@@ -85,6 +85,13 @@ def is_single_series(*srs):
         m = one if m is None else (m & one)
     return m
 
+def _mtime(path):
+    """파일 수정시각(없으면 0). 캐시 키로 써서 파일이 바뀌면 자동으로 다시 읽는다."""
+    try:
+        return path.stat().st_mtime
+    except Exception:
+        return 0.0
+
 def available():
     return (SD / "approval.parquet").exists()
 
@@ -99,8 +106,11 @@ _PATENT_COLS = ["품목기준코드", "품목명", "업체명", "INGR_ENG_NAME",
                 "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE"]
 
 @st.cache_data(show_spinner="허가 로딩 중…")
-def load_approval():
+def _load_approval(_mt):
     return enrich_approval(pd.read_parquet(SD / "approval.parquet"))
+
+def load_approval():
+    return _load_approval(_mtime(SD / "approval.parquet"))
 
 def build_kor_core_key_map(pairs):
     """[(한글성분 시리즈, 영문성분 시리즈), …] → {한글코어: 영문키}.
@@ -128,7 +138,7 @@ def save_kor_core_key_map(m):
         pass
 
 @st.cache_data
-def _kor_core_key_map():
+def _kor_core_key_map_cached(_mt):
     """한글 성분코어 → 영문 조인키. 저장된 맵이 있으면 그대로 쓴다."""
     try:
         if KEYMAP_PATH.exists():
@@ -150,6 +160,9 @@ def _kor_core_key_map():
     except Exception:
         pass
     return build_kor_core_key_map(pairs)
+
+def _kor_core_key_map():
+    return _kor_core_key_map_cached(_mtime(KEYMAP_PATH) + _mtime(SD / "patent.parquet"))
 
 # ── 파생열 계산 ────────────────────────────────────────────────────────────
 # 성분 조인키·코어 같은 파생열은 자료가 바뀔 때 한 번만 만들면 된다.
@@ -201,7 +214,7 @@ def enrich_price(df):
     return df
 
 @st.cache_data(show_spinner="특허 로딩 중…")
-def load_patent():
+def _load_patent(_mt):
     # 파일이 없어도(시트 연결 실패 등) 앱이 죽지 않도록 빈 표를 돌려준다.
     # 각 화면은 patent_available()로 '미연결' 안내를 따로 표시한다.
     if not (SD / "patent.parquet").exists():
@@ -212,11 +225,17 @@ def load_patent():
         return e
     return enrich_patent(pd.read_parquet(SD / "patent.parquet"))
 
+def load_patent():
+    return _load_patent(_mtime(SD / "patent.parquet"))
+
 @st.cache_data(show_spinner="임상 로딩 중…")
-def load_clinical():
+def _load_clinical(_mt):
     if not (SD / "clinical.parquet").exists():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제품명", "성분명", "CLINIC_STEP_NM", "_core"]})
     return enrich_clinical(pd.read_parquet(SD / "clinical.parquet"))
+
+def load_clinical():
+    return _load_clinical(_mtime(SD / "clinical.parquet"))
 
 @st.cache_data
 def competition_by_key():
@@ -375,8 +394,11 @@ def price_available():
     return (SD / "price.parquet").exists()
 
 @st.cache_data(show_spinner="약가 로딩 중…")
-def load_price():
+def _load_price(_mt):
     return enrich_price(pd.read_parquet(SD / "price.parquet"))
+
+def load_price():
+    return _load_price(_mtime(SD / "price.parquet"))
 
 @st.cache_data
 def price_by_key():

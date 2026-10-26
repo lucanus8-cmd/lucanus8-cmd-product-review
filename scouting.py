@@ -1423,6 +1423,26 @@ if PAGE == "status":
     if _DATA_ERR is not None:
         st.error(f"마지막 자동 갱신이 실패했습니다 — {type(_DATA_ERR).__name__}: {_DATA_ERR}")
 
+    # 자동 갱신은 하루 한 번(한국시간 새벽 5시 기준). 그 사이에는 저장된 자료를 그대로 쓴다.
+    _run, _done, _err = bootstrap.background_status()
+    _c1, _c2 = st.columns([1, 3])
+    with _c1:
+        if st.button("🔄 지금 새로고침", disabled=_run, type="primary",
+                     help="구글 시트·드라이브에서 자료를 다시 받아옵니다. 화면은 멈추지 않고 "
+                          "뒤에서 진행되며, 끝나면 새로고침했을 때 반영됩니다."):
+            bootstrap.refresh_now(include_sales=True)
+            st.rerun()
+    with _c2:
+        if _run:
+            st.info("자료를 새로 받는 중입니다… 끝나면 화면을 새로고침(F5)하면 반영됩니다.")
+        elif _err:
+            st.warning(f"마지막 새로고침이 실패했습니다 — {_err}")
+        elif _done:
+            st.success("새로고침이 끝났습니다. 화면을 새로고침(F5)하면 새 자료가 보입니다.")
+        else:
+            st.caption(f"자동 갱신: 매일 한국시간 새벽 {bootstrap.REFRESH_HOUR_KST}시 기준 "
+                       "(그 전까지는 저장된 자료를 그대로 씁니다) · 매출은 주 1회")
+
     import datetime as _dt
 
     def _rows(path):
@@ -1493,6 +1513,7 @@ if PAGE == "status":
 
     st.dataframe(pd.DataFrame(rows, columns=["항목", "상태", "규모", "마지막 갱신", "경로"]),
                  hide_index=True, use_container_width=True)
-    st.caption("‘마지막 갱신’은 서버에 저장된 자료 파일 기준입니다. 허가·특허·임상·약가는 하루 1회, "
-               "매출은 주 1회 확인합니다. ⚠️ 표시는 그 주기를 넘겼다는 뜻이며, 원본 시트 공유 설정이나 "
-               "서비스 계정 키를 확인해 주세요. · 성분 조인 키 = 영문 성분명 첫 단어.")
+    st.caption(f"‘마지막 갱신’은 서버에 저장된 자료 파일 기준입니다. 자동 갱신은 매일 한국시간 "
+               f"새벽 {bootstrap.REFRESH_HOUR_KST}시 기준으로 한 번(매출은 주 1회)이며, 자료가 이미 있으면 "
+               "화면을 멈추지 않고 뒤에서 받아옵니다. ⚠️ 표시는 그 주기를 넘겼다는 뜻이며, 원본 시트 공유 "
+               "설정이나 서비스 계정 키를 확인해 주세요. · 성분 조인 키 = 영문 성분명 첫 단어.")

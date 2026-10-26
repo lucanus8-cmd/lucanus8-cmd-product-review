@@ -6,6 +6,7 @@
 추가 파일 업로드/파일ID 입력 불필요 — 소스 ID는 아래 상수로 고정.
 """
 import io
+import threading
 import re
 import time
 import urllib.request
@@ -304,32 +305,41 @@ def _compress_price(df):
     changed = df[prev.isna() | (prev != df["_amt"])]
     return changed.drop(columns=["_amt", "_dt"])
 
-# ── 자동 새로고침 주기(시간) ────────────────────────────────────────────────
-# 저장된 캐시가 이 시간보다 오래되면 원본(구글시트/드라이브)에서 다시 생성한다.
-MAX_AGE_H = {
-    "approval": 24, "patent": 24, "clinical": 24,   # 식약처 구글시트(매일 수집됨)
-    "price": 24, "nego": 24,                        # 약가·공단협상
-    "iqvia": 24 * 7, "ubist": 24 * 7,               # 매출(대용량·수동 업로드 → 주 1회)
-}
+# ── 자동 새로고침 기준 ──────────────────────────────────────────────────────
+# 하루 한 번, '새벽 기준시각'을 넘긴 자료만 다시 만든다. 아무 때나 24시간이 지나서
+# 다시 만드는 방식은 쓰는 도중에 1~2분씩 멈추게 되므로 쓰지 않는다.
+REFRESH_HOUR_KST = 5            # 새벽 5시(한국시간) 기준
+KST = 9 * 3600                  # 한국시간 = UTC+9
+# 매출(IQVIA·UBIST)은 사람이 직접 올리는 자료라 매일 바뀌지 않는다 → 주 1회만 본다.
+WEEKLY = {"iqvia", "ubist"}
 
 def _cache_path(name):
     return (SAVED / f"{name}.pkl") if name in ("iqvia", "ubist") else (SD / f"{name}.parquet")
 
+def _last_refresh_deadline(weekly=False):
+    """가장 최근에 지나간 '새벽 기준시각'의 UTC 타임스탬프."""
+    now = time.time()
+    k = now + KST                                   # 한국시간 기준으로 계산
+    day = int(k // 86400)
+    dl = day * 86400 + REFRESH_HOUR_KST * 3600      # 오늘 새벽 기준시각(한국시간)
+    if k < dl:                                      # 아직 오늘 새벽 전이면 어제 기준
+        dl -= 86400
+    if weekly:
+        dl -= 6 * 86400                             # 주 1회 자료는 6일 더 여유
+    return dl - KST                                 # 다시 UTC로
+
 def _stale(name):
-    """캐시 파일이 없거나 MAX_AGE_H 보다 오래됐으면 True(=다시 만들어야 함)."""
+    """파일이 없거나, 마지막 '새벽 기준시각' 이전에 만들어졌으면 True(=다시 만들기)."""
     p = _cache_path(name)
     if not p.exists():
         return True
     try:
-        return (time.time() - p.stat().st_mtime) > MAX_AGE_H[name] * 3600
+        return p.stat().st_mtime < _last_refresh_deadline(name in WEEKLY)
     except Exception:
         return True
 
-@st.cache_resource(ttl=3600, show_spinner="데이터 준비 중… (드라이브에서 생성 — 1~2분)")
-def ensure_data(include_sales=False):
-    """캐시가 오래됐으면 원본에서 다시 생성(자동 새로고침).
-    ttl=1시간마다 점검하지만, 대부분은 파일 시각만 확인하고 바로 끝난다.
-    자격증명이 없거나 갱신에 실패하면 기존 데이터를 그대로 사용해 앱이 죽지 않게 한다."""
+def _do_build(include_sales=False, force=False):
+    """실제 생성 작업. 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
     # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
     _pp = SD / "price.parquet"
@@ -346,7 +356,7 @@ def ensure_data(include_sales=False):
     # 매출을 안 보는 화면까지 전부 기다리게 되므로, 기본은 빼고 필요할 때 받는다
     # (scouting 의 매출 로더가 ensure_one 으로 그때 요청한다).
     WANT = SCOUT + (["iqvia", "ubist"] if include_sales else [])
-    need = {n: _stale(n) for n in SCOUT + ["iqvia", "ubist"]}
+    need = {n: (force or _stale(n)) for n in SCOUT + ["iqvia", "ubist"]}
     if not any(need[n] for n in WANT):
         return "local"
 
@@ -453,13 +463,52 @@ def ensure_data(include_sales=False):
     if include_sales and need["ubist"]:
         _try("ubist", lambda: _parse_ubist(_download(drive, UBIST_ID)).to_pickle(SAVED / "ubist.pkl"))
 
-    if rebuilt:
-        # 새로 만든 데이터가 화면에 바로 반영되도록 로더 캐시를 비운다
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
     return "built" if rebuilt else "local"
+
+# ── 갱신 진입점 ────────────────────────────────────────────────────────────
+# 자료가 이미 있으면 화면을 멈추지 않는다. 오래된 자료는 뒤에서 조용히 새로 만들고,
+# 화면에는 지금 있는 자료를 그대로 보여준다(다음에 열 때 새 자료가 보인다).
+_BG = {"running": False, "done": None, "error": None}
+_BG_LOCK = threading.Lock()
+
+def _refresh_in_background(include_sales=False, force=False):
+    with _BG_LOCK:
+        if _BG["running"]:
+            return False
+        _BG["running"] = True
+
+    def _run():
+        try:
+            _do_build(include_sales=include_sales, force=force)
+            _BG["done"] = time.time(); _BG["error"] = None
+        except Exception as e:
+            _BG["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            _BG["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
+def background_status():
+    """(갱신중?, 마지막 완료시각, 마지막 오류)"""
+    return _BG["running"], _BG["done"], _BG["error"]
+
+@st.cache_resource(ttl=1800, show_spinner="데이터 준비 중… (드라이브에서 생성 — 1~2분)")
+def ensure_data(include_sales=False):
+    """없는 자료만 기다려서 만들고, 있는데 오래된 자료는 뒤에서 갱신한다."""
+    SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
+    names = ["approval", "patent", "clinical", "price", "nego"] + (
+        ["iqvia", "ubist"] if include_sales else [])
+    missing = [n for n in names if not _cache_path(n).exists()]
+    if missing:
+        return _do_build(include_sales=include_sales)     # 처음엔 기다릴 수밖에 없다
+    if any(_stale(n) for n in names):
+        _refresh_in_background(include_sales=include_sales)
+    return "local"
+
+def refresh_now(include_sales=False):
+    """'지금 새로고침' 버튼용. 새벽 기준과 상관없이 다시 만든다(뒤에서 진행)."""
+    return _refresh_in_background(include_sales=include_sales, force=True)
 
 def ensure_sales():
     """매출 자료(IQVIA·UBIST)를 그때 가서 확보한다. 매출 로더가 부르기 전에 호출.
