@@ -100,38 +100,105 @@ _PATENT_COLS = ["품목기준코드", "품목명", "업체명", "INGR_ENG_NAME",
 
 @st.cache_data(show_spinner="허가 로딩 중…")
 def load_approval():
-    df = pd.read_parquet(SD / "approval.parquet")
-    df["_key"] = ing_key_series(df["주성분(영문)"])
-    df["_core"] = ing_core_series(df["주성분"]) if "주성분" in df.columns else ""
-    return df
+    return enrich_approval(pd.read_parquet(SD / "approval.parquet"))
 
-@st.cache_data
-def _kor_core_key_map():
-    """한글 성분코어 → 영문 조인키. 특허자료·허가자료의 단일 성분 행만 사용한다.
-    (조합제는 한글/영문 성분 표기 순서가 엇갈리는 자료가 있어 짝지으면 안 된다)"""
+def build_kor_core_key_map(pairs):
+    """[(한글성분 시리즈, 영문성분 시리즈), …] → {한글코어: 영문키}.
+    조합제는 한글/영문 성분 표기 순서가 엇갈리는 자료가 있어 단일 성분 행만 쓴다."""
     k2 = {}
-
-    def _feed(kor_sr, eng_sr):
+    for kor_sr, eng_sr in pairs:
+        if kor_sr is None or eng_sr is None:
+            continue
         k = ing_key_series(eng_sr)
         c = ing_core_series(kor_sr)
         ok = (k.str.len() > 0) & (c.str.len() >= 2) & is_single_series(kor_sr, eng_sr)
         pair = pd.DataFrame({"c": c[ok], "k": k[ok]}).drop_duplicates("c")
         for cc, kk in zip(pair["c"], pair["k"]):
             k2.setdefault(cc, kk)
+    return k2
 
+KEYMAP_PATH = SD / "keymap.parquet"
+
+def save_kor_core_key_map(m):
+    """만들어 둔 한글→영문 성분키 맵을 저장(앱 시작마다 다시 만들지 않도록)."""
+    try:
+        pd.DataFrame({"core": list(m.keys()), "key": list(m.values())}).to_parquet(
+            KEYMAP_PATH, index=False)
+    except Exception:
+        pass
+
+@st.cache_data
+def _kor_core_key_map():
+    """한글 성분코어 → 영문 조인키. 저장된 맵이 있으면 그대로 쓴다."""
+    try:
+        if KEYMAP_PATH.exists():
+            km = pd.read_parquet(KEYMAP_PATH)
+            return dict(zip(km["core"].astype(str), km["key"].astype(str)))
+    except Exception:
+        pass
+    pairs = []
     try:
         pt = pd.read_parquet(SD / "patent.parquet")
         if {"INGR_NAME", "INGR_ENG_NAME"}.issubset(pt.columns):
-            _feed(pt["INGR_NAME"], pt["INGR_ENG_NAME"])
+            pairs.append((pt["INGR_NAME"], pt["INGR_ENG_NAME"]))
     except Exception:
         pass
     try:
         ap = pd.read_parquet(SD / "approval.parquet")
         if {"주성분", "주성분(영문)"}.issubset(ap.columns):
-            _feed(ap["주성분"], ap["주성분(영문)"])
+            pairs.append((ap["주성분"], ap["주성분(영문)"]))
     except Exception:
         pass
-    return k2
+    return build_kor_core_key_map(pairs)
+
+# ── 파생열 계산 ────────────────────────────────────────────────────────────
+# 성분 조인키·코어 같은 파생열은 자료가 바뀔 때 한 번만 만들면 된다.
+# 저장 파일(parquet)에 함께 넣어 두면 앱이 뜰 때마다 10만 행을 다시 계산하지 않는다.
+# 이미 열이 있으면 그대로 두므로, 예전 형식의 저장 파일도 그대로 동작한다.
+def enrich_approval(df):
+    if "_key" not in df.columns:
+        df["_key"] = (ing_key_series(df["주성분(영문)"])
+                      if "주성분(영문)" in df.columns else "")
+    if "_core" not in df.columns:
+        df["_core"] = ing_core_series(df["주성분"]) if "주성분" in df.columns else ""
+    return df
+
+def enrich_patent(df, kor_map=None):
+    if "_key" not in df.columns:
+        df["_key"] = ing_key_series(df["INGR_ENG_NAME"])
+        # 영문 성분명이 빈 행은 키가 없어 한 덩어리로 뭉친다. 같은 한글 성분명을
+        # 쓰는 다른 행 / 허가자료로 키를 채운다. 조합제는 섞일 수 있어 제외.
+        if "INGR_NAME" in df.columns:
+            k2 = _kor_core_key_map() if kor_map is None else kor_map
+            blank = ((df["_key"].astype(str).str.len() == 0)
+                     & is_single_series(df["INGR_NAME"], df["INGR_ENG_NAME"]))
+            if blank.any() and k2:
+                df.loc[blank, "_key"] = ing_core_series(df.loc[blank, "INGR_NAME"]).map(
+                    lambda c: k2.get(c, ""))
+    if "_exp" not in df.columns:
+        df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
+    if "_single" not in df.columns:
+        df["_single"] = is_single_series(df.get("INGR_NAME", pd.Series("", index=df.index)),
+                                         df.get("INGR_ENG_NAME", pd.Series("", index=df.index)))
+    if "_core" not in df.columns:
+        df["_core"] = (ing_core_series(df["INGR_NAME"]) if "INGR_NAME" in df.columns else "")
+    return df
+
+def enrich_clinical(df):
+    if "_core" not in df.columns:
+        df["_core"] = ing_core_series(df["성분명"]) if "성분명" in df.columns else ""
+    return df
+
+def enrich_price(df):
+    if "금액" in df.columns:
+        df["금액"] = pd.to_numeric(df["금액"], errors="coerce")
+    if "적용일자" in df.columns:
+        df["적용일자"] = pd.to_datetime(df["적용일자"], errors="coerce")
+    if "_key" not in df.columns:
+        df["_key"] = ing_key_series(df["주성분명"]) if "주성분명" in df.columns else ""
+    if "_core" not in df.columns:
+        df["_core"] = ing_core_series(df["주성분명"]) if "주성분명" in df.columns else ""
+    return df
 
 @st.cache_data(show_spinner="특허 로딩 중…")
 def load_patent():
@@ -143,32 +210,13 @@ def load_patent():
         e["_single"] = pd.Series(dtype="bool")
         e["_exp"] = pd.Series(dtype="datetime64[ns]")
         return e
-    df = pd.read_parquet(SD / "patent.parquet")
-    df["_key"] = ing_key_series(df["INGR_ENG_NAME"])
-    # 영문 성분명이 비어 있는 행은 키가 없어 한 덩어리로 뭉친다.
-    # 같은 한글 성분명(INGR_NAME)을 쓰는 다른 행 / 허가자료로 키를 채운다.
-    if "INGR_NAME" in df.columns:
-        kor = ing_core_series(df["INGR_NAME"])
-        single = is_single_series(df["INGR_NAME"], df["INGR_ENG_NAME"])
-        k2 = _kor_core_key_map()
-        # 조합제 행은 한글 첫 성분만 보고 키를 붙이면 엉뚱한 특허가 섞이므로 제외
-        blank = (df["_key"].astype(str).str.len() == 0) & single
-        if blank.any() and k2:
-            df.loc[blank, "_key"] = kor[blank].map(lambda c: k2.get(c, ""))
-    df["_exp"] = pd.to_datetime(df["DOMESTIC_END_DATE"], errors="coerce")
-    # 단일 성분 품목의 특허인지 (복합제 특허가 단일제 성분에 섞이는 것을 막는 데 사용)
-    df["_single"] = is_single_series(df.get("INGR_NAME", pd.Series("", index=df.index)),
-                                     df.get("INGR_ENG_NAME", pd.Series("", index=df.index)))
-    df["_core"] = kor if "INGR_NAME" in df.columns else ""
-    return df
+    return enrich_patent(pd.read_parquet(SD / "patent.parquet"))
 
 @st.cache_data(show_spinner="임상 로딩 중…")
 def load_clinical():
     if not (SD / "clinical.parquet").exists():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제품명", "성분명", "CLINIC_STEP_NM", "_core"]})
-    df = pd.read_parquet(SD / "clinical.parquet")
-    df["_core"] = ing_core_series(df["성분명"]) if "성분명" in df.columns else ""
-    return df
+    return enrich_clinical(pd.read_parquet(SD / "clinical.parquet"))
 
 @st.cache_data
 def competition_by_key():
@@ -328,12 +376,7 @@ def price_available():
 
 @st.cache_data(show_spinner="약가 로딩 중…")
 def load_price():
-    df = pd.read_parquet(SD / "price.parquet")
-    df["금액"] = pd.to_numeric(df["금액"], errors="coerce")
-    df["적용일자"] = pd.to_datetime(df["적용일자"], errors="coerce")
-    df["_key"] = ing_key_series(df["주성분명"])
-    df["_core"] = ing_core_series(df["주성분명"])
-    return df
+    return enrich_price(pd.read_parquet(SD / "price.parquet"))
 
 @st.cache_data
 def price_by_key():

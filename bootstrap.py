@@ -326,7 +326,7 @@ def _stale(name):
         return True
 
 @st.cache_resource(ttl=3600, show_spinner="데이터 준비 중… (드라이브에서 생성 — 1~2분)")
-def ensure_data():
+def ensure_data(include_sales=False):
     """캐시가 오래됐으면 원본에서 다시 생성(자동 새로고침).
     ttl=1시간마다 점검하지만, 대부분은 파일 시각만 확인하고 바로 끝난다.
     자격증명이 없거나 갱신에 실패하면 기존 데이터를 그대로 사용해 앱이 죽지 않게 한다."""
@@ -342,11 +342,15 @@ def ensure_data():
             except Exception:
                 pass
     SCOUT = ["approval", "patent", "clinical", "price", "nego"]
+    # 매출(IQVIA·UBIST)은 엑셀이 커서 받는 데 오래 걸린다. 앱이 처음 뜰 때 같이 받으면
+    # 매출을 안 보는 화면까지 전부 기다리게 되므로, 기본은 빼고 필요할 때 받는다
+    # (scouting 의 매출 로더가 ensure_one 으로 그때 요청한다).
+    WANT = SCOUT + (["iqvia", "ubist"] if include_sales else [])
     need = {n: _stale(n) for n in SCOUT + ["iqvia", "ubist"]}
-    if not any(need.values()):
+    if not any(need[n] for n in WANT):
         return "local"
 
-    have_all = all(_cache_path(n).exists() for n in SCOUT + ["iqvia", "ubist"])
+    have_all = all(_cache_path(n).exists() for n in WANT)
     try:
         from googleapiclient.discovery import build
         creds = _creds()
@@ -374,9 +378,34 @@ def ensure_data():
                 pass
 
     # 허가/특허/임상 (구글시트)
+    # 성분 조인키·코어 같은 파생열은 여기서 한 번 만들어 함께 저장한다.
+    # (앱이 뜰 때마다 10만 행을 다시 계산하지 않도록 — 로더는 열이 있으면 그대로 쓴다)
+    def _build_sheet(n):
+        import scout_sources as _ss
+        df = _sheet_df(sheets, SHEETS[n])
+        try:
+            if n == "approval":
+                _ss.enrich_approval(df)
+            elif n == "clinical":
+                _ss.enrich_clinical(df)
+            elif n == "patent":
+                # 빈 영문 성분명을 채울 한글→영문 맵은 지금 받은 표 + 허가 표로 만든다
+                pairs = [(df.get("INGR_NAME"), df.get("INGR_ENG_NAME"))]
+                try:
+                    ap = pd.read_parquet(SD / "approval.parquet")
+                    pairs.append((ap.get("주성분"), ap.get("주성분(영문)")))
+                except Exception:
+                    pass
+                _km = _ss.build_kor_core_key_map(pairs)
+                _ss.enrich_patent(df, kor_map=_km)
+                _ss.save_kor_core_key_map(_km)   # 앱 시작마다 다시 만들지 않도록 저장
+        except Exception:
+            pass        # 파생열 실패는 치명적이지 않음(로더가 그때 계산한다)
+        df.to_parquet(SD / f"{n}.parquet", index=False)
+
     for name in ["approval", "patent", "clinical"]:
         if need[name]:
-            _try(name, lambda n=name: _sheet_df(sheets, SHEETS[n]).to_parquet(SD / f"{n}.parquet", index=False))
+            _try(name, lambda n=name: _build_sheet(n))
 
     # 약가: 기존 이력 엑셀 + HIRA 폴더의 월별 고시 엑셀을 합쳐 이력 생성
     if need["price"]:
@@ -397,6 +426,11 @@ def ensure_data():
                     merged = pd.concat([base, fc], ignore_index=True)
             except Exception:
                 merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
+            try:
+                import scout_sources as _ss
+                _ss.enrich_price(merged)
+            except Exception:
+                pass
             merged.to_parquet(SD / "price.parquet", index=False)
         _try("price", _build_price)
 
@@ -413,10 +447,10 @@ def ensure_data():
                     pd.DataFrame(columns=["연도", "제품명", "회사명", "협상결과", "_nm"]).to_parquet(p, index=False)
         _try("nego", _build_nego)
 
-    # 매출(대용량)
-    if need["iqvia"]:
+    # 매출(대용량) — include_sales=True 일 때만
+    if include_sales and need["iqvia"]:
         _try("iqvia", lambda: _parse_iqvia(_download(drive, IQVIA_ID)).to_pickle(SAVED / "iqvia.pkl"))
-    if need["ubist"]:
+    if include_sales and need["ubist"]:
         _try("ubist", lambda: _parse_ubist(_download(drive, UBIST_ID)).to_pickle(SAVED / "ubist.pkl"))
 
     if rebuilt:
@@ -426,3 +460,11 @@ def ensure_data():
         except Exception:
             pass
     return "built" if rebuilt else "local"
+
+def ensure_sales():
+    """매출 자료(IQVIA·UBIST)를 그때 가서 확보한다. 매출 로더가 부르기 전에 호출.
+    파일이 이미 있고 최신이면 아무것도 하지 않는다."""
+    try:
+        return ensure_data(include_sales=True)
+    except Exception:
+        return "error"

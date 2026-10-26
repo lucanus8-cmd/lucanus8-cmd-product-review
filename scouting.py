@@ -49,11 +49,11 @@ except Exception as _e:
 def _data_status_banner():
     if _DATA_ERR is None:
         return
-    _sd, _sv = Path(__file__).parent / "scout_data", Path(__file__).parent / "saved_data"
+    _sd = Path(__file__).parent / "scout_data"
+    # 매출은 매출 화면을 열 때 받으므로(시작 때 받지 않음) 여기서 '미연결'로 세지 않는다
     _want = {"허가": _sd / "approval.parquet", "특허": _sd / "patent.parquet",
              "임상": _sd / "clinical.parquet", "약가": _sd / "price.parquet",
-             "공단협상": _sd / "nego.parquet", "매출(IQVIA)": _sv / "iqvia.pkl",
-             "매출(UBIST)": _sv / "ubist.pkl"}
+             "공단협상": _sd / "nego.parquet"}
     _missing = [k for k, v in _want.items() if not v.exists()]
     st.error("데이터를 새로 받아오지 못했습니다. 아래 자료는 지금 사용할 수 없습니다."
              + (f"\n\n**미연결:** {', '.join(_missing)}" if _missing else "")
@@ -67,12 +67,14 @@ TODAY = pd.Timestamp.today().normalize()
 
 @st.cache_data(show_spinner="IQVIA 로딩 중…")
 def load_iqvia():
+    bootstrap.ensure_sales()          # 매출 자료는 쓸 때 확보한다(시작 때 기다리지 않도록)
     df = pd.read_pickle(DATA_DIR / "iqvia.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^\d{4}년$", str(c))])
     return df, yr
 
 @st.cache_data(show_spinner="UBIST 로딩 중…")
 def load_ubist():
+    bootstrap.ensure_sales()
     df = pd.read_pickle(DATA_DIR / "ubist.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^처방조제액\(원\)_\d{4}년$", str(c))])
     return df, yr
@@ -129,8 +131,23 @@ def sales_search(df, cfg, q):
     return df[m]
 
 def msel(container, label, series, key, default=None):
-    opts = sorted({str(x) for x in series.dropna() if str(x).strip()})
+    sr = series.dropna().astype(str).str.strip()
+    opts = sorted(sr[sr.str.len() > 0].unique().tolist())
     return container.multiselect(label, opts, default=default or [], key=key)
+
+# 표에 한 번에 보낼 최대 행 수. 수만 행을 그대로 그리면 브라우저로 보내는 데만
+# 몇 초씩 걸린다. 화면에는 상위 N건만 그리고, 전체는 CSV로 내려받게 한다.
+TABLE_CAP = 500
+
+def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
+    """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
+    c = container or st
+    n = len(df)
+    c.dataframe(df.head(cap), use_container_width=True, height=height, hide_index=True)
+    if n > cap:
+        c.caption(f"표에는 상위 {cap:,}건만 표시했습니다 (전체 {n:,}건). 전체는 아래 CSV로 받으세요.")
+        c.download_button(f"⬇️ 전체 {n:,}건 CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                          file_name=file_name, key=key or f"dl_{file_name}_{n}")
 
 def isin(df, col, sel):
     return df if not sel else df[df[col].astype(str).isin(sel)]
@@ -193,8 +210,14 @@ HAS_CLIN = ss.clinical_available()
 HAS_PAT = ss.patent_available()
 
 def has_sales(src):
-    """매출 파일(iqvia/ubist)이 실제로 있는지. 없으면 안내만 하고 넘어간다."""
-    return (DATA_DIR / {"IQVIA": "iqvia.pkl", "UBIST": "ubist.pkl"}.get(src, "")).exists()
+    """매출 자료를 쓸 수 있는지. 파일이 아직 없으면 그때 한 번 받아온다
+    (시작할 때 모두 받지 않고, 매출 화면에 들어올 때 확보하는 방식)."""
+    f = DATA_DIR / {"IQVIA": "iqvia.pkl", "UBIST": "ubist.pkl"}.get(src, "")
+    if f.exists():
+        return True
+    with st.spinner("매출 자료를 처음 불러오는 중… (한 번만 걸립니다)"):
+        bootstrap.ensure_sales()
+    return f.exists()
 
 _ing_core = ss.ing_core   # 성분명 정규화(코드/염/수화물 제거) — scout_sources 공용
 
@@ -249,96 +272,6 @@ def _price_trend_codes(pr, basis, term):
         _pc = pr["_core"] if "_core" in pr.columns else ss.ing_core_series(pr["주성분명"])
         sub = pr[_pc == core] if core else pr.iloc[0:0]
     return sub["제품코드"].dropna().unique().tolist(), f"{term} 오리지널(신약) 약가 변동"
-
-# ── 재심사(PMS) 만료일 ─────────────────────────────────────────────────────
-@st.cache_data(ttl=6 * 3600, show_spinner="재심사(PMS) 만료일 계산 중…")
-def _pms_expiry_maps():
-    """PMS 만료일 조회용 맵 3종.
-    재심사 자료에 '종료일' 컬럼이 없으면 재심사시작일 + 재심사기간(년)으로 산출한다.
-    반환: (품목명(공백제거)→만료일, 브랜드코어→만료일, 성분코어→만료일[오리지널 기준])"""
-    try:
-        rj = ss.load_rejdge()
-    except Exception:
-        return {}, {}, {}
-    if rj is None or rj.empty or "ITEM_NAME" not in rj.columns:
-        return {}, {}, {}
-
-    def _dt(x):
-        a = pd.to_datetime(x, format="%Y%m%d", errors="coerce")
-        d = a.fillna(pd.to_datetime(x, errors="coerce"))
-        # 비현실적 날짜는 버린다(이후 날짜 덧셈에서 표현범위 초과로 터지는 것 방지)
-        return d.where((d > pd.Timestamp("1900-01-01")) & (d < pd.Timestamp("2200-01-01")))
-
-    end_c = next((c for c in ["REEXAM_END_DATE", "REEXAM_END_DT"] if c in rj.columns), None)
-    st_c = next((c for c in ["REEXAM_START_DATE", "REEXAM_START_DT"] if c in rj.columns), None)
-    cd_c = next((c for c in ["REEXAM_CODE_NM", "REEXAM_CODE_NAME", "REEXAM_CD_NM"] if c in rj.columns), None)
-    try:
-        if end_c:
-            exp = _dt(rj[end_c])
-        elif st_c:
-            # 재심사기간은 '재심사대상(6년)'처럼 괄호 안 값만 인정한다.
-            # 그냥 (\d+)년 으로 잡으면 문장 속 '1998년' 같은 연도를 기간으로 오인해
-            # 시작일+1998년이 되어 날짜 표현범위를 벗어난다.
-            if cd_c:
-                yrs = rj[cd_c].astype(str).str.extract(r"\(\s*(\d{1,2})\s*년")[0].astype(float)
-            else:
-                yrs = pd.Series(float("nan"), index=rj.index)
-            yrs = yrs.where(yrs.between(1, 15), 6.0)   # 비정상/미확인은 기본 6년
-            exp = _dt(rj[st_c]) + pd.to_timedelta(yrs * 365.25, unit="D")
-        else:
-            return {}, {}, {}
-    except Exception:
-        return {}, {}, {}
-
-    d = pd.DataFrame({"nm": rj["ITEM_NAME"].astype(str), "exp": exp}).dropna(subset=["exp"])
-    prod, brand = {}, {}
-    for nm, e in zip(d["nm"], d["exp"]):
-        k = re.sub(r"\s+", "", nm)
-        if not k:
-            continue
-        if k not in prod or e > prod[k]:
-            prod[k] = e
-        b = re.split(r"[0-9(\[]", k)[0]
-        if len(b) >= 2 and (b not in brand or e > brand[b]):
-            brand[b] = e
-
-    # 성분 기준 PMS = 그 성분 '오리지널(신약)' 품목의 재심사 만료일.
-    # 동일성분에 나중에 붙은 별개 재심사(새 적응증·개량신약 등) 때문에 진입 가능 시점이
-    # 과하게 늦게 잡히는 것을 막는다. 오리지널을 못 찾으면 동일성분 최댓값으로 폴백.
-    core = {}
-    if HAS_REG:
-        try:
-            ap = ss.load_approval()
-            _nm = ap["품목명"].astype(str).str.replace(r"\s+", "", regex=True)
-            nm2core = dict(zip(_nm, ss.ing_core_series(ap["주성분"])))
-            nm2new = (dict(zip(_nm, ap["신약구분"].astype(str).str.strip() == "신약"))
-                      if "신약구분" in ap.columns else {})
-            orig, allmax = {}, {}
-            for k, e in prod.items():
-                c = nm2core.get(k)
-                if not c or len(c) < 2:
-                    continue
-                if c not in allmax or e > allmax[c]:
-                    allmax[c] = e
-                if nm2new.get(k) and (c not in orig or e > orig[c]):
-                    orig[c] = e
-            core = {c: orig.get(c, allmax[c]) for c in allmax}
-        except Exception:
-            pass
-    return prod, brand, core
-
-def _pms_lookup(value, unit, maps):
-    """제품/성분 값 하나에 대한 PMS 만료일(없으면 None)."""
-    prod, brand, core = maps
-    s = str(value or "")
-    if unit == "제품별":
-        k = re.sub(r"\s+", "", s)
-        if k in prod:
-            return prod[k]
-        b = re.split(r"[0-9(\[]", k)[0]
-        return brand.get(b) if len(b) >= 2 else None
-    c = _ing_core(s)
-    return core.get(c) if len(c) >= 2 else None
 
 # ── 한글 성분/제품명 → 영문 특허키 매핑 ────────────────────────────────────
 @st.cache_data(show_spinner="성분 키 매핑 중…")
@@ -616,7 +549,7 @@ if PAGE == "search":
                 m = _kor_union(ap, _ing_union(ap, contains(ap, ["품목명", "주성분", "주성분(영문)"], q)), "주성분")
                 st.caption(f"허가 {len(m):,}건 · 업체 {m['업체명'].nunique()}곳 · 신약 {int((m['신약구분']=='신약').sum())}건")
                 cc = [c for c in ["품목명", "업체명", "허가일자", "전문/일반", "주성분", "신약구분", "상태", "보험코드(EDI)"] if c in m.columns]
-                st.dataframe(m[cc].sort_values("허가일자", ascending=False), use_container_width=True, height=300, hide_index=True)
+                show_df(m[cc].sort_values("허가일자", ascending=False), height=300, file_name="허가목록.csv")
             else: st.info("허가 데이터 미연결")
         with tabs[1]:
             if HAS_REG and HAS_PAT:
@@ -626,8 +559,8 @@ if PAGE == "search":
                 st.caption(f"특허 {len(m):,}건 · 존속 등록 {int(ss.active_patent_mask(m['DOMESTIC_PATENT_STATUS']).sum())}건")
                 cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
                         "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
-                st.dataframe(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
-                             use_container_width=True, height=300, hide_index=True)
+                show_df(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
+                        height=300, file_name="특허목록.csv")
             else: st.info("특허 데이터 미연결")
         with tabs[2]:
             if HAS_REG and HAS_CLIN:
@@ -640,8 +573,8 @@ if PAGE == "search":
                 cmap = {"제품명": "제품명", "성분명": "성분명", "CLINIC_STEP_NM": "단계", "TRGT_DISS_NM": "대상질환",
                         "STATUS": "상태", "CLST_APRV_DT": "승인일", "원개발사": "개발사"}
                 cc = {k2: v for k2, v in cmap.items() if k2 in m.columns}
-                st.dataframe(m.rename(columns=cc)[list(cc.values())].sort_values("승인일", ascending=False),
-                             use_container_width=True, height=300, hide_index=True)
+                show_df(m.rename(columns=cc)[list(cc.values())].sort_values("승인일", ascending=False),
+                        height=300, file_name="임상목록.csv")
             else: st.info("임상 데이터 미연결")
         with tabs[3]:
             if not HAS_PRICE:
@@ -764,8 +697,8 @@ if PAGE == "search":
                              "ITEM_SEQ": "품목기준코드", "ITEM_NO": "품목번호", "BIZRNO": "사업자번호"}
                     prefer = [c for c in ["ITEM_NAME", "ENTP_NAME"] if c in m.columns]
                     ordered = prefer + [c for c in m.columns if c not in prefer]
-                    st.dataframe(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
-                                 use_container_width=True, height=320, hide_index=True)
+                    show_df(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
+                            height=320, file_name="재심사DMF.csv")
         with tabs[5]:
             dmf = ss.load_dmf()
             if dmf is None or dmf.empty:
@@ -797,8 +730,8 @@ if PAGE == "search":
                              "DMF_PERMIT_NO": "DMF번호", "DMF_PERMIT_ID": "DMF번호"}
                     prefer = [c for c in [ing_col, "ENTP_NAME"] if c and c in m.columns]
                     ordered = prefer + [c for c in m.columns if c not in prefer]
-                    st.dataframe(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
-                                 use_container_width=True, height=320, hide_index=True)
+                    show_df(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
+                            height=320, file_name="재심사DMF.csv")
 
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
 if PAGE == "sugg":
@@ -884,7 +817,7 @@ if PAGE == "sugg":
             _parts.append(_sub.merge(_pbk, on="_key", how="left"))
         m = pd.concat(_parts, ignore_index=True) if _parts else m.drop(columns=["_solo"])
 
-    # ATC(매출자료 기준) · PMS 만료일 추가
+    # ATC(매출자료 기준)
     _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
     _atc = cfg.get("atc1")
     if _atc and _atc in df.columns:
@@ -892,12 +825,6 @@ if PAGE == "sugg":
         _ok = _av.str.len().gt(0) & ~_av.str.lower().eq("nan")
         _amap = df.loc[_ok, [_keycol]].assign(_a=_av[_ok]).groupby(_keycol)["_a"].first()
         m["ATC"] = m[name].map(_amap).fillna("")
-    try:
-        _pmaps = _pms_expiry_maps()
-    except Exception:
-        _pmaps = ({}, {}, {})
-    if any(_pmaps):
-        m["_pms"] = m[name].map(lambda v: _pms_lookup(v, unit, _pmaps))
 
     st.markdown("**필터 조건**")
     f1, f2, f3, f4 = st.columns(4)
@@ -913,9 +840,6 @@ if PAGE == "sugg":
                             if str(x).strip() and str(x).strip().lower() != "nan"})
         atc_sel = st.multiselect("④ ATC 계열", _atc_opts, default=[],
                                  help="비우면 전체. 선택하면 해당 계열만")
-        pms_sel = st.selectbox("⑤ 이 연도까지 PMS 만료",
-                               ["적용 안 함"] + [str(y) for y in range(cy, cy + 16)], index=0,
-                               help="선택 연도까지 재심사(PMS)가 만료됐거나 PMS 대상이 아닌 후보만. 성분별은 그 성분 오리지널(신약)의 재심사 기준")
 
     res = m[(m["시장규모"] >= min_size * 1e8) & (m["CAGR"].fillna(-1e9) >= min_cagr)].copy()
     if HAS_REG and ptypes:
@@ -929,9 +853,6 @@ if PAGE == "sugg":
 
     if atc_sel and "ATC" in res.columns:
         res = res[res["ATC"].astype(str).str.strip().isin(atc_sel)]
-    if pms_sel != "적용 안 함" and "_pms" in res.columns:
-        _pe = pd.to_datetime(res["_pms"], errors="coerce")
-        res = res[_pe.isna() | (_pe.dt.year <= int(pms_sel))]   # 만료했거나 PMS 없음
 
     res = res.sort_values("시장규모", ascending=False)
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
@@ -939,16 +860,12 @@ if PAGE == "sugg":
     if HAS_REG:
         res["물질특허 만료"] = pd.to_datetime(res.get("특허만료_물질")).dt.date.astype("string")
         res["용도특허 만료"] = pd.to_datetime(res.get("특허만료_용도")).dt.date.astype("string")
-    _pms_lbl = "PMS 만료(오리지널)" if unit == "성분별" else "PMS 만료"
-    if "_pms" in res.columns:
-        res[_pms_lbl] = pd.to_datetime(res["_pms"]).dt.date.astype("string")
     if HAS_REG:
         res["물질특허 근거"] = res.get("근거_물질", pd.Series("", index=res.index)).fillna("")
         res["용도특허 근거"] = res.get("근거_용도", pd.Series("", index=res.index)).fillna("")
     cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
             + ["시장규모(억)", "CAGR(%)"]
-            + (["물질특허 만료", "용도특허 만료"] if HAS_REG else [])
-            + ([_pms_lbl] if _pms_lbl in res.columns else []))
+            + (["물질특허 만료", "용도특허 만료"] if HAS_REG else []))
     src_cols = ["물질특허 근거", "용도특허 근거"] if HAS_REG else []
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     show_src = st.checkbox("특허 근거 표시 (그 만료일이 어느 품목·유형의 특허에서 왔는지)",
@@ -957,8 +874,8 @@ if PAGE == "sugg":
     st.dataframe(res[vcols].head(200), use_container_width=True, height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols + src_cols].to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"제품제안_{src2}_{unit}.csv")
-    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC·PMS 조건을 직접 필터링합니다. · "
-               "ATC는 매출자료 기준 · PMS 만료=재심사시작일+재심사기간(식약처 자료에 종료일 항목이 없어 산출값), 성분별은 오리지널(신약) 기준 · "
+    st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC 조건을 직접 필터링합니다. · "
+               "ATC는 매출자료 기준 · "
                "특허 만료일=존속 중인 등록특허 중 가장 늦은 날짜(소멸·무효 제외). "
                "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다. "
                "**성분별은 오리지널 품목의 특허 기준** — 1순위 신약구분=‘신약’, 없으면 그 성분 최초 허가 품목"
@@ -1032,7 +949,7 @@ if PAGE == "patent":
             cmap = {"품목명": "품목명", "INGR_NAME": "성분", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자",
                     "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
             cc = {k2: v for k2, v in cmap.items() if k2 in pt.columns}
-            st.dataframe(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), use_container_width=True, height=360, hide_index=True)
+            show_df(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), height=360, file_name="특허분석.csv")
 
 # ══════════════════════════ 임상 분석 ══════════════════════════
 # ── 임상 적응증(대상질환) 키워드 검색용 통합 텍스트 ───────────────────────
@@ -1150,7 +1067,7 @@ if PAGE == "clinical":
             view = m.rename(columns=cc)[list(cc.values())]
             if "승인일" in view.columns:
                 view = view.sort_values("승인일", ascending=False)
-            st.dataframe(view, use_container_width=True, height=380, hide_index=True)
+            show_df(view, height=380, file_name="임상분석.csv")
 
 # ══════════════════════════ 약가 분석 ══════════════════════════
 if PAGE == "price":
@@ -1237,7 +1154,9 @@ if PAGE == "price":
                 st.info(f"필터 결과 {len(codes):,}개 — 400개 이하로 좁히면 연도별 표가 표시됩니다. (업체/제품·성분 검색 활용)")
             else:
                 ym = yearly_matrix(pr, codes, dict(zip(latest["제품코드"], latest["제품명"])))
-                st.dataframe(ym, use_container_width=True, height=380)
+                st.dataframe(ym.head(TABLE_CAP), use_container_width=True, height=380)
+                if len(ym) > TABLE_CAP:
+                    st.caption(f"표에는 상위 {TABLE_CAP:,}건만 표시했습니다 (전체 {len(ym):,}건). 아래 CSV로 전체를 받으세요.")
                 st.download_button("⬇️ 연도별 약가 CSV", ym.to_csv(index=False).encode("utf-8-sig"), file_name="연도별약가.csv")
             with st.expander("📉 가격 인하폭 Top 20 / 급여중지(삭제) 목록"):
                 hist = pr[(pr["제품코드"].isin(codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
@@ -1540,7 +1459,10 @@ if PAGE == "status":
     rows, n_missing, n_stale = [], 0, 0
     for name, path, maxh, note in items:
         if not path.exists():
-            rows.append((name, "❌ 미연결", "—", "—", note)); n_missing += 1
+            if name.startswith("매출"):   # 매출은 쓸 때 받아오므로 '아직 안 받음'이 정상
+                rows.append((name, "⏳ 아직 안 받음", "—", "—", note + " · 매출 화면을 열면 받습니다"))
+            else:
+                rows.append((name, "❌ 미연결", "—", "—", note)); n_missing += 1
             continue
         txt, h = _age(path)
         if h > maxh:
