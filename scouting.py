@@ -204,6 +204,27 @@ def yearly_matrix(price_df, codes, name_map):
     pv.insert(0, "제품명", [name_map.get(c, c) for c in pv.index])
     return pv.reset_index(drop=True)
 
+# ── 이 화면이 쓰는 자료만 먼저 확보 ────────────────────────────────────────
+# 앱을 켤 때 모든 자료를 받으면 홈만 보려고 들어와도 1~2분을 기다린다.
+# 화면마다 실제로 쓰는 자료만 그때 받는다(이미 있으면 아무 일도 하지 않는다).
+_PAGE_NEEDS = {
+    "home":     [],
+    "status":   [],
+    "sales":    [],                                    # 매출은 '불러오기'를 누를 때
+    "search":   ["approval", "patent", "clinical", "price"],
+    "sugg":     ["approval", "patent"],
+    "patent":   ["approval", "patent"],
+    "clinical": ["clinical"],
+    "price":    ["approval", "price"],
+    "ai":       ["approval", "patent", "clinical", "price"],
+}
+_pg = st.query_params.get("page") or "home"
+for _n in _PAGE_NEEDS.get(_pg, []):
+    try:
+        bootstrap.ensure_one(_n)
+    except Exception:
+        pass
+
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
 HAS_CLIN = ss.clinical_available()
@@ -1479,10 +1500,8 @@ if PAGE == "status":
     rows, n_missing, n_stale = [], 0, 0
     for name, path, maxh, note in items:
         if not path.exists():
-            if name.startswith("매출"):   # 매출은 쓸 때 받아오므로 '아직 안 받음'이 정상
-                rows.append((name, "⏳ 아직 안 받음", "—", "—", note + " · 매출 화면을 열면 받습니다"))
-            else:
-                rows.append((name, "❌ 미연결", "—", "—", note)); n_missing += 1
+            # 자료는 그 자료를 쓰는 화면을 열 때 받는다 → 아직 안 받은 건 정상이다
+            rows.append((name, "⏳ 아직 안 받음", "—", "—", note + " · 해당 화면을 열면 받습니다"))
             continue
         txt, h = _age(path)
         if h > maxh:

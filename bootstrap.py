@@ -338,8 +338,9 @@ def _stale(name):
     except Exception:
         return True
 
-def _do_build(include_sales=False, force=False):
-    """실제 생성 작업. 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다."""
+def _do_build(include_sales=False, force=False, only=None):
+    """실제 생성 작업. 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다.
+    only={"patent"} 처럼 주면 그 자료만 만든다(필요한 화면의 자료만 받기 위함)."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
     # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
     _pp = SD / "price.parquet"
@@ -356,7 +357,10 @@ def _do_build(include_sales=False, force=False):
     # 매출을 안 보는 화면까지 전부 기다리게 되므로, 기본은 빼고 필요할 때 받는다
     # (scouting 의 매출 로더가 ensure_one 으로 그때 요청한다).
     WANT = SCOUT + (["iqvia", "ubist"] if include_sales else [])
-    need = {n: (force or _stale(n)) for n in SCOUT + ["iqvia", "ubist"]}
+    if only:
+        WANT = [n for n in WANT if n in only]
+    need = {n: ((force or _stale(n)) and (not only or n in only))
+            for n in SCOUT + ["iqvia", "ubist"]}
     if not any(need[n] for n in WANT):
         return "local"
 
@@ -471,7 +475,7 @@ def _do_build(include_sales=False, force=False):
 _BG = {"running": False, "done": None, "error": None}
 _BG_LOCK = threading.Lock()
 
-def _refresh_in_background(include_sales=False, force=False):
+def _refresh_in_background(include_sales=False, force=False, only=None):
     with _BG_LOCK:
         if _BG["running"]:
             return False
@@ -479,7 +483,7 @@ def _refresh_in_background(include_sales=False, force=False):
 
     def _run():
         try:
-            _do_build(include_sales=include_sales, force=force)
+            _do_build(include_sales=include_sales, force=force, only=only)
             _BG["done"] = time.time(); _BG["error"] = None
         except Exception as e:
             _BG["error"] = f"{type(e).__name__}: {e}"
@@ -493,17 +497,31 @@ def background_status():
     """(갱신중?, 마지막 완료시각, 마지막 오류)"""
     return _BG["running"], _BG["done"], _BG["error"]
 
-@st.cache_resource(ttl=1800, show_spinner="데이터 준비 중… (드라이브에서 생성 — 1~2분)")
+@st.cache_resource(ttl=1800, show_spinner=False)
 def ensure_data(include_sales=False):
-    """없는 자료만 기다려서 만들고, 있는데 오래된 자료는 뒤에서 갱신한다."""
+    """앱을 켤 때는 아무 자료도 받지 않는다(폴더만 준비).
+    각 자료는 그 자료를 쓰는 화면에서 ensure_one() 으로 그때 확보한다."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
-    names = ["approval", "patent", "clinical", "price", "nego"] + (
-        ["iqvia", "ubist"] if include_sales else [])
-    missing = [n for n in names if not _cache_path(n).exists()]
-    if missing:
-        return _do_build(include_sales=include_sales)     # 처음엔 기다릴 수밖에 없다
-    if any(_stale(n) for n in names):
-        _refresh_in_background(include_sales=include_sales)
+    return "local"
+
+# 화면이 실제로 쓰는 자료만 그때 받는다. 앱을 켤 때 전부 받지 않으므로
+# 홈·상태처럼 자료가 필요 없는 화면은 기다리지 않는다.
+_ENSURED = {}
+
+def ensure_one(name, ttl=1800):
+    """자료 하나를 확보한다. 없으면 만들고(기다림), 오래됐으면 뒤에서 갱신한다."""
+    p = _cache_path(name)
+    if not p.exists():
+        try:
+            return _do_build(include_sales=(name in WEEKLY), only={name})
+        except Exception:
+            return "error"
+    now = time.time()
+    if now - _ENSURED.get(name, 0) < ttl:      # 최근에 확인했으면 파일시각 검사도 생략
+        return "local"
+    _ENSURED[name] = now
+    if _stale(name):
+        _refresh_in_background(include_sales=(name in WEEKLY), only={name})
     return "local"
 
 def refresh_now(include_sales=False):

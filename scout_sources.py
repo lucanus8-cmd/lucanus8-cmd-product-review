@@ -85,6 +85,14 @@ def is_single_series(*srs):
         m = one if m is None else (m & one)
     return m
 
+def _ensure(name):
+    """그 자료를 쓰기 직전에 확보한다(앱 시작 때 전부 받지 않기 위함)."""
+    try:
+        import bootstrap
+        bootstrap.ensure_one(name)
+    except Exception:
+        pass
+
 def _mtime(path):
     """파일 수정시각(없으면 0). 캐시 키로 써서 파일이 바뀌면 자동으로 다시 읽는다."""
     try:
@@ -110,6 +118,7 @@ def _load_approval(_mt):
     return enrich_approval(pd.read_parquet(SD / "approval.parquet"))
 
 def load_approval():
+    _ensure("approval")
     return _load_approval(_mtime(SD / "approval.parquet"))
 
 def build_kor_core_key_map(pairs):
@@ -226,6 +235,7 @@ def _load_patent(_mt):
     return enrich_patent(pd.read_parquet(SD / "patent.parquet"))
 
 def load_patent():
+    _ensure("patent")
     return _load_patent(_mtime(SD / "patent.parquet"))
 
 @st.cache_data(show_spinner="임상 로딩 중…")
@@ -235,6 +245,7 @@ def _load_clinical(_mt):
     return enrich_clinical(pd.read_parquet(SD / "clinical.parquet"))
 
 def load_clinical():
+    _ensure("clinical")
     return _load_clinical(_mtime(SD / "clinical.parquet"))
 
 @st.cache_data
@@ -398,6 +409,7 @@ def _load_price(_mt):
     return enrich_price(pd.read_parquet(SD / "price.parquet"))
 
 def load_price():
+    _ensure("price")
     return _load_price(_mtime(SD / "price.parquet"))
 
 @st.cache_data
