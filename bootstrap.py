@@ -524,6 +524,25 @@ def ensure_one(name, ttl=1800):
         _refresh_in_background(include_sales=(name in WEEKLY), only={name})
     return "local"
 
+# 화면이 당장 쓰지 않는 자료(매출·공단협상 등)도 뒤에서 미리 받아 둔다.
+# 화면을 멈추지 않으므로, 쓰려고 들어갔을 때는 대개 이미 준비돼 있다.
+_FILL = {"last": 0.0}
+
+def ensure_rest_in_background(retry_sec=600):
+    """아직 없거나 오래된 자료를 전부 뒤에서 채운다(매출 포함)."""
+    now = time.time()
+    if now - _FILL["last"] < retry_sec:
+        return False
+    names = [n for n in ("approval", "patent", "clinical", "price", "nego", "iqvia", "ubist")
+             if (not _cache_path(n).exists()) or _stale(n)]
+    if not names:
+        _FILL["last"] = now
+        return False
+    if _refresh_in_background(include_sales=True, only=set(names)):
+        _FILL["last"] = now
+        return True
+    return False
+
 def refresh_now(include_sales=False):
     """'지금 새로고침' 버튼용. 새벽 기준과 상관없이 다시 만든다(뒤에서 진행)."""
     return _refresh_in_background(include_sales=include_sales, force=True)

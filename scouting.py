@@ -215,15 +215,19 @@ _PAGE_NEEDS = {
     "sugg":     ["approval", "patent"],
     "patent":   ["approval", "patent"],
     "clinical": ["clinical"],
-    "price":    ["approval", "price"],
+    "price":    ["approval", "price", "nego"],
     "ai":       ["approval", "patent", "clinical", "price"],
 }
 _pg = st.query_params.get("page") or "home"
 for _n in _PAGE_NEEDS.get(_pg, []):
     try:
-        bootstrap.ensure_one(_n)
+        bootstrap.ensure_one(_n)       # 이 화면에 필요한 자료는 기다려서 확보
     except Exception:
         pass
+try:
+    bootstrap.ensure_rest_in_background()   # 나머지(매출·공단협상 등)는 뒤에서 미리 받아 둠
+except Exception:
+    pass
 
 HAS_REG = ss.available()
 HAS_PRICE = ss.price_available()
@@ -1500,8 +1504,9 @@ if PAGE == "status":
     rows, n_missing, n_stale = [], 0, 0
     for name, path, maxh, note in items:
         if not path.exists():
-            # 자료는 그 자료를 쓰는 화면을 열 때 받는다 → 아직 안 받은 건 정상이다
-            rows.append((name, "⏳ 아직 안 받음", "—", "—", note + " · 해당 화면을 열면 받습니다"))
+            # 자료는 뒤에서 자동으로 받아온다 → 아직 안 받은 건 '곧 받아옴'이지 오류가 아니다
+            _hint = " · 받아오는 중" if _run else " · 곧 자동으로 받아옵니다"
+            rows.append((name, "⏳ 아직 안 받음", "—", "—", note + _hint))
             continue
         txt, h = _age(path)
         if h > maxh:

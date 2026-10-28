@@ -422,11 +422,17 @@ def price_by_key():
     return pd.DataFrame({"약가중앙값": g["금액"].median(), "약가품목수": g.size()}).reset_index()
 
 def nego_available():
+    if not (SD / "nego.parquet").exists():
+        _ensure("nego")
     return (SD / "nego.parquet").exists()
 
 @st.cache_data
-def load_nego():
+def _load_nego(_mt):
     return pd.read_parquet(SD / "nego.parquet")
+
+def load_nego():
+    _ensure("nego")
+    return _load_nego(_mtime(SD / "nego.parquet"))
 
 def nego_years(prodname):
     """제품명이 NHIS '약가협상 완료' 목록에 있으면 해당 연도 리스트(공식). 접두 매칭."""
