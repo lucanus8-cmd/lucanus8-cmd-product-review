@@ -235,14 +235,32 @@ HAS_CLIN = ss.clinical_available()
 HAS_PAT = ss.patent_available()
 
 def has_sales(src):
-    """매출 자료를 쓸 수 있는지. 파일이 아직 없으면 그때 한 번 받아온다
-    (시작할 때 모두 받지 않고, 매출 화면에 들어올 때 확보하는 방식)."""
+    """매출 자료 파일이 준비돼 있는지만 확인한다(받아오지 않음)."""
     f = DATA_DIR / {"IQVIA": "iqvia.pkl", "UBIST": "ubist.pkl"}.get(src, "")
-    if f.exists():
+    return bool(f) and f.exists()
+
+def fetch_sales_now():
+    """'불러오기'를 눌렀을 때 매출 자료(IQVIA·UBIST)를 지금 받아온다.
+    성공하면 True. 실패하면 이유를 화면에 보여주고 False."""
+    with st.spinner("매출 자료(IQVIA·UBIST)를 받아오는 중… 처음엔 1~2분 걸릴 수 있습니다"):
+        ok, err = bootstrap.fetch_sales()
+    if ok:
+        for _ld in (load_iqvia, load_ubist):   # 새로 받은 파일을 읽도록 캐시만 비운다
+            try: _ld.clear()
+            except Exception: pass
         return True
-    with st.spinner("매출 자료를 처음 불러오는 중… (한 번만 걸립니다)"):
-        bootstrap.ensure_sales()
-    return f.exists()
+    st.error("매출 자료를 불러오지 못했습니다. 잠시 뒤 다시 눌러 보시고, 계속 안 되면 "
+             "원본 엑셀(IQVIA·UBIST)의 구글 드라이브 공유 설정을 확인해 주세요.")
+    if err:
+        with st.expander("자세한 오류 내용 (개발자용)"):
+            st.code(err)
+    return False
+
+def sales_load_button(key, label="📊 매출 자료 지금 불러오기"):
+    """매출 자료가 없을 때 쓰는 공용 버튼. 누르면 받아오고 화면을 새로 그린다."""
+    if st.button(label, key=key, type="primary"):
+        if fetch_sales_now():
+            st.rerun()
 
 _ing_core = ss.ing_core   # 성분명 정규화(코드/염/수화물 제거) — scout_sources 공용
 
@@ -497,7 +515,8 @@ if PAGE == "search":
         return base
 
     if q and not has_sales(src1):
-        st.info(f"{src1} 매출 자료 미연결 — 허가/특허/임상/약가는 아래에서 확인할 수 있습니다.")
+        st.info(f"{src1} 매출 자료가 아직 준비되지 않았습니다 — 허가/특허/임상/약가는 아래에서 확인할 수 있습니다.")
+        sales_load_button("btn_fetch_sales_search", "📊 매출 자료 지금 불러오기")
     if q and has_sales(src1):
         df, yr, cfg = get(src1)
         # 매출 매칭: ① 브랜드 코어 ② 제형어(정/캡슐/주 등) 제거한 더 짧은 브랜드 토큰으로 제품명 검색
@@ -765,7 +784,9 @@ if PAGE == "sugg":
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
     if not has_sales(src2):
-        st.info(f"{src2} 매출 자료 미연결 — 제품 제안은 매출 자료가 있어야 동작합니다.")
+        st.info(f"{src2} 매출 자료가 아직 준비되지 않았습니다 — 제품 제안은 매출 자료가 있어야 동작합니다.\n\n"
+                "아래 버튼을 누르면 지금 받아옵니다(처음엔 1~2분 걸릴 수 있습니다).")
+        sales_load_button("btn_fetch_sales_sugg")
         st.stop()
     df, yr, cfg = get(src2)
     m = sales_agg_cached(src2, cfg["ing"] if unit == "성분별" else cfg["prod"], cfg["maker"])
@@ -911,10 +932,8 @@ if PAGE == "sugg":
 if PAGE == "sales":
     # 매출(IQVIA·UBIST)은 데이터가 커서 메모리를 많이 쓴다.
     # 무료 플랜 안정성을 위해 버튼을 눌렀을 때만 불러온다(기본은 미로딩).
-    if not (has_sales("IQVIA") or has_sales("UBIST")):
-        st.info("매출 자료(IQVIA·UBIST)가 아직 연결되지 않았습니다. "
-                "‘상태’ 메뉴에서 자료 갱신 현황을 확인해 주세요.")
-    elif st.session_state.get("_load_sales"):
+    _sales_ready = has_sales("IQVIA") or has_sales("UBIST")
+    if st.session_state.get("_load_sales") and _sales_ready:
         import sales_analysis
         try:
             sales_analysis.render()
@@ -928,10 +947,14 @@ if PAGE == "sales":
             st.rerun()
     else:
         st.info("매출 분석 데이터(IQVIA·UBIST)는 용량이 커서 필요할 때만 불러옵니다.\n\n"
-                "아래 버튼을 누르면 매출 대시보드가 열립니다.")
+                "아래 버튼을 누르면 매출 대시보드가 열립니다."
+                + ("" if _sales_ready else
+                   "\n\n아직 자료가 준비되지 않았다면 버튼을 누를 때 함께 받아옵니다"
+                   "(처음엔 1~2분 걸릴 수 있습니다)."))
         if st.button("📊 매출 분석 불러오기", key="btn_load_sales", type="primary"):
-            st.session_state["_load_sales"] = True
-            st.rerun()
+            if _sales_ready or fetch_sales_now():
+                st.session_state["_load_sales"] = True
+                st.rerun()
 
 # ══════════════════════════ 특허 분석 ══════════════════════════
 if PAGE == "patent":

@@ -547,10 +547,21 @@ def refresh_now(include_sales=False):
     """'지금 새로고침' 버튼용. 새벽 기준과 상관없이 다시 만든다(뒤에서 진행)."""
     return _refresh_in_background(include_sales=include_sales, force=True)
 
-def ensure_sales():
-    """매출 자료(IQVIA·UBIST)를 그때 가서 확보한다. 매출 로더가 부르기 전에 호출.
-    파일이 이미 있고 최신이면 아무것도 하지 않는다."""
+def fetch_sales():
+    """매출 자료(IQVIA·UBIST)를 지금 받아온다(기다림). → (성공여부, 오류메시지)
+    '불러오기' 버튼처럼 사용자가 직접 요청했을 때 쓴다."""
     try:
-        return ensure_data(include_sales=True)
+        _do_build(include_sales=True, only={"iqvia", "ubist"})
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    ok = _cache_path("iqvia").exists() or _cache_path("ubist").exists()
+    return ok, (None if ok else "파일이 만들어지지 않았습니다. 원본 엑셀 공유 설정을 확인해 주세요.")
+
+def ensure_sales():
+    """매출 자료를 확보한다. 없으면 받아오고, 있으면 아무 일도 하지 않는다."""
+    try:
+        ensure_one("iqvia")
+        ensure_one("ubist")
+        return "ok"
     except Exception:
         return "error"
