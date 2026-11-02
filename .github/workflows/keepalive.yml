@@ -1,0 +1,31 @@
+# 사이트가 잠들지 않게 유지합니다.
+# Streamlit 무료 플랜은 한동안 접속이 없으면 앱을 재우고, 다시 깨울 때 1~3분이 걸립니다.
+# 주소만 호출하는 '핑'은 앱 본체를 켜지 못하므로, 실제 브라우저로 접속해 화면을 띄웁니다.
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"     # 4시간마다 (UTC 00:17, 04:17, 08:17 …)
+  workflow_dispatch:            # 필요하면 Actions 탭에서 수동 실행
+
+jobs:
+  visit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 브라우저 준비
+        run: |
+          python -m pip install --quiet playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: 사이트 접속
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://xbpft.streamlit.app/' }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: python .github/scripts/keepalive.py
