@@ -19,6 +19,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      # 브라우저 내려받기는 느리다 → 한 번 받아두고 재사용
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.49.0-${{ runner.os }}
+
       - name: 브라우저 준비
         run: |
           python -m pip install --quiet playwright==1.49.0

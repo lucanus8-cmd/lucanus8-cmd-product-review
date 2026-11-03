@@ -12,6 +12,10 @@ import time
 
 from playwright.sync_api import sync_playwright
 
+
+class SkipRun(Exception):
+    """우리가 손쓸 수 없는 상태 — 실패로 치지 않고 조용히 끝낸다."""
+
 URL = os.environ.get("APP_URL") or "https://xbpft.streamlit.app/"
 PW = os.environ.get("APP_PASSWORD") or ""
 DIAG = pathlib.Path("diag")
@@ -26,6 +30,8 @@ APP_SELECTORS = [
 ]
 WAKE_WORDS = ("back up", "get this app", "has gone to sleep", "zzz", "wake")
 APP_WORDS = ("제품 검토", "비밀번호", "제품 종합분석")
+# 앱이 '초대받은 사람만' 공개로 설정돼 있으면 로봇은 구글 로그인을 할 수 없어 여기서 막힌다.
+NO_ACCESS_WORDS = ("do not have access", "does not exist", "please sign in to continue")
 
 
 def text_of(page):
@@ -101,6 +107,17 @@ def visit(page, attempt):
     head = text_of(page)[:160].replace("\n", " ")
     print(f"   화면: {head or '(글자 없음)'}")
 
+    low = text_of(page).lower()
+    if sum(w in low for w in NO_ACCESS_WORDS) >= 2:
+        dump(page, "no_access")
+        print("")
+        print("   ⚠ 이 앱은 '초대받은 계정만' 볼 수 있게 설정돼 있습니다.")
+        print("     자동 접속(로봇)은 구글 로그인을 할 수 없어 깨울 수 없습니다.")
+        print("     share.streamlit.io → 앱 Settings → Sharing 에서")
+        print("     'This app is public and searchable' 로 바꾸면 동작합니다.")
+        print("     (접속 비밀번호는 그대로 남으니 자료는 계속 보호됩니다)")
+        raise SkipRun()
+
     if not wait_app(page, 150):
         dump(page, f"attempt{attempt}")
         raise RuntimeError("앱 화면이 뜨지 않았습니다 (diag 아티팩트 확인)")
@@ -144,6 +161,9 @@ def main():
                 try:
                     visit(page, attempt)
                     print(f"접속 성공 ({attempt}번째 시도)")
+                    return 0
+                except SkipRun:
+                    print("건너뜀 — 설정을 바꾸기 전까지는 자동 접속이 의미가 없습니다.")
                     return 0
                 except Exception as e:
                     print(f"   실패: {type(e).__name__}: {str(e)[:200]}")
