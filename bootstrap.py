@@ -176,17 +176,64 @@ def _parse_ubist(buf):
         df["용량"] = df["성분"].astype(str).apply(lambda s: "/".join(dict.fromkeys(m.replace(" ", "") for m in pat.findall(s))) or "")
     return df.copy()
 
+def _csv_session():
+    """구글에 로그인된 상태로 파일을 통째로 받아올 수 있는 연결을 만든다."""
+    from google.auth.transport.requests import AuthorizedSession
+    return AuthorizedSession(_creds())
+
+def _csv_df(session, sid, gid):
+    """시트 한 탭을 CSV로 통째로 받아 표로 읽는다.
+
+    Sheets API 로 한 줄씩(JSON) 받으면 항목 이름이 줄마다 반복돼 전송량이 크고,
+    받은 뒤 파이썬이 한 줄씩 표로 조립해야 해서 느리다. CSV 는 한 번에 받아
+    pandas 가 바로 읽으므로 훨씬 빠르고 메모리도 적게 쓴다.
+    실패하면 None 을 돌려주고, 부르는 쪽에서 기존 방식으로 넘어간다.
+    """
+    url = f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv&gid={gid}"
+    r = session.get(url, timeout=600)
+    if r.status_code != 200:
+        return None
+    body = r.content
+    head = body[:200].lstrip().lower()
+    if head.startswith(b"<"):            # 로그인 페이지 등 HTML 이 오면 실패로 본다
+        return None
+    df = pd.read_csv(io.BytesIO(body), dtype=str, keep_default_na=False,
+                     na_values=[], low_memory=False)
+    df.columns = [str(c).split("\n")[0].strip() for c in df.columns]
+    return df
+
 def _sheet_df(sheets_api, sid):
     """스프레드시트에서 '데이터가 있는' 주 탭을 읽는다.
-    컬럼 수가 많은 탭부터 시도하되, 값이 비어 있는 탭(빈 시트·유지용 등)은 건너뛴다."""
-    meta = sheets_api.spreadsheets().get(spreadsheetId=sid, fields="sheets.properties(title,gridProperties)").execute()
+    컬럼 수가 많은 탭부터 시도하되, 값이 비어 있는 탭(빈 시트·유지용 등)은 건너뛴다.
+    받는 방법은 CSV 통째로 받기를 먼저 쓰고, 안 되면 예전처럼 한 줄씩 받는다."""
+    meta = sheets_api.spreadsheets().get(
+        spreadsheetId=sid,
+        fields="sheets.properties(title,sheetId,gridProperties)").execute()
+
     def score(s):
         gp = s["properties"].get("gridProperties", {})
         return (gp.get("columnCount", 0), gp.get("rowCount", 0))
+
     cand = [s for s in meta["sheets"] if not s["properties"]["title"].startswith("_")] or meta["sheets"]
+    sess = None
+    try:
+        sess = _csv_session()
+    except Exception:
+        pass
+
     for sh in sorted(cand, key=score, reverse=True):
-        tab = sh["properties"]["title"]
-        vals = (sheets_api.spreadsheets().values()
+        props = sh["properties"]
+        tab, gid = props["title"], props.get("sheetId")
+
+        if sess is not None and gid is not None:          # ① CSV 로 통째로
+            try:
+                df = _csv_df(sess, sid, gid)
+                if df is not None and len(df) >= 1 and len(df.columns) >= 2:
+                    return df.fillna("")
+            except Exception:
+                pass                                       # 실패하면 아래 방식으로
+
+        vals = (sheets_api.spreadsheets().values()         # ② 예전 방식(한 줄씩)
                 .get(spreadsheetId=sid, range=tab, valueRenderOption="FORMATTED_VALUE")
                 .execute().get("values", []))
         if len(vals) < 2:          # 헤더+데이터가 없으면 빈 탭 → 다음 후보
