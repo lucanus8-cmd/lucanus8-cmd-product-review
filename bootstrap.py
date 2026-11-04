@@ -401,9 +401,18 @@ def _do_build(include_sales=False, force=False, only=None):
     # 허가/특허/임상 (구글시트)
     # 성분 조인키·코어 같은 파생열은 여기서 한 번 만들어 함께 저장한다.
     # (앱이 뜰 때마다 10만 행을 다시 계산하지 않도록 — 로더는 열이 있으면 그대로 쓴다)
+    # 허가 시트는 열이 수십 개인데 화면에서 쓰는 건 아래 10개뿐이다.
+    # 나머지를 버리면 저장 용량·메모리·여는 시간이 모두 줄어든다.
+    APPROVAL_KEEP = ["품목기준코드", "품목명", "업체명", "허가일자", "전문/일반",
+                     "주성분", "주성분(영문)", "신약구분", "상태", "보험코드(EDI)"]
+
     def _build_sheet(n):
         import scout_sources as _ss
         df = _sheet_df(sheets, SHEETS[n])
+        if n == "approval":
+            keep = [c for c in APPROVAL_KEEP if c in df.columns]
+            if len(keep) >= 8:          # 핵심 열이 다 보일 때만 줄인다(이름이 바뀌면 그대로 둔다)
+                df = df[keep].copy()
         try:
             if n == "approval":
                 _ss.enrich_approval(df)
@@ -536,16 +545,21 @@ def ensure_one(name, ttl=1800):
 _FILL = {"last": 0.0}
 
 def ensure_rest_in_background(retry_sec=600):
-    """아직 없거나 오래된 자료를 전부 뒤에서 채운다(매출 포함)."""
+    """아직 없거나 오래된 자료를 뒤에서 채운다.
+
+    매출(IQVIA·UBIST)은 일부러 뺀다. 파일이 커서 무료 플랜의 CPU·메모리를
+    몇 분씩 잡아먹고, 그동안 새로 들어온 사람은 화면 조각(js)을 못 받아
+    빈 화면이나 깨진 위젯을 보게 된다. 매출은 '불러오기'를 눌렀을 때만 받는다.
+    """
     now = time.time()
     if now - _FILL["last"] < retry_sec:
         return False
-    names = [n for n in ("approval", "patent", "clinical", "price", "nego", "iqvia", "ubist")
+    names = [n for n in ("approval", "patent", "clinical", "price", "nego")
              if (not _cache_path(n).exists()) or _stale(n)]
     if not names:
         _FILL["last"] = now
         return False
-    if _refresh_in_background(include_sales=True, only=set(names)):
+    if _refresh_in_background(include_sales=False, only=set(names)):
         _FILL["last"] = now
         return True
     return False
