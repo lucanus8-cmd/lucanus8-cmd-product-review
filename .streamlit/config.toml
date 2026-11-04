@@ -2,9 +2,21 @@
 headless = true
 enableCORS = false
 enableXsrfProtection = true
+# 배포 환경에서는 파일 변경 감시가 필요 없다. 끄면 자료 파일을 쓸 때마다
+# 감시 스레드가 도는 비용이 사라진다(무료 플랜은 CPU가 1개뿐이다).
+fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# 화면 우상단 도구막대를 줄여 처음 받는 양을 조금이라도 줄인다
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[runner]
+# 위젯을 연달아 바꿀 때 앞의 계산을 바로 취소해 반응이 빨라진다
+fastReruns = true
 
 [theme]
 primaryColor = "#2f6df6"
