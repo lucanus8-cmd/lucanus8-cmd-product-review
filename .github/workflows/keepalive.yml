@@ -35,7 +35,7 @@ jobs:
 
       - name: 사이트 접속
         env:
-          APP_URL: ${{ vars.APP_URL || 'https://xbpft.streamlit.app/' }}
+          APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
         run: python .github/scripts/keepalive.py
 

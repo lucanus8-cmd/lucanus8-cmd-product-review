@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 class SkipRun(Exception):
     """우리가 손쓸 수 없는 상태 — 실패로 치지 않고 조용히 끝낸다."""
 
-URL = os.environ.get("APP_URL") or "https://xbpft.streamlit.app/"
+URL = os.environ.get("APP_URL") or "https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/"
 PW = os.environ.get("APP_PASSWORD") or ""
 DIAG = pathlib.Path("diag")
 DIAG.mkdir(exist_ok=True)
