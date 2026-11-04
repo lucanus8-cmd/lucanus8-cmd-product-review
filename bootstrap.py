@@ -550,6 +550,36 @@ def ensure_rest_in_background(retry_sec=600):
         return True
     return False
 
+def build_later(names, delay=3.0):
+    """자료를 뒤에서 만든다. delay 초 뒤에 시작한다.
+
+    바로 시작하지 않는 이유: 무료 플랜은 CPU가 1개라, 받아오기/가공이 돌면
+    브라우저가 요청한 화면 조각(js)에 서버가 제때 응답하지 못한다.
+    그러면 위젯이 'Failed to fetch dynamically imported module' 로 깨진다.
+    먼저 화면을 다 내려보내고 나서 일을 시작한다.
+    """
+    names = set(names)
+    if not names:
+        return False
+    with _BG_LOCK:
+        if _BG["running"]:
+            return False
+        _BG["running"] = True
+
+    def _run():
+        try:
+            if delay:
+                time.sleep(delay)
+            _do_build(include_sales=bool(names & WEEKLY), only=names)
+            _BG["done"] = time.time(); _BG["error"] = None
+        except Exception as e:
+            _BG["error"] = f"{type(e).__name__}: {e}"
+        finally:
+            _BG["running"] = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return True
+
 def refresh_now(include_sales=False):
     """'지금 새로고침' 버튼용. 새벽 기준과 상관없이 다시 만든다(뒤에서 진행)."""
     return _refresh_in_background(include_sales=include_sales, force=True)

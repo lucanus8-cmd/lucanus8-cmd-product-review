@@ -135,9 +135,33 @@ def visit(page, attempt):
     else:
         print("   APP_PASSWORD 미설정 — 화면만 띄웁니다(잠들지 않게 하는 효과는 동일)")
 
+    check_alias(page.context)
+
     time.sleep(8)          # 접속 기록이 남도록 잠시 머문다
     dump(page, "ok")
     print("   최종 화면: " + text_of(page)[:160].replace("\n", " "))
+
+
+def check_alias(ctx):
+    """짧은 별명 주소도 열리는지 확인만 한다(공유용으로 써도 되는지)."""
+    alias = os.environ.get("APP_ALIAS") or "https://xbpft.streamlit.app/"
+    if not alias or alias.rstrip("/") == URL.rstrip("/"):
+        return
+    pg = ctx.new_page()
+    try:
+        pg.goto(alias, wait_until="domcontentloaded", timeout=45_000)
+        time.sleep(3)
+        low = (pg.inner_text("body") or "").lower()
+        bad = sum(w in low for w in NO_ACCESS_WORDS) >= 2
+        print(f"   짧은 주소 {alias} → " +
+              ("❌ 안 열립니다(공유에 쓰지 마세요)" if bad else "✅ 정상"))
+    except Exception as e:
+        print(f"   짧은 주소 확인 실패: {type(e).__name__}")
+    finally:
+        try:
+            pg.close()
+        except Exception:
+            pass
 
 
 def main():

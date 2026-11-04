@@ -4,6 +4,7 @@
 기존 app.py 는 건드리지 않는다. 실행: streamlit run scouting.py --server.port 8502
 """
 import re
+import time
 from pathlib import Path
 import pandas as pd
 import streamlit as st
@@ -230,13 +231,72 @@ def _ensure_needed():
         except Exception:
             pass
 
-# 아직 서버에 없는 자료가 있으면 받아오는 동안 화면이 멈춘 것처럼 보인다.
-# 무엇을 기다리는 중인지 알려 준다(빈 화면에서 새로고침하게 되는 걸 막는다).
-_fresh = [n for n in _need if not bootstrap.has_cache(n)]
+# 없어도 화면은 열리는 자료(있으면 더 보여줄 뿐) — 이것 때문에 기다리게 하지 않는다
+_OPTIONAL = {"nego"}
+_WAIT_LIMIT_S = 150          # 이만큼 기다렸는데도 안 되면 일단 화면을 연다
+
+def _label(ns):
+    return " · ".join(_NEED_LABEL.get(n, n) for n in ns)
+
+# 준비 화면에서 3초마다 이 부분만 다시 확인한다. 다 받으면 화면 전체를 다시 그린다.
+def _wait_tick_body():
+    _left = [n for n in st.session_state.get("_wait_for", []) if not bootstrap.has_cache(n)]
+    _run, _done, _err = bootstrap.background_status()
+    if not _left:
+        try:
+            st.rerun(scope="app")
+        except Exception:
+            st.rerun()
+        return
+    if _err and not _run:
+        st.error("자료를 받아오지 못했습니다 — " + str(_err)[:200])
+        _c1, _c2 = st.columns(2)
+        if _c1.button("다시 시도", key="btn_retry_build"):
+            bootstrap.build_later(_left, 0)
+            st.rerun()
+        if _c2.button("그냥 화면 열기", key="btn_skip_wait"):
+            st.session_state["_skip_wait"] = True
+            try:
+                st.rerun(scope="app")
+            except Exception:
+                st.rerun()
+        return
+    if not _run:                       # 어쩌다 멈췄으면 다시 시작
+        bootstrap.build_later(_left, 0)
+    st.caption("받아오는 중… " + _label(_left))
+
+if hasattr(st, "fragment"):
+    _wait_tick = st.fragment(run_every="3s")(_wait_tick_body)
+else:
+    _wait_tick = None
+
+# 서버에 아직 없는 자료가 있으면, 화면을 붙잡은 채로 받지 않는다.
+# (무료 플랜은 CPU가 1개라, 받는 동안 브라우저가 화면 조각(js)을 못 받아
+#  위젯이 'Failed to fetch dynamically imported module' 로 깨진다)
+_missing = [n for n in _need if not bootstrap.has_cache(n)]
+_fresh = [n for n in _missing if n not in _OPTIONAL]
+if [n for n in _missing if n in _OPTIONAL]:
+    bootstrap.build_later([n for n in _missing if n in _OPTIONAL])   # 뒤에서만 받는다
+
+# 너무 오래 기다리게 두지 않는다 — 한도를 넘으면 있는 자료로 화면을 연다
 if _fresh:
-    _names = " · ".join(_NEED_LABEL.get(n, n) for n in _fresh)
-    with st.spinner(f"{_names} 자료를 처음 준비하는 중입니다 — 1~2분 걸릴 수 있어요. "
-                    "다음부터는 바로 열립니다. (새로고침하지 마세요)"):
+    _t0 = st.session_state.get("_wait_t0")
+    if _t0 is None:
+        st.session_state["_wait_t0"] = _t0 = time.time()
+    if time.time() - _t0 > _WAIT_LIMIT_S or st.session_state.get("_skip_wait"):
+        _fresh = []
+else:
+    st.session_state.pop("_wait_t0", None)
+
+if _fresh and _wait_tick is not None:
+    st.session_state["_wait_for"] = _fresh
+    st.info(f"⏳ **{_label(_fresh)} 자료를 처음 준비하고 있습니다.** 1~2분 걸릴 수 있어요.\n\n"
+            "준비가 끝나면 이 화면이 **자동으로** 바뀝니다 — 새로고침하지 마세요.")
+    bootstrap.build_later(_fresh)      # 화면을 다 보낸 뒤 시작한다
+    _wait_tick()
+    st.stop()
+elif _fresh:                            # 아주 옛 버전 대비(자동 새로고침 불가)
+    with st.spinner(f"{_label(_fresh)} 자료를 처음 준비하는 중입니다 — 1~2분 걸릴 수 있어요."):
         _ensure_needed()
 else:
     _ensure_needed()
