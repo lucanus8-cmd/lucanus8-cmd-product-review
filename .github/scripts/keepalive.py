@@ -1,6 +1,8 @@
 """사이트를 깨워 두기 위해 실제 브라우저로 한 번 접속한다.
 
 - 주소만 호출하는 핑으로는 Streamlit 앱 본체가 켜지지 않는다(껍데기 HTML만 응답).
+- Streamlit Cloud 는 앱을 iframe 안에 넣어 보여준다. 바깥 문서만 확인하면
+  글자가 하나도 없어 '앱이 안 켜졌다'고 잘못 판정한다 → 모든 프레임을 본다.
 - 잠들어 있으면 'Yes, get this app back up!' 버튼을 눌러 깨운다.
 - 비밀번호(APP_PASSWORD)가 있으면 로그인까지 해서, 새벽 자동 갱신도 함께 돌게 한다.
 - 실패하면 그 순간의 화면과 글자를 남긴다(diag/ 폴더 → Actions 아티팩트).
@@ -35,10 +37,28 @@ NO_ACCESS_WORDS = ("do not have access", "does not exist", "please sign in to co
 
 
 def text_of(page):
-    try:
-        return page.inner_text("body")
-    except Exception:
-        return ""
+    """모든 프레임의 글자를 합쳐 돌려준다 (앱은 iframe 안에 있다)."""
+    parts = []
+    for fr in page.frames:
+        try:
+            t = fr.inner_text("body")
+        except Exception:
+            continue
+        if t:
+            parts.append(t)
+    return "\n".join(parts)
+
+
+def app_frame(page):
+    """앱 화면이 들어있는 프레임을 찾는다. 없으면 None."""
+    for fr in page.frames:
+        for sel in APP_SELECTORS:
+            try:
+                if fr.query_selector(sel):
+                    return fr
+            except Exception:
+                break          # 이 프레임은 읽을 수 없다 — 다음 프레임으로
+    return None
 
 
 def try_wake(page, txt):
@@ -46,19 +66,20 @@ def try_wake(page, txt):
     low = txt.lower()
     if not any(w in low for w in WAKE_WORDS):
         return False
-    for finder in (
-        lambda: page.get_by_role("button", name="back up", exact=False),
-        lambda: page.get_by_text("get this app back up", exact=False),
-        lambda: page.get_by_role("button"),
-    ):
-        try:
-            el = finder().first
-            if el.is_visible(timeout=2_000):
-                el.click(timeout=5_000)
-                print("   → 깨우기 버튼을 눌렀습니다 (앱이 잠들어 있었습니다)")
-                return True
-        except Exception:
-            continue
+    for fr in page.frames:
+        for finder in (
+            lambda f=fr: f.get_by_role("button", name="back up", exact=False),
+            lambda f=fr: f.get_by_text("get this app back up", exact=False),
+            lambda f=fr: f.get_by_role("button"),
+        ):
+            try:
+                el = finder().first
+                if el.is_visible(timeout=2_000):
+                    el.click(timeout=5_000)
+                    print("   → 깨우기 버튼을 눌렀습니다 (앱이 잠들어 있었습니다)")
+                    return True
+            except Exception:
+                continue
     print("   → 잠든 화면 같은데 버튼을 찾지 못했습니다")
     return False
 
@@ -68,12 +89,10 @@ def wait_app(page, budget_s):
     end = time.time() + budget_s
     woke = 0
     while time.time() < end:
-        for sel in APP_SELECTORS:
-            try:
-                if page.query_selector(sel):
-                    return True
-            except Exception:
-                pass
+        fr = app_frame(page)
+        if fr is not None:
+            print(f"   앱 화면 확인 (프레임: {(fr.url or '(바깥 문서)')[-50:]})")
+            return True
         txt = text_of(page)
         if any(w in txt for w in APP_WORDS):
             return True
@@ -92,9 +111,15 @@ def dump(page, tag):
     except Exception as e:
         print(f"   (화면 저장 실패: {type(e).__name__})")
     try:
-        (DIAG / f"{tag}.txt").write_text(
-            f"url: {page.url}\ntitle: {page.title()}\n\n{text_of(page)[:4000]}",
-            encoding="utf-8")
+        lines = [f"url: {page.url}", f"title: {page.title()}", ""]
+        for i, fr in enumerate(page.frames):
+            try:
+                body = fr.inner_text("body")
+            except Exception:
+                body = "(읽을 수 없음)"
+            lines.append(f"--- 프레임 {i}: {fr.url} ---")
+            lines.append((body or "")[:2000])
+        (DIAG / f"{tag}.txt").write_text("\n".join(lines), encoding="utf-8")
     except Exception:
         pass
 
@@ -105,7 +130,7 @@ def visit(page, attempt):
     print(f"   접속: {page.url}")
     print(f"   제목: {page.title()}")
     head = text_of(page)[:160].replace("\n", " ")
-    print(f"   화면: {head or '(글자 없음)'}")
+    print(f"   화면: {head or '(글자 없음 — 앱 iframe 이 아직 안 붙었습니다)'}")
 
     low = text_of(page).lower()
     if sum(w in low for w in NO_ACCESS_WORDS) >= 2:
@@ -124,10 +149,10 @@ def visit(page, attempt):
 
     # 비밀번호 화면이면 로그인 (자료 자동 갱신까지 돌게 하려면 필요)
     if PW:
+        fr = app_frame(page) or page.main_frame
         try:
-            box = page.wait_for_selector("input[type='password']", timeout=20_000)
-            box.fill(PW)
-            page.keyboard.press("Enter")
+            fr.wait_for_selector("input[type='password']", timeout=20_000).fill(PW)
+            fr.press("input[type='password']", "Enter")
             time.sleep(5)
             print("   로그인 완료")
         except Exception:
@@ -144,14 +169,14 @@ def visit(page, attempt):
 
 def check_alias(ctx):
     """짧은 별명 주소도 열리는지 확인만 한다(공유용으로 써도 되는지)."""
-    alias = os.environ.get("APP_ALIAS") or "https://xbpft.streamlit.app/"
+    alias = os.environ.get("APP_ALIAS") or ""
     if not alias or alias.rstrip("/") == URL.rstrip("/"):
         return
     pg = ctx.new_page()
     try:
         pg.goto(alias, wait_until="domcontentloaded", timeout=45_000)
-        time.sleep(3)
-        low = (pg.inner_text("body") or "").lower()
+        time.sleep(5)
+        low = text_of(pg).lower()
         bad = sum(w in low for w in NO_ACCESS_WORDS) >= 2
         print(f"   짧은 주소 {alias} → " +
               ("❌ 안 열립니다(공유에 쓰지 마세요)" if bad else "✅ 정상"))

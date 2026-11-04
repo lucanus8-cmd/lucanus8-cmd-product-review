@@ -37,7 +37,7 @@ jobs:
         env:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-        run: python .github/scripts/diagnose.py
+        run: python .github/scripts/keepalive.py
 
       # 실패했을 때 그 순간의 화면을 남긴다 (Actions 실행 화면 하단 Artifacts 에서 받기)
       - name: 실패 화면 남기기
