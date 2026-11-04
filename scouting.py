@@ -218,14 +218,55 @@ _PAGE_NEEDS = {
     "price":    ["approval", "price", "nego"],
     "ai":       ["approval", "patent", "clinical", "price"],
 }
+_NEED_LABEL = {"approval": "허가", "patent": "특허", "clinical": "임상",
+               "price": "약가", "nego": "공단 협상"}
 _pg = st.query_params.get("page") or "home"
-for _n in _PAGE_NEEDS.get(_pg, []):
-    try:
-        bootstrap.ensure_one(_n)       # 이 화면에 필요한 자료는 기다려서 확보
-    except Exception:
-        pass
+_need = _PAGE_NEEDS.get(_pg, [])
+
+def _ensure_needed():
+    for _n in _need:
+        try:
+            bootstrap.ensure_one(_n)   # 이 화면에 필요한 자료는 기다려서 확보
+        except Exception:
+            pass
+
+# 아직 서버에 없는 자료가 있으면 받아오는 동안 화면이 멈춘 것처럼 보인다.
+# 무엇을 기다리는 중인지 알려 준다(빈 화면에서 새로고침하게 되는 걸 막는다).
+_fresh = [n for n in _need if not bootstrap.has_cache(n)]
+if _fresh:
+    _names = " · ".join(_NEED_LABEL.get(n, n) for n in _fresh)
+    with st.spinner(f"{_names} 자료를 처음 준비하는 중입니다 — 1~2분 걸릴 수 있어요. "
+                    "다음부터는 바로 열립니다. (새로고침하지 마세요)"):
+        _ensure_needed()
+else:
+    _ensure_needed()
+
 try:
     bootstrap.ensure_rest_in_background()   # 나머지(매출·공단협상 등)는 뒤에서 미리 받아 둠
+except Exception:
+    pass
+
+# 뒤에서 새 자료를 받는 중이면, 끝났을 때 화면을 스스로 새로 그린다.
+# (예전에는 사용자가 F5 를 눌러야 새 자료가 보였다)
+def _bg_watch_body():
+    _run = bootstrap.background_status()[0]
+    if _run:
+        st.session_state["_bg_seen"] = True
+        st.caption("⏳ 새 자료를 뒤에서 받아오는 중… 끝나면 자동으로 다시 보여드립니다.")
+    elif st.session_state.pop("_bg_seen", False):
+        try:
+            st.rerun(scope="app")      # 다 받았으면 화면 전체를 새 자료로 다시 그린다
+        except Exception:
+            st.rerun()
+
+if hasattr(st, "fragment"):            # 3초마다 이 작은 부분만 다시 확인(화면은 안 멈춤)
+    _bg_watch = st.fragment(run_every="3s")(_bg_watch_body)
+else:
+    _bg_watch = _bg_watch_body
+
+try:
+    if bootstrap.background_status()[0]:
+        _bg_watch()
 except Exception:
     pass
 

@@ -328,6 +328,13 @@ def _last_refresh_deadline(weekly=False):
         dl -= 6 * 86400                             # 주 1회 자료는 6일 더 여유
     return dl - KST                                 # 다시 UTC로
 
+def has_cache(name):
+    """이 자료가 이미 서버에 준비돼 있는지(받아오기를 기다릴 필요가 없는지)."""
+    try:
+        return _cache_path(name).exists()
+    except Exception:
+        return False
+
 def _stale(name):
     """파일이 없거나, 마지막 '새벽 기준시각' 이전에 만들어졌으면 True(=다시 만들기)."""
     p = _cache_path(name)
