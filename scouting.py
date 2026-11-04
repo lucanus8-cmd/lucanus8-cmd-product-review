@@ -261,8 +261,22 @@ def _wait_tick_body():
             except Exception:
                 st.rerun()
         return
-    if not _run:                       # 어쩌다 멈췄으면 다시 시작
-        bootstrap.build_later(_left, 0)
+    if not _run:                       # 어쩌다 멈췄으면 다시 시작 (너무 자주 하지 않는다)
+        _tries = st.session_state.get("_wait_tries", 0)
+        _last = st.session_state.get("_wait_last", 0.0)
+        if _tries < 5 and time.time() - _last > 20:
+            st.session_state["_wait_tries"] = _tries + 1
+            st.session_state["_wait_last"] = time.time()
+            bootstrap.build_later(_left, 0)
+        elif _tries >= 5:
+            st.warning("자료 준비가 계속 되지 않습니다. 아래 버튼으로 화면을 먼저 열 수 있습니다.")
+            if st.button("그냥 화면 열기", key="btn_skip_wait2"):
+                st.session_state["_skip_wait"] = True
+                try:
+                    st.rerun(scope="app")
+                except Exception:
+                    st.rerun()
+            return
     st.caption("받아오는 중… " + _label(_left))
 
 if hasattr(st, "fragment"):
@@ -286,7 +300,8 @@ if _fresh:
     if time.time() - _t0 > _WAIT_LIMIT_S or st.session_state.get("_skip_wait"):
         _fresh = []
 else:
-    st.session_state.pop("_wait_t0", None)
+    for _k in ("_wait_t0", "_wait_tries", "_wait_last"):
+        st.session_state.pop(_k, None)
 
 if _fresh and _wait_tick is not None:
     st.session_state["_wait_for"] = _fresh

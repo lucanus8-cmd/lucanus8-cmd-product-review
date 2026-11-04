@@ -8,7 +8,7 @@ name: keep-alive
 
 on:
   schedule:
-    - cron: "17 */4 * * *"     # 4시간마다 (UTC 00:17, 04:17, 08:17 …)
+    - cron: "17 */2 * * *"     # 2시간마다 — 앱이 식지 않게
   workflow_dispatch:            # Actions 탭에서 수동 실행
 
 jobs:

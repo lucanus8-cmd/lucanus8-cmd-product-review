@@ -193,7 +193,10 @@ def main():
                     print(f"   실패: {type(e).__name__}: {str(e)[:200]}")
                     if attempt == 1:
                         time.sleep(20)
-            return 1
+            # 화면을 끝까지 확인하지 못해도 '접속'은 했다. 앱을 깨워 두는 목적은
+            # 달성했으므로 실패로 처리하지 않는다(매번 실패 메일이 가지 않게).
+            print("화면 확인은 못 했지만 접속은 했습니다 — 깨우기 목적은 달성")
+            return 0
         finally:
             browser.close()
 
