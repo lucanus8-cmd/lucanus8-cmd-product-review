@@ -75,14 +75,26 @@ with sync_playwright() as p:
     rendered = False
     for i in range(12):
         time.sleep(10)
-        got = page.evaluate("""() => ({
-            app:  !!document.querySelector("[data-testid='stApp']"),
-            view: !!document.querySelector("[data-testid='stAppViewContainer']"),
-            pwbox: !!document.querySelector("input[type='password']"),
-            spin: !!document.querySelector("[data-testid='stSpinner']"),
-            scripts: document.querySelectorAll('script[src]').length,
-            bodylen: (document.body.innerText || '').length,
-        })""")
+        # ★ Streamlit Cloud 는 앱을 iframe 안에 넣는다 → 모든 프레임을 다 본다
+        got = {"app": False, "view": False, "pwbox": False, "spin": False,
+               "frames": len(page.frames), "where": None, "bodylen": 0}
+        for fr in page.frames:
+            try:
+                r = fr.evaluate("""() => ({
+                    app:  !!document.querySelector("[data-testid='stApp']"),
+                    view: !!document.querySelector("[data-testid='stAppViewContainer']"),
+                    pwbox: !!document.querySelector("input[type='password']"),
+                    spin: !!document.querySelector("[data-testid='stSpinner']"),
+                    bodylen: (document.body ? (document.body.innerText || '') : '').length,
+                })""")
+            except Exception:
+                continue
+            got["bodylen"] = max(got["bodylen"], r["bodylen"])
+            for k in ("app", "view", "pwbox", "spin"):
+                if r[k]:
+                    got[k] = True
+                    if k != "spin" and not got["where"]:
+                        got["where"] = (fr.url or "(이름없음)")[-60:]
         print(f"  {(i + 1) * 10:>3}초: {json.dumps(got, ensure_ascii=False)}")
         if got["app"] or got["view"] or got["pwbox"]:
             rendered = True
@@ -91,7 +103,13 @@ with sync_playwright() as p:
 
     print()
     print(f"  최종 판정: {'화면 떴음' if rendered else '화면 안 뜸'}")
-    print(f"  본문 글자: {(page.inner_text('body') or '')[:300]!r}")
+    for i, fr in enumerate(page.frames):
+        try:
+            txt = (fr.inner_text("body") or "").strip().replace("\n", " ")
+        except Exception:
+            txt = "(읽을 수 없음)"
+        print(f"  프레임 {i} {(fr.url or '')[-70:]}")
+        print(f"     글자: {txt[:220]!r}")
 
     html = page.content()
     print(f"  HTML 길이: {len(html)}")
@@ -101,12 +119,14 @@ with sync_playwright() as p:
         if mark.lower() in html.lower():
             print(f"    HTML 안에 {mark!r} 있음")
 
-    if PW and rendered:
+    if PW and got.get("pwbox"):
         try:
-            page.fill("input[type='password']", PW)
-            page.keyboard.press("Enter")
-            time.sleep(8)
-            print(f"  로그인 후 화면: {(page.inner_text('body') or '')[:200]!r}")
+            tgt = next(f for f in page.frames
+                       if f.query_selector("input[type='password']"))
+            tgt.fill("input[type='password']", PW)
+            tgt.press("input[type='password']", "Enter")
+            time.sleep(10)
+            print(f"  로그인 후 화면: {(tgt.inner_text('body') or '')[:400]!r}")
         except Exception as e:
             print(f"  로그인 시도 실패: {type(e).__name__}")
 
