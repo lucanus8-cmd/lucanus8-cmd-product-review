@@ -490,8 +490,17 @@ def _price_calc_page():
                    "최고가가 큰 포장일 수 있으니 확인하세요.")
 
     yr = ss.price_group_yearly()
-    h = yr[yr["제제코드"] == row["제제코드"]].sort_values("연")
-    if len(h) >= 2:
+    h = yr[yr["제제코드"] == row["제제코드"]].sort_values("연").copy()
+    if h.empty:
+        st.caption("이 제제의 약가 이력이 없습니다.")
+    else:
+        # 약가표는 '금액이 바뀐 시점'만 보관한다. 등재 후 한 번도 안 바뀐 품목은
+        # 점이 하나뿐이라 선이 안 그려진다(예: 베오바정). 마지막 금액은 지금도
+        # 유효하므로 올해까지 이어 붙여 '변동 없음'이 선으로 보이게 한다.
+        _cur = pd.Timestamp.today().year
+        if int(h["연"].iloc[-1]) < _cur:
+            h = pd.concat([h, h.iloc[[-1]].assign(연=_cur)], ignore_index=True)
+        _flat = h["최고"].nunique() == 1
         f2 = go.Figure()
         f2.add_trace(go.Scatter(x=list(h["연"]) + list(h["연"])[::-1],
                                 y=list(h["최고"]) + list(h["최저"])[::-1],
@@ -503,6 +512,8 @@ def _price_calc_page():
                          title="연도별 상한금액", yaxis=_WON_AXIS,
                          legend=dict(orientation="h", y=-0.2), hovermode="x unified")
         st.plotly_chart(f2, use_container_width=True)
+        if _flat:
+            st.caption("등재 이후 상한금액이 바뀐 적이 없습니다 — 선이 평평한 것이 정상입니다.")
 
     L, R = st.columns(2)
     with L:
