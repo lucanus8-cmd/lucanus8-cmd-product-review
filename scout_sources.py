@@ -421,6 +421,26 @@ def price_by_key():
     g = latest.groupby("_key")
     return pd.DataFrame({"약가중앙값": g["금액"].median(), "약가품목수": g.size()}).reset_index()
 
+@st.cache_data(show_spinner=False)
+def price_latest():
+    """제품코드별 '가장 최근 고시' 한 줄만 남긴 표. 접속자마다 다시 만들지 않도록 캐시한다."""
+    pr = load_price()
+    return pr.sort_values("적용일자").groupby("제품코드", as_index=False).last()
+
+@st.cache_data(show_spinner=False)
+def price_first_last():
+    """제품코드별 최초가·최신가(급여 기준). 인하율 계산용.
+    예전에는 화면에서 이력 전체를 복사해 두 숫자를 뽑았는데(세션마다 수십 MB),
+    값이 자료에만 의존하므로 한 번 계산해 모두가 나눠 쓴다."""
+    pr = load_price()
+    if "급여구분" in pr.columns:
+        pr = pr[pr["급여구분"] == "급여"]
+    pr = pr.sort_values("적용일자")
+    g = pr.groupby("제품코드")["금액"]
+    out = pd.DataFrame({"최초가": g.first(), "최신가": g.last()}).dropna()
+    out["인하율%"] = ((out["최신가"] - out["최초가"]) / out["최초가"] * 100).round(1)
+    return out.reset_index()
+
 def price_group_ready():
     """약가 자료에 '제제코드'(주성분코드_동일제형)가 들어 있는지.
     고시 엑셀을 새로 읽은 뒤부터 채워진다. 없으면 약가 산정 화면을 열 수 없다."""

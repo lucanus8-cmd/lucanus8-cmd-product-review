@@ -1449,7 +1449,7 @@ if PAGE == "price":
         st.markdown("**📋 조건별 최신 약가 · 연도별**")
         def _ser(name):  # 컬럼이 없어도 안전하게 빈 시리즈 반환
             return pr[name] if name in pr.columns else pd.Series([], dtype=object)
-        latest = pr.sort_values("적용일자").groupby("제품코드").tail(1).copy()
+        latest = ss.price_latest().copy()   # 공유 캐시 — 접속자마다 다시 만들지 않는다
         f = st.columns(4)
         pay_def = ["급여"] if "급여구분" in pr.columns else []
         latest = isin(latest, "급여구분", msel(f[0], "급여구분", _ser("급여구분"), "pr_pay", default=pay_def))
@@ -1503,13 +1503,12 @@ if PAGE == "price":
                     st.caption(f"표에는 상위 {TABLE_CAP:,}건만 표시했습니다 (전체 {len(ym):,}건). 아래 CSV로 전체를 받으세요.")
                 st.download_button("⬇️ 연도별 약가 CSV", ym.to_csv(index=False).encode("utf-8-sig"), file_name="연도별약가.csv")
             with st.expander("📉 가격 인하폭 Top 20 / 급여중지(삭제) 목록"):
-                hist = pr[(pr["제품코드"].isin(codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
-                first = hist.groupby("제품코드").first()["금액"].rename("최초가")
-                last = hist.groupby("제품코드").last()["금액"].rename("최신가")
-                drop = pd.concat([first, last], axis=1).dropna()
-                drop["인하율%"] = ((drop["최신가"] - drop["최초가"]) / drop["최초가"] * 100).round(1)
+                # 최초가·최신가는 자료에만 의존하므로 미리 계산해 둔 공유 표에서 가져온다.
+                # (예전에는 여기서 이력 전체를 복사해 접속자마다 수십 MB를 더 썼다)
+                drop = ss.price_first_last()
+                drop = drop[drop["제품코드"].isin(codes)]
                 _meta = [c for c in ["제품명", "업체명"] if c in latest.columns]
-                drop = drop.join(latest.set_index("제품코드")[_meta]).reset_index()
+                drop = drop.merge(latest[["제품코드"] + _meta], on="제품코드", how="left")
                 st.dataframe(drop.nsmallest(20, "인하율%")[[c for c in ["제품명", "업체명", "최초가", "최신가", "인하율%"] if c in drop.columns]],
                              use_container_width=True, height=240, hide_index=True)
                 _dcols = [c for c in ["제품명", "업체명", "주성분명", "적용일자"] if c in latest.columns]
