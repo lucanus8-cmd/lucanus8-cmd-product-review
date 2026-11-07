@@ -397,6 +397,157 @@ def _approval_opts(basis):
 # 금액 축은 1.2k 같은 줄임 표기 대신 1,200 처럼 그대로 보여준다
 _WON_AXIS = dict(title="상한금액(원)", tickformat=",d", separatethousands=True)
 
+# ── 약가 산정 ───────────────────────────────────────────────────────────────
+# 산정 비율(제도 바뀌면 여기만 고치면 된다). 기준가는 '같은 제제 중 최고가'.
+CALC_RATE = {"salt": .90, "salt_adj": 1.00, "dose": 1.00, "dose_adj": 1.10,
+             "addon": .70, "improved": .70, "dataonly": .60, "after": .45,
+             "gen_base": .45, "gen_innov": .60, "gen_semi": .50,
+             "combo_base": .45, "combo_imp": .60, "combo_innov": .68}
+MP_LIMIT, MP_RATE = 13, .85      # 다품목 등재: 13개 이상 → 1년 뒤 직전 최저가의 85%
+
+def _calc_phases(ty, base, opt):
+    """유형별 단계 목록 [(이름, 기간, 비율)] 과 안내문."""
+    R, ph = CALC_RATE, []
+    if ty.startswith("①"):
+        salt = opt["sub"].startswith("염")
+        init = R["salt"] if salt else R["dose"]
+        mult = R["salt_adj"] if salt else R["dose_adj"]
+        ph.append(("최초 등재", "1년" if opt["adj"] else "이후", init))
+        if opt["adj"]:
+            ph.append(("최초등재 가산", "1년", R["addon"] * mult))
+            imp = opt["imp"].startswith("개량")
+            ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
+                       (R["improved"] if imp else R["dataonly"]) * mult))
+            ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"] * mult))
+        return ph, "조정 이후 단계는 기준가 × 단계비율 × 조정시비율로 계산했습니다."
+    if ty.startswith("②"):
+        rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
+        if opt["mp"]:
+            ph.append(("등재 ~ 1년", "1년", rate))
+            ph.append(("1년 뒤 — 15% 인하", "이후",
+                       (opt["low"] * MP_RATE / base) if base else 0))
+            return ph, ("다품목 등재를 적용했습니다(1년 뒤 15% 인하, 한 번). "
+                        "가산과 함께 걸릴 때의 선후관계는 확인이 필요합니다.")
+        if rate == R["gen_base"]:
+            ph.append(("기본 산정", "이후", rate))
+        else:
+            ph.append(("가산 1년", "1년", rate))
+            if opt["ext"]:
+                ph.append(("가산 연장", "3년", rate))
+            ph.append((f"가산 종료 후 ({R['gen_base']*100:.0f}%)", "이후", R["gen_base"]))
+        return ph, "등재 순번에 따른 계단식 인하는 반영하지 않았습니다."
+    rate = {"제": R["combo_base"], "개": R["combo_imp"]}[opt["ct"][0]]
+    if "혁신형" in opt["ct"]:
+        rate = R["combo_innov"]
+    if rate == R["combo_base"]:
+        ph.append(("기본 산정", "이후", rate))
+    else:
+        ph.append(("가산 1년", "1년", rate))
+        if opt["ext"]:
+            ph.append(("가산 연장", "3년", rate))
+        ph.append((f"가산 종료 후 ({R['combo_base']*100:.0f}%)", "이후", R["combo_base"]))
+    return ph, "성분별 금액은 해당 단일제의 산정 기준가를 씁니다."
+
+def _price_calc_page():
+    """유형별 예상 상한금액. 기준가는 같은 제제(성분·함량·제형) 최고가에서 자동으로 채운다."""
+    if not ss.price_group_ready():
+        st.info("약가 자료에 '제제코드'가 아직 없습니다. 새벽 자동 갱신이 한 번 돌면 사용할 수 있습니다.\n\n"
+                "(고시 엑셀에서 '주성분코드_동일제형'을 받아오도록 바뀌었고, 다음 갱신부터 채워집니다.)")
+        return
+    gsum = ss.price_groups()
+    if gsum.empty:
+        st.warning("묶을 수 있는 약가 자료가 없습니다.")
+        return
+    st.markdown("**🧮 유형별 예상 상한금액** · 기준가는 같은 성분·함량·제형 묶음의 "
+                "**최고가**에서 자동으로 채웁니다 (고쳐 쓸 수 있습니다)")
+    ty = st.radio("유형", ["① 단일제 자료제출", "② 제네릭", "③ 복합제"],
+                  horizontal=True, key="calc_ty")
+
+    pool = gsum
+    if ty.startswith("③"):
+        pool = pool[pd.to_numeric(pool["성분수"], errors="coerce").fillna(1) > 1]
+    c1, c2 = st.columns([1, 2])
+    kw = c1.text_input("성분 검색", key="calc_kw", placeholder="성분명 일부 (예: atorvastatin)")
+    if kw:
+        pool = pool[pool["성분명"].astype(str).str.contains(kw, case=False, na=False, regex=False)]
+    if pool.empty:
+        st.warning("조건에 맞는 성분이 없습니다. 검색어를 지우거나 바꿔보세요.")
+        return
+    pool = pool.sort_values("품목수", ascending=False)
+    opts = pool["라벨"].tolist()[:300]
+    sel = c2.selectbox(f"성분 선택 ({len(pool):,}개 묶음 중 상위 {len(opts)}개)", opts, key="calc_sel")
+    row = pool[pool["라벨"] == sel].iloc[0]
+
+    st.markdown(f"**🔎 {row['대표품목']}** · {row['대표업체']}  ·  `{row['제제코드']}`")
+    m = st.columns(5)
+    m[0].metric("기준가 (묶음 최고가)", f"{row['최고가']:,.0f} 원")
+    m[1].metric("등재 품목 수", f"{int(row['품목수'])} 품목")
+    m[2].metric("최저가", f"{row['최저가']:,.0f} 원")
+    m[3].metric("중앙값", f"{row['중앙']:,.0f} 원")
+    m[4].metric("성분 수", f"{row['성분수'] or '—'} 성분")
+    if int(row["단위종류"] or 1) > 1:
+        st.warning(f"이 묶음은 단위가 {int(row['단위종류'])}가지 섞여 있습니다 — "
+                   "최고가가 큰 포장일 수 있으니 확인하세요.")
+
+    yr = ss.price_group_yearly()
+    h = yr[yr["제제코드"] == row["제제코드"]].sort_values("연")
+    if len(h) >= 2:
+        f2 = go.Figure()
+        f2.add_trace(go.Scatter(x=list(h["연"]) + list(h["연"])[::-1],
+                                y=list(h["최고"]) + list(h["최저"])[::-1],
+                                fill="toself", fillcolor="rgba(201,55,107,.15)",
+                                line=dict(width=0), hoverinfo="skip", name="동일제제 가격 범위"))
+        f2.add_trace(go.Scatter(x=h["연"], y=h["최고"], mode="lines+markers", name="최고가 (기준가)",
+                                line=dict(color="#c9376b", width=3, shape="hv")))
+        f2.update_layout(height=300, margin=dict(l=10, r=10, t=36, b=10),
+                         title="연도별 상한금액", yaxis=_WON_AXIS,
+                         legend=dict(orientation="h", y=-0.2), hovermode="x unified")
+        st.plotly_chart(f2, use_container_width=True)
+
+    L, R = st.columns(2)
+    with L:
+        base = st.number_input("기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)",
+                               value=float(row["최고가"]), step=1.0, format="%.0f", key="calc_base")
+        opt = {"sub": "", "imp": "", "adj": True, "co": "혁", "ext": True, "ct": "제",
+               "mp": False, "low": float(row["최저가"])}
+        if ty.startswith("①"):
+            opt["sub"] = st.radio("산정 유형", ["염·이성체 / 신규제형 (90%)", "용법용량 개선 (100%)"],
+                                  key="calc_sub")
+            opt["imp"] = st.radio("개량신약 인정", ["개량신약 (70% · 3년+α)", "자료제출 (60% · 최대 3년)"],
+                                  key="calc_imp")
+            opt["adj"] = st.checkbox("오리지널 약가 조정 발생 (첫 제네릭 등재 등)", value=True, key="calc_adj")
+        elif ty.startswith("②"):
+            opt["co"] = st.radio("기업 유형", ["혁신형 (60%)", "준혁신형 (50%)", "해당 없음 (45%)"],
+                                 key="calc_co")
+            opt["ext"] = st.checkbox("+3년 연장 요건 충족 가정", value=True, key="calc_ext")
+            st.markdown("---")
+            opt["mp"] = st.checkbox(
+                f"**다품목 등재 적용** — 제네릭 등재 시 동일 제제 {MP_LIMIT}개 이상이면 "
+                "등재 1년 뒤 직전 최저가에서 15% 인하", value=False, key="calc_mp")
+            st.caption(f"참고: 지금 동일제제 {int(row['품목수'])}품목 · 최저가 {row['최저가']:,.0f}원 "
+                       "— 진입 시점의 품목수는 달라집니다. 적용 여부는 직접 정하세요.")
+            if opt["mp"]:
+                opt["low"] = st.number_input("직전 최저가 (자동 채움 · 고쳐 쓸 수 있음)",
+                                             value=float(row["최저가"]), step=1.0,
+                                             format="%.0f", key="calc_low")
+                st.caption("내 앞서 들어온 품목이 이미 15% 인하를 받았다면, 그 내려간 가격을 넣으세요.")
+        else:
+            opt["ct"] = st.radio("복합제 유형", ["제네릭/자료제출 (45%)", "개량신약 복합제 (60%)",
+                                             "개량신약 복합제 + 혁신형 (68%)"], key="calc_ct")
+            opt["ext"] = st.checkbox("+3년 연장 요건 충족 가정", value=True, key="calc_ext2")
+
+    phases, note = _calc_phases(ty, base, opt)
+    with R:
+        st.metric("등재 시 예상 상한금액", f"{int(base * phases[0][2]):,} 원",
+                  delta=f"기준가 대비 {phases[0][2]*100:.2f}%", delta_color="off")
+        st.dataframe(pd.DataFrame([{"단계": n, "기간": y, "비율": f"{r*100:.2f}%",
+                                    "상한금액": f"{int(base*r):,} 원"} for n, y, r in phases]),
+                     use_container_width=True, hide_index=True)
+        st.caption("산정 근거")
+        st.code("\n".join(f"{n}: {base:,.0f} × {r*100:.2f}% = {int(base*r):,}원"
+                          for n, y, r in phases), language=None)
+    st.caption(note + "  산정 비율은 제도 변경 시 코드 상단 CALC_RATE 에서 고칩니다.")
+
 @st.cache_data(show_spinner="약가 품목 준비 중…")
 def _price_name_opts():
     """약가표의 제품명 목록. 제품명에 함량·포장이 들어 있어(…_(56.64mg/8mL)) 함량을
@@ -1253,6 +1404,11 @@ if PAGE == "price":
         st.info("약가 데이터 미연결")
     else:
         pr = ss.load_price()
+        _mode = st.radio("보기", ["약가 조회", "약가 산정"], horizontal=True,
+                         key="price_mode", label_visibility="collapsed")
+        if _mode == "약가 산정":
+            _price_calc_page()
+            st.stop()
         # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
         st.markdown("**🔎 약가 변동 그래프** · 성분=동일성분 오리지널(신약) 기준, "
                     "제품=고른 품목 하나(함량·포장까지 구분)")

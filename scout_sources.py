@@ -421,6 +421,62 @@ def price_by_key():
     g = latest.groupby("_key")
     return pd.DataFrame({"약가중앙값": g["금액"].median(), "약가품목수": g.size()}).reset_index()
 
+def price_group_ready():
+    """약가 자료에 '제제코드'(주성분코드_동일제형)가 들어 있는지.
+    고시 엑셀을 새로 읽은 뒤부터 채워진다. 없으면 약가 산정 화면을 열 수 없다."""
+    if not price_available():
+        return False
+    p = load_price()
+    return "제제코드" in p.columns and (p["제제코드"].astype(str).str.len() > 0).any()
+
+@st.cache_data(show_spinner="약가 묶음 정리 중…")
+def price_groups():
+    """제제코드(성분·함량·제형)별 요약 — 최고가·최저가·중앙값·품목수.
+    기준가는 '같은 제제 중 최고가'를 쓴다(오리지널 표시가 허가자료에 거의 없어서)."""
+    cols = ["제제코드", "성분명", "성분수", "최고가", "최저가", "중앙", "품목수",
+            "단위종류", "단위", "투여", "대표품목", "대표업체", "라벨"]
+    if not price_group_ready():
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
+    pr = load_price()
+    pr = pr[pr["제제코드"].astype(str).str.len() > 0]
+    if "급여구분" in pr.columns:
+        pr = pr[pr["급여구분"] == "급여"]
+    if pr.empty:
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
+    latest = pr.sort_values("적용일자").groupby("제품코드", as_index=False).last()
+    g = latest.groupby("제제코드")
+    out = pd.DataFrame({
+        "성분명": g["주성분명"].first(),
+        "성분수": g["성분수"].first() if "성분수" in latest.columns else "",
+        "최고가": g["금액"].max(), "최저가": g["금액"].min(),
+        "중앙": g["금액"].median(), "품목수": g.size(),
+        "단위종류": g["단위"].nunique() if "단위" in latest.columns else 1,
+        "단위": g["단위"].first() if "단위" in latest.columns else "",
+        "투여": g["투여"].first() if "투여" in latest.columns else "",
+    }).reset_index()
+    top = (latest.sort_values("금액", ascending=False)
+                 .groupby("제제코드", as_index=False).first()[["제제코드", "제품명", "업체명"]]
+                 .rename(columns={"제품명": "대표품목", "업체명": "대표업체"}))
+    out = out.merge(top, on="제제코드", how="left")
+    out["라벨"] = (out["성분명"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip()
+                 + "  ·  " + out["품목수"].astype(int).astype(str) + "품목")
+    return out
+
+@st.cache_data(show_spinner=False)
+def price_group_yearly():
+    """제제코드별 연도말 최고가·최저가 (약가 산정 화면의 연도별 그래프용)."""
+    if not price_group_ready():
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제제코드", "연", "최고", "최저"]})
+    pr = load_price()
+    pr = pr[pr["제제코드"].astype(str).str.len() > 0]
+    if "급여구분" in pr.columns:
+        pr = pr[pr["급여구분"] == "급여"]
+    if pr.empty:
+        return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제제코드", "연", "최고", "최저"]})
+    pr = pr.assign(연=pd.to_datetime(pr["적용일자"], errors="coerce").dt.year)
+    return (pr.dropna(subset=["연"]).groupby(["제제코드", "연"])["금액"]
+              .agg(최고="max", 최저="min").reset_index())
+
 def nego_available():
     if not (SD / "nego.parquet").exists():
         _ensure("nego")
