@@ -394,6 +394,9 @@ def _approval_opts(basis):
         return []
     return sorted({c for c in (_ing_core(x) for x in ap["주성분"].dropna()) if len(c) >= 2})
 
+# 금액 축은 1.2k 같은 줄임 표기 대신 1,200 처럼 그대로 보여준다
+_WON_AXIS = dict(title="상한금액(원)", tickformat=",d", separatethousands=True)
+
 @st.cache_data(show_spinner="약가 품목 준비 중…")
 def _price_name_opts():
     """약가표의 제품명 목록. 제품명에 함량·포장이 들어 있어(…_(56.64mg/8mL)) 함량을
@@ -423,13 +426,10 @@ def _sel_cores(basis, sel):
 
 def _price_trend_codes(pr, basis, term):
     """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
-    if basis == "제품(함량별)":
-        # 약가표 제품명과 정확히 일치하는 한 품목만. 21만 행을 글자 검색하지 않는다.
-        sub = pr[pr["제품명"].astype(str) == str(term)]
-        return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
     if basis == "제품":
-        tn = re.sub(r"\s+", "", str(term))
-        sub = pr[_nospace(pr["제품명"]).str.contains(tn, case=False, na=False, regex=False)]
+        # 약가표 제품명과 정확히 일치하는 한 품목만(제품명에 함량·포장이 들어 있다).
+        # 예전처럼 글자 포함 검색을 하면 같은 이름의 다른 함량이 섞여 나온다.
+        sub = pr[pr["제품명"].astype(str) == str(term)]
         return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
     # 성분: 코어(염/코드 제거) 기준으로 오리지널 우선, 없으면 동일성분 전체
     core = _ing_core(term)
@@ -824,7 +824,7 @@ if PAGE == "search":
                                       marker=dict(color="green", symbol="triangle-up", size=8, opacity=0.5), name="동일성분 등재(허가)",
                                       text=appr["품목명"], hovertemplate="%{x|%Y-%m-%d} 등재<br>%{text}<extra></extra>"))
                     fig.update_layout(height=440, title=f"{sel} — 급여 상한금액 전체 이력 + 등재·특허 만료",
-                                      yaxis_title="상한금액(원)", legend=dict(orientation="h", y=-0.25), hovermode="x unified")
+                                      yaxis=_WON_AXIS, legend=dict(orientation="h", y=-0.25), hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption("파란선=선택 품목 · 회색=동일성분 타 품목 · 초록△=동일성분 등재(허가) · 빨강=물질특허만료 · 주황=용도특허만료 · ✕=급여삭제")
                     if not one_gy.empty:
@@ -1254,14 +1254,12 @@ if PAGE == "price":
     else:
         pr = ss.load_price()
         # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
-        st.markdown("**🔎 약가 변동 그래프** · 성분=오리지널(신약) 기준, 제품=같은 이름 전부, "
-                    "제품(함량별)=고른 함량 하나만")
-        _pc = st.columns([1.2, 1, 2])
-        _pbasis = _pc[0].radio("기준", ["성분", "제품", "제품(함량별)"],
-                               key="ptrend_basis", horizontal=True)
-        _byspec = _pbasis == "제품(함량별)"
-        _popts = _price_name_opts() if _byspec else \
-            _approval_opts("주성분" if _pbasis == "성분" else "제품명")
+        st.markdown("**🔎 약가 변동 그래프** · 성분=동일성분 오리지널(신약) 기준, "
+                    "제품=고른 품목 하나(함량·포장까지 구분)")
+        _pc = st.columns([1, 1, 2])
+        _pbasis = _pc[0].radio("기준", ["성분", "제품"], key="ptrend_basis", horizontal=True)
+        _byspec = _pbasis == "제품"
+        _popts = _price_name_opts() if _byspec else _approval_opts("주성분")
         _pkw = _pc[1].text_input(f"{_pbasis} 검색어", key="ptrend_kw", placeholder="일부만 입력")
         _pfo = _filter_opts(_popts, _pkw)
         _psel = _pc[2].selectbox(
@@ -1286,7 +1284,7 @@ if PAGE == "price":
                 for _nm, _g in _h[_h["제품명"].isin(_show)].groupby("제품명"):
                     _fig.add_trace(go.Scatter(x=_g["적용일자"], y=_g["금액"], mode="lines+markers",
                                               name=str(_nm)[:26], line_shape="hv"))
-                _fig.update_layout(height=430, title=_title, yaxis_title="상한금액(원)",
+                _fig.update_layout(height=430, title=_title, yaxis=_WON_AXIS,
                                    legend=dict(orientation="h", y=-0.3), hovermode="x unified")
                 st.plotly_chart(_fig, use_container_width=True)
                 st.caption(f"대상 품목 {_h['제품코드'].nunique()}개 · 그래프는 이력 많은 상위 30개 표시")
@@ -1330,7 +1328,7 @@ if PAGE == "price":
                         figo = go.Figure()
                         for nm, g in oh.groupby("제품명"):
                             figo.add_trace(go.Scatter(x=g["적용일자"], y=g["금액"], mode="lines+markers", name=nm[:24], line_shape="hv"))
-                        figo.update_layout(height=360, title="오리지널(신약) 상한금액 추이", yaxis_title="상한금액(원)", legend=dict(orientation="h", y=-0.3))
+                        figo.update_layout(height=360, title="오리지널(신약) 상한금액 추이", yaxis=_WON_AXIS, legend=dict(orientation="h", y=-0.3))
                         st.plotly_chart(figo, use_container_width=True)
                     else:
                         st.caption(f"오리지널 {len(ocodes)}개 — 그래프는 40개 이하로 좁혀야 표시됩니다.")
