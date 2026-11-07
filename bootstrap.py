@@ -326,6 +326,13 @@ def _price_from_folder(drive):
             continue  # 약가 파일이 아님
         name_c = _find(df.columns, ["제품명"])
         ing_c = _find(df.columns, ["주성분명"])
+        # 고시 파일에만 있는 열들. 특히 '주성분코드_동일제형'은 성분·함량·제형을
+        # 하나로 묶은 공식 코드라, 같은 제제를 글자 파싱 없이 정확히 묶을 수 있다.
+        grp_c = _find(df.columns, ["주성분코드_동일제형", "주성분코드동일제형"])
+        cnt_c = _find(df.columns, ["주성분개수", "주성분 개수"])
+        spec_c = _find(df.columns, ["규격"])
+        unit_c = _find(df.columns, ["단위"])
+        _col = lambda c: df[c].astype(str).str.strip() if c else ""
         out = pd.DataFrame({
             "제품코드": df[code_c].astype(str).str.strip(),
             "제품명": df[name_c].astype(str) if name_c else "",
@@ -333,6 +340,10 @@ def _price_from_folder(drive):
             "금액": df[amt_c].astype(str).str.replace(r"[^0-9.]", "", regex=True),
             "적용일자": d.strftime("%Y-%m-%d"),
             "급여구분": "급여",
+            "제제코드": _col(grp_c),      # 주성분코드_동일제형 (예: 429030ASY)
+            "성분수": _col(cnt_c),        # 1이면 단일제, 2 이상이면 복합제
+            "규격": _col(spec_c),
+            "단위": _col(unit_c),
         })
         out = out[out["제품코드"] != ""]
         frames.append(out)
@@ -503,6 +514,22 @@ def _do_build(include_sales=False, force=False, only=None):
                     merged = pd.concat([base, fc], ignore_index=True)
             except Exception:
                 merged = base   # 폴더 처리 실패 시 기존 이력만 사용(안전)
+            # 예전 가격이력에는 제제코드 등이 없다. 제품코드 하나는 제제코드 하나에
+            # 대응하므로(성분·함량은 바뀌지 않는다), 고시에서 만든 대응표를 과거 행에도 붙인다.
+            try:
+                if folder is not None and not folder.empty and "제제코드" in folder.columns:
+                    ref = (folder[folder["제제코드"].astype(str) != ""]
+                           .sort_values("적용일자")
+                           .drop_duplicates("제품코드", keep="last")
+                           .set_index("제품코드")[["제제코드", "성분수", "규격", "단위"]])
+                    key = merged["제품코드"].astype(str)
+                    for c in ("제제코드", "성분수", "규격", "단위"):
+                        got = key.map(ref[c])
+                        merged[c] = (merged[c].astype(str).replace({"nan": ""}).where(
+                            lambda s: s.str.len() > 0, got) if c in merged.columns else got)
+                        merged[c] = merged[c].fillna("")
+            except Exception:
+                pass            # 대응표 실패해도 기존 동작은 그대로
             try:
                 import scout_sources as _ss
                 _ss.enrich_price(merged)

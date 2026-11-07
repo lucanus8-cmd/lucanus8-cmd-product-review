@@ -394,6 +394,15 @@ def _approval_opts(basis):
         return []
     return sorted({c for c in (_ing_core(x) for x in ap["주성분"].dropna()) if len(c) >= 2})
 
+@st.cache_data(show_spinner="약가 품목 준비 중…")
+def _price_name_opts():
+    """약가표의 제품명 목록. 제품명에 함량·포장이 들어 있어(…_(56.64mg/8mL)) 함량을
+    하나씩 골라볼 수 있다. 허가 품목명으로 고르면 같은 이름의 여러 함량이 섞여 나온다."""
+    if not HAS_PRICE:
+        return []
+    s = ss.load_price()["제품명"].dropna().astype(str).str.strip()
+    return sorted({x for x in s if x})
+
 def _filter_opts(opts, kw, cap=300):
     """검색어로 옵션을 좁혀 상위 cap개만 반환(대용량 목록 셀렉트박스 버벅임 방지). 띄어쓰기 무시."""
     if not kw:
@@ -414,6 +423,10 @@ def _sel_cores(basis, sel):
 
 def _price_trend_codes(pr, basis, term):
     """약가 변동 그래프 대상 제품코드 결정. 성분→오리지널(신약), 제품→해당 제품."""
+    if basis == "제품(함량별)":
+        # 약가표 제품명과 정확히 일치하는 한 품목만. 21만 행을 글자 검색하지 않는다.
+        sub = pr[pr["제품명"].astype(str) == str(term)]
+        return sub["제품코드"].dropna().unique().tolist(), f"{term} 약가 변동"
     if basis == "제품":
         tn = re.sub(r"\s+", "", str(term))
         sub = pr[_nospace(pr["제품명"]).str.contains(tn, case=False, na=False, regex=False)]
@@ -1241,16 +1254,29 @@ if PAGE == "price":
     else:
         pr = ss.load_price()
         # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
-        st.markdown("**🔎 약가 변동 그래프** · 성분 선택 시 오리지널(신약) 기준, 제품 선택 시 해당 제품")
-        _pc = st.columns([1, 1, 2])
-        _pbasis = _pc[0].radio("기준", ["성분", "제품"], key="ptrend_basis", horizontal=True)
-        _popts = _approval_opts("주성분" if _pbasis == "성분" else "제품명")
+        st.markdown("**🔎 약가 변동 그래프** · 성분=오리지널(신약) 기준, 제품=같은 이름 전부, "
+                    "제품(함량별)=고른 함량 하나만")
+        _pc = st.columns([1.2, 1, 2])
+        _pbasis = _pc[0].radio("기준", ["성분", "제품", "제품(함량별)"],
+                               key="ptrend_basis", horizontal=True)
+        _byspec = _pbasis == "제품(함량별)"
+        _popts = _price_name_opts() if _byspec else \
+            _approval_opts("주성분" if _pbasis == "성분" else "제품명")
         _pkw = _pc[1].text_input(f"{_pbasis} 검색어", key="ptrend_kw", placeholder="일부만 입력")
         _pfo = _filter_opts(_popts, _pkw)
-        _psel = _pc[2].selectbox(f"허가 {_pbasis} 선택 ({len(_popts):,}개 중 검색)",
-                                 ["(선택하세요)"] + _pfo, key="ptrend_sel")
+        _psel = _pc[2].selectbox(
+            f"{'약가' if _byspec else '허가'} {_pbasis} 선택 ({len(_popts):,}개 중 검색)",
+            ["(선택하세요)"] + _pfo, key="ptrend_sel")
         if _psel and _psel != "(선택하세요)" and "급여구분" in pr.columns:
             _codes, _title = _price_trend_codes(pr, _pbasis, _psel)
+            # 같은 성분·함량·제형 묶음(제제코드)이 있으면 경쟁 품목 수를 같이 알려준다
+            if _byspec and "제제코드" in pr.columns:
+                _gc = pr.loc[pr["제품명"].astype(str) == _psel, "제제코드"].astype(str)
+                _gc = _gc[_gc.str.len() > 0]
+                if not _gc.empty:
+                    _peer = pr.loc[(pr["제제코드"].astype(str) == _gc.iloc[0]) &
+                                   (pr["급여구분"] == "급여"), "제품코드"].nunique()
+                    st.caption(f"동일제제 `{_gc.iloc[0]}` · 같은 성분·함량·제형 급여 품목 {_peer}개")
             _h = pr[(pr["제품코드"].isin(_codes)) & (pr["급여구분"] == "급여")].sort_values("적용일자")
             if _h.empty:
                 st.info("해당 급여 약가 이력이 없습니다.")
