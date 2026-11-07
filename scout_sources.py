@@ -425,7 +425,9 @@ def price_by_key():
 def price_latest():
     """제품코드별 '가장 최근 고시' 한 줄만 남긴 표. 접속자마다 다시 만들지 않도록 캐시한다."""
     pr = load_price()
-    return pr.sort_values("적용일자").groupby("제품코드", as_index=False).last()
+    # .last() 를 쓰면 열마다 '마지막으로 값이 있던 칸'을 가져와 옛 행의 값이 섞인다.
+    # 실제 마지막 행 그대로여야 하므로 .tail(1) 을 쓴다(기존 화면과 동일한 결과).
+    return pr.sort_values("적용일자").groupby("제품코드").tail(1).copy()
 
 @st.cache_data(show_spinner=False)
 def price_first_last():
@@ -463,7 +465,7 @@ def price_groups():
         pr = pr[pr["급여구분"] == "급여"]
     if pr.empty:
         return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
-    latest = pr.sort_values("적용일자").groupby("제품코드", as_index=False).last()
+    latest = pr.sort_values("적용일자").groupby("제품코드").tail(1)
     g = latest.groupby("제제코드")
     out = pd.DataFrame({
         "성분명": g["주성분명"].first(),
