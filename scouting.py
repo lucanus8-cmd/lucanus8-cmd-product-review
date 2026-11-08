@@ -415,16 +415,17 @@ def _calc_phases(ty, base, opt):
         salt = opt["sub"].startswith("염")
         imp = opt["imp"].startswith("개량")
         if not opt["adj"]:
-            # 기준가가 아직 조정되지 않은 오리지널 가격이면, 조정 전까지는 산정 비율 그대로
-            ph.append(("최초 등재 (조정 전)", "1년", R["salt"] if salt else R["dose"]))
-        # 조정된 가격 기준이면 여기서 시작한다 — 현재 약가의 70%
+            # 오리지널이 아직 조정되지 않았으면 산정 비율을 계속 유지한다.
+            init = R["salt"] if salt else R["dose"]
+            ph.append(("최초 등재 (조정 전 유지)", "이후", init))
+            return ph, (f"오리지널이 조정되지 않은 상태로 보고 {init*100:.0f}% 를 계속 적용했습니다. "
+                        "조정이 일어나면 위 체크를 켜세요.")
+        # 조정된 현재 약가 기준 — 70% 부터 시작해 가산이 끝나면 45%
         ph.append(("최초등재 가산", "1년", R["addon"]))
         ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
                    R["improved"] if imp else R["dataonly"]))
         ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
-        _base = "이미 조정된 가격" if opt["adj"] else "조정 전 가격"
-        return ph, (f"기준가를 '{_base}'으로 봤습니다. "
-                    "조정된 가격 기준이면 70% 부터 시작합니다.")
+        return ph, "조정된 오리지널 약가 기준으로 70% → 가산 → 45% 순으로 계산했습니다."
     if ty.startswith("②"):
         rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
         if opt["mp"]:
