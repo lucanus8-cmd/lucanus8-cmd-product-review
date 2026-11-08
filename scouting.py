@@ -412,14 +412,18 @@ def _calc_phases(ty, base, opt):
         salt = opt["sub"].startswith("염")
         init = R["salt"] if salt else R["dose"]
         mult = R["salt_adj"] if salt else R["dose_adj"]
-        ph.append(("최초 등재", "1년" if opt["adj"] else "이후", init))
-        if opt["adj"]:
-            ph.append(("최초등재 가산", "1년", R["addon"] * mult))
-            imp = opt["imp"].startswith("개량")
-            ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
-                       (R["improved"] if imp else R["dataonly"]) * mult))
-            ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"] * mult))
-        return ph, "조정 이후 단계는 기준가 × 단계비율 × 조정시비율로 계산했습니다."
+        if not opt["adj"]:
+            ph.append(("최초 등재", "이후", init))
+            return ph, "오리지널 약가 조정이 없다고 보고 최초 등재 비율만 적용했습니다."
+        # 오리지널이 조정되면 가산은 그 즉시 걸린다 — 1년 뒤가 아니다.
+        # 따라서 조정 가정 시에는 최초 등재 구간 없이 가산부터 시작한다.
+        imp = opt["imp"].startswith("개량")
+        ph.append(("최초등재 가산 (조정 즉시)", "1년", R["addon"] * mult))
+        ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
+                   (R["improved"] if imp else R["dataonly"]) * mult))
+        ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"] * mult))
+        return ph, ("오리지널 조정 시 가산은 즉시 적용됩니다. "
+                    "각 단계는 기준가 × 단계비율 × 조정시비율로 계산했습니다.")
     if ty.startswith("②"):
         rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
         if opt["mp"]:
