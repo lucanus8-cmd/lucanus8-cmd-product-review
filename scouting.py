@@ -399,12 +399,8 @@ _WON_AXIS = dict(title="상한금액(원)", tickformat=",d", separatethousands=T
 
 # ── 약가 산정 ───────────────────────────────────────────────────────────────
 # 산정 비율(제도 바뀌면 여기만 고치면 된다). 기준가는 '같은 제제 중 최고가'.
-# 약가는 '산정 → 조정 → 가산' 순서로 매겨진다.
-#   산정: 오리지널 기준가 대비 비율 (기준가가 조정 전이냐 후냐에 따라 다름)
-#   조정: 제네릭이 들어오면 45% 로 조정
-#   가산: 오리지널 약가의 25%(개량신약) 또는 15%(자료제출)를 더함 → 70% / 60%
 CALC_RATE = {"salt": .90, "salt_adj": 1.00, "dose": 1.00, "dose_adj": 1.10,
-             "adjust": .45, "bonus_imp": .25, "bonus_data": .15,
+             "addon": .70, "improved": .70, "dataonly": .60, "after": .45,
              "gen_base": .45, "gen_innov": .60, "gen_semi": .50,
              "combo_base": .45, "combo_imp": .60, "combo_innov": .68}
 MP_LIMIT, MP_RATE = 13, .85      # 다품목 등재: 13개 이상 → 1년 뒤 직전 최저가의 85%
@@ -418,21 +414,18 @@ def _calc_phases(ty, base, opt):
         #   용법용량 개선      : 조정 전 가격 100% / 조정된 가격 110%
         salt = opt["sub"].startswith("염")
         if salt:
-            calc = R["salt_adj"] if opt["adj"] else R["salt"]
+            init = R["salt_adj"] if opt["adj"] else R["salt"]
         else:
-            calc = R["dose_adj"] if opt["adj"] else R["dose"]
+            init = R["dose_adj"] if opt["adj"] else R["dose"]
         imp = opt["imp"].startswith("개량")
-        bonus = R["bonus_imp"] if imp else R["bonus_data"]
-        listed = R["adjust"] + bonus          # 45% + 25%(또는 15%)
-        ph.append((f"등재 (조정 {R['adjust']*100:.0f}% + 가산 {bonus*100:.0f}%)",
-                   "4년" if imp else "3년", listed))
-        ph.append((f"가산 종료 후 ({R['adjust']*100:.0f}%)", "이후", R["adjust"]))
+        # 제네릭이 들어오면 오리지널은 그 즉시 조정되므로 가산도 바로 시작한다.
+        ph.append(("등재 (산정 비율)", "1년", init))
+        ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
+                   R["improved"] if imp else R["dataonly"]))
+        ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
         _base = "이미 조정된 가격" if opt["adj"] else "조정 전 가격"
-        steps = [("① 산정", calc, f"기준가를 '{_base}'으로 봄"),
-                 ("② 조정", R["adjust"], "제네릭 진입으로 45% 로 조정"),
-                 ("③ 가산", bonus, "개량신약" if imp else "자료제출")]
-        return ph, (f"산정 → 조정 → 가산 순서로 계산합니다. 등재가는 조정 45% 에 "
-                    f"가산 {bonus*100:.0f}% 를 더한 {listed*100:.0f}% 입니다."), steps
+        return ph, (f"기준가를 '{_base}'으로 보고 {init*100:.0f}% 를 적용했습니다. "
+                    "가산은 조정과 동시에 시작하는 것으로 그렸습니다.")
     if ty.startswith("②"):
         rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
         if opt["mp"]:
@@ -440,7 +433,7 @@ def _calc_phases(ty, base, opt):
             ph.append(("1년 뒤 — 15% 인하", "이후",
                        (opt["low"] * MP_RATE / base) if base else 0))
             return ph, ("다품목 등재를 적용했습니다(1년 뒤 15% 인하, 한 번). "
-                        "가산과 함께 걸릴 때의 선후관계는 확인이 필요합니다."), None
+                        "가산과 함께 걸릴 때의 선후관계는 확인이 필요합니다.")
         if rate == R["gen_base"]:
             ph.append(("기본 산정", "이후", rate))
         else:
@@ -448,7 +441,7 @@ def _calc_phases(ty, base, opt):
             if opt["ext"]:
                 ph.append(("가산 연장", "3년", rate))
             ph.append((f"가산 종료 후 ({R['gen_base']*100:.0f}%)", "이후", R["gen_base"]))
-        return ph, "등재 순번에 따른 계단식 인하는 반영하지 않았습니다.", None
+        return ph, "등재 순번에 따른 계단식 인하는 반영하지 않았습니다."
     rate = {"제": R["combo_base"], "개": R["combo_imp"]}[opt["ct"][0]]
     if "혁신형" in opt["ct"]:
         rate = R["combo_innov"]
@@ -459,7 +452,7 @@ def _calc_phases(ty, base, opt):
         if opt["ext"]:
             ph.append(("가산 연장", "3년", rate))
         ph.append((f"가산 종료 후 ({R['combo_base']*100:.0f}%)", "이후", R["combo_base"]))
-    return ph, "성분별 금액은 해당 단일제의 산정 기준가를 씁니다.", None
+    return ph, "성분별 금액은 해당 단일제의 산정 기준가를 씁니다."
 
 def _calc_chart(base, phases):
     """단계별 예상 상한금액을 계단 그래프로. '이후' 구간은 2년 폭으로 그린다."""
@@ -600,18 +593,10 @@ def _price_calc_page():
                                              "개량신약 복합제 + 혁신형 (68%)"], key="calc_ct")
             opt["ext"] = st.checkbox("+3년 연장 요건 충족 가정", value=True, key="calc_ext2")
 
-    phases, note, steps = _calc_phases(ty, base, opt)
+    phases, note = _calc_phases(ty, base, opt)
     with R:
         st.metric("등재 시 예상 상한금액", f"{int(base * phases[0][2]):,} 원",
                   delta=f"기준가 대비 {phases[0][2]*100:.2f}%", delta_color="off")
-        if steps:
-            st.caption("산정 과정 — 산정 → 조정 → 가산")
-            st.dataframe(pd.DataFrame(
-                [{"단계": n, "비율": f"{r*100:.0f}%", "금액": f"{int(base*r):,} 원", "설명": d}
-                 for n, r, d in steps]
-                + [{"단계": "= 등재가", "비율": f"{phases[0][2]*100:.0f}%",
-                    "금액": f"{int(base*phases[0][2]):,} 원", "설명": "조정 + 가산"}]),
-                use_container_width=True, hide_index=True)
         if base > 0:
             st.plotly_chart(_calc_chart(base, phases), use_container_width=True)
         st.dataframe(pd.DataFrame([{"단계": n, "기간": y, "비율": f"{r*100:.2f}%",
