@@ -394,6 +394,32 @@ def _approval_opts(basis):
         return []
     return sorted({c for c in (_ing_core(x) for x in ap["주성분"].dropna()) if len(c) >= 2})
 
+def _edi_codes(v):
+    """허가시트의 보험코드(EDI)에서 9자리 코드들을 뽑는다.
+
+    한 품목에 포장단위별로 코드가 여러 개면 식약처는 쉼표로 이어 준다.
+    그런데 시트가 그 값을 '숫자'로 인식하면 1,000 단위 쉼표가 찍히고
+    (645,100,922,645,100,000) 유효자리 15자리를 넘는 뒷부분이 0 으로
+    뭉개져 되살릴 수 없다. 그 경우 앞 9자리(첫 코드)만 쓴다 —
+    9자리씩 쪼개면 645100000 같은 없는 코드가 만들어져 매출이 잘못 붙는다.
+    텍스트로 제대로 들어온 값은 쉼표로 끊어 전부 쓴다.
+    """
+    raw = str(v).strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):   # 숫자로 뭉개진 값
+        d = re.sub(r"\D", "", raw)
+        if len(d) % 9 == 8:          # 앞자리 0 이 깎인 경우
+            d = "0" + d
+        return {d[:9]} if len(d) >= 9 else set()
+    out = set()
+    for p in parts:
+        d = re.sub(r"\D", "", p)
+        if len(d) == 9:
+            out.add(d)
+        elif len(d) == 8:
+            out.add("0" + d)
+    return out
+
 # 금액 축은 1.2k 같은 줄임 표기 대신 1,200 처럼 그대로 보여준다
 _WON_AXIS = dict(title="상한금액(원)", tickformat=",d", separatethousands=True)
 
@@ -819,16 +845,16 @@ if PAGE == "search":
     if HAS_REG and (cores or basis == "제품명"):
         _ap0 = ss.load_approval()
         _edic = next((c for c in ["보험코드(EDI)", "보험코드", "보험EDI코드", "EDI코드", "주보험코드"] if c in _ap0.columns), None)
-        _digits = lambda s: re.sub(r"\D", "", str(s))
         if basis == "제품명" and _edic:
-            edis_self = {_digits(x) for x in _ap0[_ap0.get("품목명", pd.Series(dtype=str)).astype(str) == q][_edic].dropna()}
+            edis_self = {e for x in _ap0[_ap0.get("품목명", pd.Series(dtype=str)).astype(str) == q][_edic].dropna()
+                         for e in _edi_codes(x)}
         if cores:
             _ac = (_ap0["_core"] if "_core" in _ap0.columns
                    else ss.ing_core_series(_ap0.get("주성분", pd.Series(dtype=str))))
             _same = _ap0[_ac.isin(cores)]
             ing_keys |= {k for k in (ss.ing_key(x) for x in _same.get("주성분(영문)", pd.Series(dtype=str)).dropna()) if k}
             if _edic:
-                edis_same = {_digits(x) for x in _same[_edic].dropna()}
+                edis_same = {e for x in _same[_edic].dropna() for e in _edi_codes(x)}
         edis_self = {e for e in edis_self if len(e) >= 6}
         edis_same = {e for e in edis_same if len(e) >= 6}
     # 허가자료에 영문 성분명이 비어 있는 성분(신약 중 더러 있음)은 위에서 영문키를 못 만든다.
