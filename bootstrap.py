@@ -530,6 +530,10 @@ def _do_build(include_sales=False, force=False, only=None):
                         merged[c] = (merged[c].astype(str).replace({"nan": ""}).where(
                             lambda s: s.str.len() > 0, got) if c in merged.columns else got)
                         merged[c] = merged[c].fillna("")
+                    # 비고는 과거 이력에 없던 열이라 concat 뒤 결측이 남는다. 결측이
+                    # 섞이면 특이사항을 모을 때 깨지므로 빈 문자열로 맞춘다.
+                    if "비고" in merged.columns:
+                        merged["비고"] = merged["비고"].fillna("")
             except Exception:
                 pass            # 대응표 실패해도 기존 동작은 그대로
             try:

@@ -554,6 +554,8 @@ def _price_calc_page():
         st.warning(f"이 묶음은 단위가 {int(row['단위종류'])}가지 섞여 있습니다 — "
                    "최고가가 큰 포장일 수 있으니 확인하세요.")
     _note = str(row.get("특이사항") or "").strip()
+    if _note.lower() in ("nan", "none", "<na>"):
+        _note = ""
     if _note:
         # 고시 비고에서 '약가유연계약' 과 그 밖의 내용을 나눠서 보여준다
         _parts = [x.strip() for x in _note.split("/") if x.strip()]

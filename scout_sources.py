@@ -412,6 +412,13 @@ def load_price():
     _ensure("price")
     return _load_price(_mtime(SD / "price.parquet"))
 
+def _text(sr):
+    """NA 안전 문자열 변환.
+    pandas 3 의 str dtype 에서는 astype(str) 이 결측(NA)을 문자열로 바꾸지 않고
+    그대로 남긴다. 그 값이 set/join 에 들어가면 TypeError 가 난다."""
+    out = sr.astype("object").where(sr.notna(), "").astype(str).str.strip()
+    return out.mask(out.str.lower().isin(["nan", "none", "<na>", "nat"]), "")
+
 @st.cache_data
 def price_by_key():
     """성분(키)별 최신 급여 상한금액 중앙값 + 품목수 (약가·마진 신호용)."""
@@ -427,7 +434,7 @@ def price_group_ready():
     if not price_available():
         return False
     p = load_price()
-    return "제제코드" in p.columns and (p["제제코드"].astype(str).str.len() > 0).any()
+    return "제제코드" in p.columns and bool((_text(p["제제코드"]).str.len() > 0).any())
 
 @st.cache_data(show_spinner="약가 묶음 정리 중…")
 def price_groups():
@@ -438,7 +445,7 @@ def price_groups():
     if not price_group_ready():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
     pr = load_price()
-    pr = pr[pr["제제코드"].astype(str).str.len() > 0]
+    pr = pr[_text(pr["제제코드"]).str.len() > 0]
     if "급여구분" in pr.columns:
         pr = pr[pr["급여구분"] == "급여"]
     if pr.empty:
@@ -456,8 +463,7 @@ def price_groups():
         "단위": g["단위"].first() if "단위" in latest.columns else "",
         "투여": g["투여"].first() if "투여" in latest.columns else "",
         # 약가유연계약·집행정지 등 — 같은 제제 안에 하나라도 있으면 모아서 알려준다
-        "특이사항": (g["비고"].apply(lambda v: " / ".join(sorted({x for x in v.astype(str)
-                                                               if x and x != "nan"})))
+        "특이사항": (g["비고"].apply(lambda v: " / ".join(sorted(set(_text(v)) - {""})))
                  if "비고" in latest.columns else ""),
     }).reset_index()
     top = (latest.sort_values("금액", ascending=False)
@@ -474,7 +480,7 @@ def price_group_yearly():
     if not price_group_ready():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제제코드", "연", "최고", "최저"]})
     pr = load_price()
-    pr = pr[pr["제제코드"].astype(str).str.len() > 0]
+    pr = pr[_text(pr["제제코드"]).str.len() > 0]
     if "급여구분" in pr.columns:
         pr = pr[pr["급여구분"] == "급여"]
     if pr.empty:
