@@ -409,21 +409,23 @@ def _calc_phases(ty, base, opt):
     """유형별 단계 목록 [(이름, 기간, 비율)] 과 안내문."""
     R, ph = CALC_RATE, []
     if ty.startswith("①"):
+        # 산정 비율은 '넣은 기준가가 이미 조정된 가격인지'로 갈린다.
+        #   염·이성체/신규제형 : 조정 전 가격 90%  / 조정된 가격 100%
+        #   용법용량 개선      : 조정 전 가격 100% / 조정된 가격 110%
         salt = opt["sub"].startswith("염")
-        init = R["salt"] if salt else R["dose"]
-        mult = R["salt_adj"] if salt else R["dose_adj"]
-        if not opt["adj"]:
-            ph.append(("최초 등재", "이후", init))
-            return ph, "오리지널 약가 조정이 없다고 보고 최초 등재 비율만 적용했습니다."
-        # 오리지널이 조정되면 가산은 그 즉시 걸린다 — 1년 뒤가 아니다.
-        # 따라서 조정 가정 시에는 최초 등재 구간 없이 가산부터 시작한다.
+        if salt:
+            init = R["salt_adj"] if opt["adj"] else R["salt"]
+        else:
+            init = R["dose_adj"] if opt["adj"] else R["dose"]
         imp = opt["imp"].startswith("개량")
-        ph.append(("최초등재 가산 (조정 즉시)", "1년", R["addon"] * mult))
+        # 제네릭이 들어오면 오리지널은 그 즉시 조정되므로 가산도 바로 시작한다.
+        ph.append(("등재 (산정 비율)", "1년", init))
         ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
-                   (R["improved"] if imp else R["dataonly"]) * mult))
-        ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"] * mult))
-        return ph, ("오리지널 조정 시 가산은 즉시 적용됩니다. "
-                    "각 단계는 기준가 × 단계비율 × 조정시비율로 계산했습니다.")
+                   R["improved"] if imp else R["dataonly"]))
+        ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
+        _base = "이미 조정된 가격" if opt["adj"] else "조정 전 가격"
+        return ph, (f"기준가를 '{_base}'으로 보고 {init*100:.0f}% 를 적용했습니다. "
+                    "가산은 조정과 동시에 시작하는 것으로 그렸습니다.")
     if ty.startswith("②"):
         rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
         if opt["mp"]:
@@ -562,11 +564,15 @@ def _price_calc_page():
         opt = {"sub": "", "imp": "", "adj": True, "co": "혁", "ext": True, "ct": "제",
                "mp": False, "low": float(row["최저가"])}
         if ty.startswith("①"):
-            opt["sub"] = st.radio("산정 유형", ["염·이성체 / 신규제형 (90%)", "용법용량 개선 (100%)"],
-                                  key="calc_sub")
+            opt["sub"] = st.radio("산정 유형",
+                                  ["염·이성체 / 신규제형 (90% · 조정가 기준 100%)",
+                                   "용법용량 개선 (100% · 조정가 기준 110%)"], key="calc_sub")
             opt["imp"] = st.radio("개량신약 인정", ["개량신약 (70% · 3년+α)", "자료제출 (60% · 최대 3년)"],
                                   key="calc_imp")
-            opt["adj"] = st.checkbox("오리지널 약가 조정 발생 (첫 제네릭 등재 등)", value=True, key="calc_adj")
+            opt["adj"] = st.checkbox(
+                "**기준가가 이미 조정된 오리지널 가격이다**", value=False, key="calc_adj")
+            st.caption("조정 전 가격이면 90%(용법용량 개선은 100%), "
+                       "이미 조정된 가격이면 100%(용법용량 개선은 110%)를 적용합니다.")
         elif ty.startswith("②"):
             opt["co"] = st.radio("기업 유형", ["혁신형 (60%)", "준혁신형 (50%)", "해당 없음 (45%)"],
                                  key="calc_co")
