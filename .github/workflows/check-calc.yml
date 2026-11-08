@@ -1,0 +1,41 @@
+# 배포된 사이트의 '약가 분석 → 약가 산정' 화면을 실제 브라우저로 열어 확인한다.
+# 손으로만 돌리는 점검 도구다(일정 실행 없음). 사이트 동작에는 영향이 없다.
+name: check-calc
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.49.0-${{ runner.os }}
+
+      - name: 브라우저 준비
+        run: |
+          python -m pip install --quiet playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: 약가 산정 화면 확인
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: python .github/scripts/check_calc.py
+
+      - name: 화면 남기기
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: calc-screenshot
+          path: calc.png
+          if-no-files-found: ignore
