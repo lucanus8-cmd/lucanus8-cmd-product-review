@@ -448,6 +448,39 @@ def _calc_phases(ty, base, opt):
         ph.append((f"가산 종료 후 ({R['combo_base']*100:.0f}%)", "이후", R["combo_base"]))
     return ph, "성분별 금액은 해당 단일제의 산정 기준가를 씁니다."
 
+def _calc_chart(base, phases):
+    """단계별 예상 상한금액을 계단 그래프로. '이후' 구간은 2년 폭으로 그린다."""
+    xs, ys, ticks, tlabels = [], [], [0], ["등재"]
+    t = 0.0
+    for name, term, rate in phases:
+        dur = 2.0 if term == "이후" else float(str(term).replace("년", "") or 1)
+        amt = base * rate
+        xs += [t, t + dur]
+        ys += [amt, amt]
+        if term == "이후":
+            # 끝에 붙이면 화면 밖으로 잘린다 → 구간 가운데에 적는다
+            ticks.append(t + dur / 2); tlabels.append("이후")
+        else:
+            ticks.append(t + dur); tlabels.append(f"{t + dur:.0f}년")
+        t += dur
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="예상 상한금액",
+                             line=dict(color="#c9376b", width=3),
+                             fill="tozeroy", fillcolor="rgba(201,55,107,.12)",
+                             hovertemplate="%{y:,.0f}원<extra></extra>"))
+    # 단계별 금액을 구간 가운데에 적어 준다
+    t = 0.0
+    for name, term, rate in phases:
+        dur = 2.0 if term == "이후" else float(str(term).replace("년", "") or 1)
+        fig.add_annotation(x=t + dur / 2, y=base * rate, text=f"{int(base*rate):,}원",
+                           showarrow=False, yshift=14, font=dict(size=12, color="#c9376b"))
+        t += dur
+    fig.update_layout(height=260, margin=dict(l=10, r=10, t=36, b=10), showlegend=False,
+                      title="등재 후 예상 상한금액 변화", yaxis=_WON_AXIS,
+                      xaxis=dict(title="등재 후 경과", tickmode="array",
+                                 tickvals=ticks, ticktext=tlabels))
+    return fig
+
 def _price_calc_page():
     """유형별 예상 상한금액. 기준가는 같은 제제(성분·함량·제형) 최고가에서 자동으로 채운다."""
     if not ss.price_group_ready():
@@ -517,8 +550,11 @@ def _price_calc_page():
 
     L, R = st.columns(2)
     with L:
+        # 이름표(key)가 고정이면 성분을 바꿔도 앞서 입력한 숫자가 그대로 남는다.
+        # 제제코드를 섞어 성분마다 다른 칸으로 만들어, 바꾸는 즉시 새 기준가가 들어오게 한다.
         base = st.number_input("기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)",
-                               value=float(row["최고가"]), step=1.0, format="%.0f", key="calc_base")
+                               value=float(row["최고가"]), step=1.0, format="%.0f",
+                               key=f"calc_base_{row['제제코드']}")
         opt = {"sub": "", "imp": "", "adj": True, "co": "혁", "ext": True, "ct": "제",
                "mp": False, "low": float(row["최저가"])}
         if ty.startswith("①"):
@@ -540,7 +576,7 @@ def _price_calc_page():
             if opt["mp"]:
                 opt["low"] = st.number_input("직전 최저가 (자동 채움 · 고쳐 쓸 수 있음)",
                                              value=float(row["최저가"]), step=1.0,
-                                             format="%.0f", key="calc_low")
+                                             format="%.0f", key=f"calc_low_{row['제제코드']}")
                 st.caption("내 앞서 들어온 품목이 이미 15% 인하를 받았다면, 그 내려간 가격을 넣으세요.")
         else:
             opt["ct"] = st.radio("복합제 유형", ["제네릭/자료제출 (45%)", "개량신약 복합제 (60%)",
@@ -551,6 +587,8 @@ def _price_calc_page():
     with R:
         st.metric("등재 시 예상 상한금액", f"{int(base * phases[0][2]):,} 원",
                   delta=f"기준가 대비 {phases[0][2]*100:.2f}%", delta_color="off")
+        if base > 0:
+            st.plotly_chart(_calc_chart(base, phases), use_container_width=True)
         st.dataframe(pd.DataFrame([{"단계": n, "기간": y, "비율": f"{r*100:.2f}%",
                                     "상한금액": f"{int(base*r):,} 원"} for n, y, r in phases]),
                      use_container_width=True, hide_index=True)
