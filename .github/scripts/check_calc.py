@@ -12,7 +12,26 @@ from playwright.sync_api import sync_playwright
 
 URL = (os.environ.get("APP_URL") or "").rstrip("/")
 PW = os.environ.get("APP_PASSWORD") or ""
-APP_SELECTORS = ("[data-testid='stAppViewContainer']", "section.main", "#root")
+# '#root' 같은 느슨한 선택자는 Streamlit Cloud 바깥 껍데기에도 걸린다.
+# 그러면 엉뚱한 프레임을 붙잡아, 눈앞에 있는 비밀번호 칸도 못 본다.
+APP_SELECTORS = ("[data-testid='stApp']", "[data-testid='stAppViewContainer']",
+                 "[data-testid='stMain']", "input[type='password']", "section.main")
+
+
+def find_all(page, sel):
+    """모든 프레임에서 찾는다 — 앱이 어느 프레임에 있든 놓치지 않게."""
+    out = []
+    for fr in page.frames:
+        try:
+            out += fr.query_selector_all(sel)
+        except Exception:
+            pass
+    return out
+
+
+def find_one(page, sel):
+    got = find_all(page, sel)
+    return got[0] if got else None
 
 
 def text_of(page):
@@ -67,10 +86,9 @@ def main():
         logged = False
         hit = False
         for _ in range(75):                 # 최대 약 2분 30초
-            fr = app_frame(pg) or fr
             if not logged and PW:
                 try:
-                    box = fr.query_selector("input[type='password']")
+                    box = find_one(pg, "input[type='password']")
                     if box:
                         box.fill(PW)
                         box.press("Enter")
@@ -80,7 +98,7 @@ def main():
                         continue
                 except Exception as e:
                     print("로그인 시도 중:", e)
-            for lab in fr.query_selector_all("[data-testid='stRadio'] label"):
+            for lab in find_all(pg, "[data-testid='stRadio'] label"):
                 try:
                     if "약가 산정" in (lab.inner_text() or ""):
                         lab.click()
@@ -97,7 +115,7 @@ def main():
             print("❌ 약가 산정 버튼을 못 찾았다 — 아래가 그때 화면이다")
             print("로그인 했나:", logged)
             labs = [(l.inner_text() or "").replace("\n", " / ")
-                    for l in fr.query_selector_all("[data-testid='stRadio']")]
+                    for l in find_all(pg, "[data-testid='stRadio']")]
             print("라디오:", labs or "(없음)")
             print("본문:", (text_of(pg) or "")[:1200])
             pg.screenshot(path="calc.png", full_page=True)
@@ -107,9 +125,9 @@ def main():
         time.sleep(15)
 
         body = text_of(pg)
-        exc = fr.query_selector_all("[data-testid='stException'], .stException")
-        charts = fr.query_selector_all("[data-testid='stPlotlyChart']")
-        mets = fr.query_selector_all("[data-testid='stMetric']")
+        exc = find_all(pg, "[data-testid='stException'], .stException")
+        charts = find_all(pg, "[data-testid='stPlotlyChart']")
+        mets = find_all(pg, "[data-testid='stMetric']")
         bad = [w for w in ("Traceback", "TypeError", "KeyError", "NameError") if w in body]
         print(f"예외 {len(exc)}건 · 그래프 {len(charts)}개 · 지표 {len(mets)}개"
               + (f" · 오류흔적 {bad}" if bad else ""))
