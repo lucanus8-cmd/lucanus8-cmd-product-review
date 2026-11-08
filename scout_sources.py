@@ -434,7 +434,7 @@ def price_groups():
     """제제코드(성분·함량·제형)별 요약 — 최고가·최저가·중앙값·품목수.
     기준가는 '같은 제제 중 최고가'를 쓴다(오리지널 표시가 허가자료에 거의 없어서)."""
     cols = ["제제코드", "성분명", "성분수", "최고가", "최저가", "중앙", "품목수",
-            "단위종류", "단위", "투여", "대표품목", "대표업체", "라벨"]
+            "단위종류", "단위", "투여", "대표품목", "대표업체", "라벨", "특이사항"]
     if not price_group_ready():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in cols})
     pr = load_price()
@@ -455,6 +455,10 @@ def price_groups():
         "단위종류": g["단위"].nunique() if "단위" in latest.columns else 1,
         "단위": g["단위"].first() if "단위" in latest.columns else "",
         "투여": g["투여"].first() if "투여" in latest.columns else "",
+        # 약가유연계약·집행정지 등 — 같은 제제 안에 하나라도 있으면 모아서 알려준다
+        "특이사항": (g["비고"].apply(lambda v: " / ".join(sorted({x for x in v.astype(str)
+                                                               if x and x != "nan"})))
+                 if "비고" in latest.columns else ""),
     }).reset_index()
     top = (latest.sort_values("금액", ascending=False)
                  .groupby("제제코드", as_index=False).first()[["제제코드", "제품명", "업체명"]]

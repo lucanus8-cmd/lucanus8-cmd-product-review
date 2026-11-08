@@ -527,6 +527,17 @@ def _price_calc_page():
     if int(row["단위종류"] or 1) > 1:
         st.warning(f"이 묶음은 단위가 {int(row['단위종류'])}가지 섞여 있습니다 — "
                    "최고가가 큰 포장일 수 있으니 확인하세요.")
+    _note = str(row.get("특이사항") or "").strip()
+    if _note:
+        # 고시 비고에서 '약가유연계약' 과 그 밖의 내용을 나눠서 보여준다
+        _parts = [x.strip() for x in _note.split("/") if x.strip()]
+        _flex = [x for x in _parts if "유연계약" in x]
+        _etc = [x for x in _parts if "유연계약" not in x]
+        if _flex:
+            st.error("⚠️ **약가유연계약 적용 약제**입니다. 표면 상한금액과 실제 지급가가 "
+                     "다를 수 있으니, 아래 산정 결과를 그대로 쓰기 전에 계약 조건을 확인하세요.")
+        if _etc:
+            st.warning("고시 비고: " + " / ".join(_etc))
 
     yr = ss.price_group_yearly()
     h = yr[yr["제제코드"] == row["제제코드"]].sort_values("연").copy()

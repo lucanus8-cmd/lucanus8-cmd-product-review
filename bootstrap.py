@@ -332,6 +332,7 @@ def _price_from_folder(drive):
         cnt_c = _find(df.columns, ["주성분개수", "주성분 개수"])
         spec_c = _find(df.columns, ["규격"])
         unit_c = _find(df.columns, ["단위"])
+        note_c = _find(df.columns, ["비고"])      # 약가유연계약·집행정지 등 특이사항
         _col = lambda c: df[c].astype(str).str.strip() if c else ""
         out = pd.DataFrame({
             "제품코드": df[code_c].astype(str).str.strip(),
@@ -344,6 +345,7 @@ def _price_from_folder(drive):
             "성분수": _col(cnt_c),        # 1이면 단일제, 2 이상이면 복합제
             "규격": _col(spec_c),
             "단위": _col(unit_c),
+            "비고": _col(note_c),
         })
         out = out[out["제품코드"] != ""]
         frames.append(out)
