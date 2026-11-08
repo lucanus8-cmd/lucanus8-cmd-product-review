@@ -62,24 +62,24 @@ def main():
             return 0
         time.sleep(8)
 
-        body = text_of(pg)
-        if "비밀번호" in body and PW:
-            try:
-                box = fr.query_selector("input[type='password']")
-                box.fill(PW)
-                box.press("Enter")
-                time.sleep(12)
-                body = text_of(pg)
-            except Exception as e:
-                print("비밀번호 입력 실패:", e)
-        if "비밀번호" in body:
-            print("비밀번호 화면을 못 넘었다 — 확인 못 함")
-            br.close()
-            return 0
-
-        # '약가 산정' 라디오 누르기 — 화면이 아직 안 그려졌을 수 있으니 기다린다
+        # 앱이 깨어나는 중이면 비밀번호 화면이 늦게 뜬다. 로그인과 버튼 찾기를
+        # 한 바퀴에서 같이 돌려야, 둘 중 뭐가 먼저 나와도 놓치지 않는다.
+        logged = False
         hit = False
-        for _ in range(30):
+        for _ in range(75):                 # 최대 약 2분 30초
+            fr = app_frame(pg) or fr
+            if not logged and PW:
+                try:
+                    box = fr.query_selector("input[type='password']")
+                    if box:
+                        box.fill(PW)
+                        box.press("Enter")
+                        logged = True
+                        print("로그인: 비밀번호 넣었다")
+                        time.sleep(10)
+                        continue
+                except Exception as e:
+                    print("로그인 시도 중:", e)
             for lab in fr.query_selector_all("[data-testid='stRadio'] label"):
                 try:
                     if "약가 산정" in (lab.inner_text() or ""):
@@ -91,9 +91,11 @@ def main():
             if hit:
                 break
             time.sleep(2)
+
         if not hit:
             # 못 찾았으면 '정상'이 아니다 — 무엇이 보였는지 남기고 실패로 끝낸다
             print("❌ 약가 산정 버튼을 못 찾았다 — 아래가 그때 화면이다")
+            print("로그인 했나:", logged)
             labs = [(l.inner_text() or "").replace("\n", " / ")
                     for l in fr.query_selector_all("[data-testid='stRadio']")]
             print("라디오:", labs or "(없음)")
