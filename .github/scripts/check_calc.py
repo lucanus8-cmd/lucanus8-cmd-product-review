@@ -77,17 +77,31 @@ def main():
             br.close()
             return 0
 
-        # '약가 산정' 라디오 누르기
+        # '약가 산정' 라디오 누르기 — 화면이 아직 안 그려졌을 수 있으니 기다린다
         hit = False
-        for lab in fr.query_selector_all("[data-testid='stRadio'] label"):
-            try:
-                if "약가 산정" in (lab.inner_text() or ""):
-                    lab.click()
-                    hit = True
-                    break
-            except Exception:
-                pass
-        print("약가 산정 버튼:", "눌렀다" if hit else "못 찾았다")
+        for _ in range(30):
+            for lab in fr.query_selector_all("[data-testid='stRadio'] label"):
+                try:
+                    if "약가 산정" in (lab.inner_text() or ""):
+                        lab.click()
+                        hit = True
+                        break
+                except Exception:
+                    pass
+            if hit:
+                break
+            time.sleep(2)
+        if not hit:
+            # 못 찾았으면 '정상'이 아니다 — 무엇이 보였는지 남기고 실패로 끝낸다
+            print("❌ 약가 산정 버튼을 못 찾았다 — 아래가 그때 화면이다")
+            labs = [(l.inner_text() or "").replace("\n", " / ")
+                    for l in fr.query_selector_all("[data-testid='stRadio']")]
+            print("라디오:", labs or "(없음)")
+            print("본문:", (text_of(pg) or "")[:1200])
+            pg.screenshot(path="calc.png", full_page=True)
+            br.close()
+            return 1
+        print("약가 산정 버튼: 눌렀다")
         time.sleep(15)
 
         body = text_of(pg)
@@ -107,6 +121,11 @@ def main():
         br.close()
         if exc or bad:
             print("❌ 약가 산정 화면이 아직 깨져 있다")
+            return 1
+        if not charts or not mets:
+            # 그래프도 지표도 없으면 화면이 안 그려진 것이다 — '정상'으로 치면 안 된다
+            print("❌ 화면이 비어 있다(그래프·지표 없음) — 아래가 그때 본문이다")
+            print((body or "")[:1200])
             return 1
         print("✅ 약가 산정 화면 정상")
         return 0
