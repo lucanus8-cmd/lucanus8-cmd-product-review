@@ -3,6 +3,14 @@
 매출: IQVIA·UBIST · 허가/특허/임상: 식약처 · 약가: 심평원 통합본 + NHIS 협상완료(공식)
 기존 app.py 는 건드리지 않는다. 실행: streamlit run scouting.py --server.port 8502
 """
+import os
+
+# pandas 3 의 글자 열은 Arrow 가 들고 있는데, Arrow 기본 엔진(mimalloc)은
+# 다 쓴 메모리를 OS 에 돌려주지 않는다. 표를 읽고 검색할 때마다 '찌꺼기'가
+# 쌓여, 탭을 몇 개 돌면 무료 플랜 한도(약 1GB)에 닿아 앱이 강제 종료된다.
+# 시스템 엔진은 돌려준다. pandas·pyarrow 를 불러오기 '전에' 정해야 한다.
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 import gc
 import re
 import time
@@ -1521,6 +1529,7 @@ if PAGE == "price":
                          key="price_mode", label_visibility="collapsed")
         if _mode == "약가 산정":
             _price_calc_page()
+            ss.release_memory()      # 무거운 화면 — 쓰고 버린 자리를 돌려준다
             st.stop()
         # ── 검색 기반 약가 변동 그래프 (성분→오리지널 / 제품→해당 제품) ──
         st.markdown("**🔎 약가 변동 그래프** · 성분=동일성분 오리지널(신약) 기준, "
@@ -2081,3 +2090,8 @@ if PAGE == "status":
                f"새벽 {bootstrap.REFRESH_HOUR_KST}시 기준으로 한 번(매출은 주 1회)이며, 자료가 이미 있으면 "
                "화면을 멈추지 않고 뒤에서 받아옵니다. ⚠️ 표시는 그 주기를 넘겼다는 뜻이며, 원본 시트 공유 "
                "설정이나 서비스 계정 키를 확인해 주세요. · 성분 조인 키 = 영문 성분명 첫 단어.")
+
+# ── 화면 하나를 다 그린 뒤, 쓰고 버린 메모리를 OS 에 돌려준다 ──────────────
+# 캐시에 올린 자료는 그대로 두고 '이미 버려진' 자리만 반납하므로 자료를 다시
+# 읽지 않는다. 점유가 눈에 띄게 늘었을 때만 돌아간다(release_memory 참고).
+ss.release_memory()

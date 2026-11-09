@@ -2,12 +2,53 @@
 구글시트 → scout_data/*.parquet 캐시를 읽는다. (build_scout_cache.py 로 갱신)
 성분 조인은 영문 성분명의 '첫 단어'(예: Atorvastatin Calcium → ATORVASTATIN)를 키로 사용해
 염·수화물 표기 차이를 흡수한다. 조합제는 첫 성분 기준(근사)."""
+import ctypes
+import gc
 import re
+import time
 from pathlib import Path
 import pandas as pd
 import streamlit as st
 
 SD = Path(__file__).parent / "scout_data"
+
+# ── 쓰고 버린 메모리 돌려주기 ──────────────────────────────────────────
+# 표를 읽고 검색하면 중간 결과가 잔뜩 생겼다 버려지는데, Arrow 가 그 자리를
+# 계속 쥐고 있어 탭을 몇 개 돌면 한도에 닿는다. 아래는 '이미 버려진' 자리만
+# OS 에 돌려준다. 캐시에 올려둔 자료(허가·특허·약가 표)는 그대로 살아 있으므로
+# 다시 읽지 않는다.
+_LAST = {"rss": 0.0, "at": 0.0}
+
+def _rss_mb():
+    """지금 이 프로세스가 쓰는 메모리(MB). 못 재면 0."""
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * 4096 / 1e6
+    except Exception:
+        return 0.0
+
+def release_memory(min_growth_mb=50, min_interval_s=10):
+    """무거운 작업 뒤에 부른다. 점유가 눈에 띄게 늘었을 때만 실제로 실행한다
+    (화면을 조금 만질 때마다 돌면 그 자체가 비용이므로).
+    실제로 돌려줬으면 True."""
+    now = time.time()
+    cur = _rss_mb()
+    if now - _LAST["at"] < min_interval_s:
+        return False
+    if cur and cur - _LAST["rss"] < min_growth_mb:
+        return False
+    gc.collect()
+    try:
+        import pyarrow as pa
+        pa.default_memory_pool().release_unused()
+    except Exception:
+        pass
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+    _LAST["rss"], _LAST["at"] = _rss_mb(), now
+    return True
 
 def ing_key(s):
     """영문 성분명 → 조인 키 (첫 알파벳 단어, 3자 이상 대문자)."""
