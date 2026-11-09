@@ -412,6 +412,30 @@ def load_price():
     _ensure("price")
     return _load_price(_mtime(SD / "price.parquet"))
 
+def load_slim(name, cols):
+    """자료 파일에서 '필요한 열만' 읽어 돌려준다.
+
+    load_approval() 같은 보통 읽기는 표 전체를 공유 캐시에 올려두고 세션 내내
+    붙잡는다. AI 탭은 허가·특허·약가·임상을 한 질문에 모두 훑기 때문에,
+    그렇게 하면 무료 플랜 메모리를 넘겨 앱이 강제 종료된다.
+    여기서 읽은 것은 캐시에 올리지 않으므로, 다 쓰면 곧바로 회수된다.
+
+    파일이 없거나 쓸 열이 하나도 없으면 None → 부르는 쪽이 기존 방식으로 돌아간다.
+    """
+    try:
+        import pyarrow.parquet as pq
+        _ensure(name)
+        path = SD / f"{name}.parquet"
+        if not path.exists():
+            return None
+        have = set(pq.ParquetFile(path).schema.names)
+        use = [c for c in cols if c in have]
+        if not use:
+            return None
+        return pd.read_parquet(path, columns=use)
+    except Exception:
+        return None
+
 def _text(sr):
     """NA 안전 문자열 변환.
     pandas 3 의 str dtype 에서는 astype(str) 이 결측(NA)을 문자열로 바꾸지 않고

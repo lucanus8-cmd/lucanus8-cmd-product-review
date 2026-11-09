@@ -3,6 +3,7 @@
 매출: IQVIA·UBIST · 허가/특허/임상: 식약처 · 약가: 심평원 통합본 + NHIS 협상완료(공식)
 기존 app.py 는 건드리지 않는다. 실행: streamlit run scouting.py --server.port 8502
 """
+import gc
 import re
 import time
 from pathlib import Path
@@ -111,25 +112,39 @@ def _nospace(sr):
     """시리즈의 공백 제거(띄어쓰기 차이 흡수)."""
     return sr.astype(str).str.replace(r"\s+", "", regex=True)
 
-def contains(df, cols, q):
-    # 띄어쓰기 차이 흡수: 검색어·대상 모두 공백 제거 후 리터럴 검색
-    # (regex=False: 품목명에 괄호/대괄호 등 특수문자가 있어도 정규식 오류 없이 검색)
+def match_mask(df, cols, q):
+    """contains() 와 같은 조건이지만 행을 복사하지 않고 조건(참/거짓)만 돌려준다.
+    AI 탭처럼 자료를 여러 개 동시에 여는 곳에서, 필요한 열만 골라 쓰기 위한 것."""
     qn = re.sub(r"\s+", "", str(q))
     m = pd.Series(False, index=df.index)
     for c in cols:
         if c in df.columns:
             m |= _nospace(df[c]).str.contains(qn, case=False, na=False, regex=False)
-    return df[m]
+    return m
 
-def sales_search(df, cfg, q):
-    """제품명/성분명 + (한글↔영문 성분키) 매칭. 띄어쓰기 차이는 무시."""
+def pick(df, mask, cols):
+    """조건에 맞는 행에서 '필요한 열만' 꺼낸다. 전체 열 복사를 피한다."""
+    use = [c for c in cols if c in df.columns]
+    return df.loc[mask, use] if use else df.loc[mask, []]
+
+def contains(df, cols, q):
+    # 띄어쓰기 차이 흡수: 검색어·대상 모두 공백 제거 후 리터럴 검색
+    # (regex=False: 품목명에 괄호/대괄호 등 특수문자가 있어도 정규식 오류 없이 검색)
+    return df[match_mask(df, cols, q)]
+
+def sales_mask(df, cfg, q):
+    """sales_search 와 같은 조건만 돌려준다(행 복사 없음)."""
     qn = re.sub(r"\s+", "", str(q))
     m = _nospace(df[cfg["prod"]]).str.contains(qn, case=False, na=False, regex=False) | \
         _nospace(df[cfg["ing"]]).str.contains(qn, case=False, na=False, regex=False)
     keys = ss.resolve_keys(q)
     if keys:
         m = m | df[cfg["ing"]].astype(str).map(ss.ing_key).isin(keys)
-    return df[m]
+    return m
+
+def sales_search(df, cfg, q):
+    """제품명/성분명 + (한글↔영문 성분키) 매칭. 띄어쓰기 차이는 무시."""
+    return df[sales_mask(df, cfg, q)]
 
 def msel(container, label, series, key, default=None):
     sr = series.dropna().astype(str).str.strip()
@@ -1667,47 +1682,151 @@ if PAGE == "ai":
         except Exception:
             return None
 
+    # AI 탭은 허가·특허·약가·임상·DMF·재심사·매출을 한 질문에 모두 본다.
+    # 보통 읽기(load_approval 등)는 표 전체를 공유 캐시에 올려 세션 내내 붙잡으므로,
+    # 일곱 개가 동시에 올라가면 무료 플랜 메모리(약 1GB)를 넘겨 앱 전체가
+    # 강제 종료된다("Oh no" 화면). 그래서 아래 helper 들은
+    #   ① 쓰는 열만 파일에서 직접 읽고 ② 캐시에 올리지 않고 ③ 쓰고 나면 바로 놓아준다.
+    # 측정: 자료 4개 기준 734MB → 375MB. 화면에 나가는 문구·숫자는 이전과 같다.
+    def _ctx_sales(qterm, last_n=1):
+        """매출(IQVIA) 요약. last_n=1 이면 전체 연도, 5면 최근 5개년."""
+        if not has_sales("IQVIA"):
+            return None
+        df, yr, cfg = get("IQVIA")
+        if not yr:
+            return None
+        m = sales_mask(df, cfg, qterm)
+        if not bool(m.any()):
+            return None
+        use = list(yr[-last_n:]) if last_n > 1 else list(yr)
+        return pick(df, m, use + [cfg["maker"], cfg["ing"]]), yr, cfg
+
+    def _ctx_approval(qterm, cols):
+        """허가 요약용 조각. (매칭수, 조각DF) 또는 None."""
+        if not HAS_REG:
+            return None
+        need = ["품목명", "주성분", "주성분(영문)"]
+        ap = ss.load_slim("approval", list(dict.fromkeys(need + cols)))
+        if ap is None:
+            ap = ss.load_approval()          # 열만 읽기가 안 되면 기존 방식
+        m = match_mask(ap, need, qterm)
+        n = int(m.sum())
+        if n == 0:
+            return None
+        return n, pick(ap, m, cols)
+
+    def _ctx_patent(qterm):
+        """특허 요약: (매칭수, 존속등록수, 물질만료, 용도만료, 특허권자) 또는 None.
+        예전에는 concat + 중복제거로 표를 두 벌 만들었는데, 조건을 합치면
+        복사 없이 같은 결과가 나온다."""
+        if not HAS_REG:
+            return None
+        pt = ss.load_slim("patent", ["품목명", "INGR_ENG_NAME", "INGR_NAME", "PATENT_GB_CODE",
+                                     "DOMESTIC_PATENT_STATUS", "DOMESTIC_END_DATE", "PATENTEE"])
+        pt = ss.enrich_patent(pt) if pt is not None else ss.load_patent()
+        m = match_mask(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)
+        keys = ss.resolve_keys(qterm)
+        if keys and "_key" in pt.columns:
+            m = m | pt["_key"].isin(keys)
+        n = int(m.sum())
+        if n == 0:
+            return None
+        sub = pick(pt, m, ["PATENT_GB_CODE", "DOMESTIC_PATENT_STATUS", "_exp", "PATENTEE"])
+        live = (sub[ss.active_patent_mask(sub["DOMESTIC_PATENT_STATUS"]) & sub["_exp"].notna()]
+                if {"DOMESTIC_PATENT_STATUS", "_exp"}.issubset(sub.columns) else sub.iloc[0:0])
+        mat = use = pd.NaT
+        if "PATENT_GB_CODE" in live.columns and not live.empty:
+            gb = live["PATENT_GB_CODE"].astype(str)
+            mat = live.loc[gb.str.contains("물질", na=False), "_exp"].max()
+            use = live.loc[gb.str.contains("용도", na=False), "_exp"].max()
+        pats = (", ".join(sub["PATENTEE"].dropna().astype(str).unique()[:5])
+                if "PATENTEE" in sub.columns else "")
+        return n, len(live), mat, use, pats
+
+    def _ctx_price(qterm):
+        """약가 요약: (급여품목수, 최저, 최고) 또는 None."""
+        if not HAS_PRICE:
+            return None
+        pr = ss.load_slim("price", ["제품명", "주성분명", "제품코드", "급여구분", "적용일자", "금액"])
+        if pr is None:
+            pr = ss.load_price()
+        m = match_mask(pr, ["제품명", "주성분명"], qterm)
+        if not bool(m.any()):
+            return None
+        mp = pick(pr, m, ["제품코드", "급여구분", "적용일자", "금액"])
+        if "급여구분" in mp.columns:
+            mp = mp[mp["급여구분"] == "급여"]
+        if mp.empty:
+            return None
+        ls = mp.sort_values("적용일자").groupby("제품코드").tail(1)
+        if ls.empty:
+            return None
+        return ls["제품코드"].nunique(), ls["금액"].min(), ls["금액"].max()
+
+    def _ctx_clinical(qterm):
+        """임상 요약: (건수, 단계문구) 또는 None."""
+        cl = ss.load_slim("clinical", ["제품명", "성분명", "CLINIC_STEP_NM"])
+        if cl is None:
+            cl = ss.load_clinical()
+        m = match_mask(cl, ["제품명", "성분명"], qterm)
+        n = int(m.sum())
+        if n == 0:
+            return None
+        steps = ""
+        if "CLINIC_STEP_NM" in cl.columns:
+            steps = ", ".join(cl.loc[m, "CLINIC_STEP_NM"].dropna().astype(str)
+                              .value_counts().head(6).index)
+        return n, steps
+
     def build_ai_context(qterm):
         parts = []
         if not qterm:
             return "(제품/성분 미지정)"
         try:
-            if not has_sales("IQVIA"):
-                raise RuntimeError("IQVIA 매출 자료 미연결")
-            df, yr, cfg = get("IQVIA"); hit = sales_search(df, cfg, qterm)
-            if not hit.empty:
+            got = _ctx_sales(qterm)
+            if got:
+                hit, yr, cfg = got
                 s = hit[yr].sum(); cg = calc_cagr(s.tolist(), yr)
                 parts.append(f"[매출·IQVIA] 최신연도({year_of(yr[-1])}) {s.iloc[-1]/1e8:,.1f}억 · CAGR {('%+.1f%%'%cg) if cg is not None else 'N/A'} · 제조사 {hit[cfg['maker']].nunique()}곳 · 성분 {hit[cfg['ing']].nunique()}종")
+                del hit, got
+                gc.collect()
         except Exception:
             pass
-        if HAS_REG:
-            ap = ss.load_approval(); am = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
-            if not am.empty:
-                parts.append(f"[허가] {len(am):,}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {int((am['신약구분']=='신약').sum())}건")
-            pt = ss.load_patent()
-            pm = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)  # 특허 탭과 동일한 텍스트 매칭
-            keys = ss.resolve_keys(qterm)
-            if keys:
-                pm = pd.concat([pm, pt[pt['_key'].isin(keys)]]).drop_duplicates()
-            reg = pm[ss.active_patent_mask(pm['DOMESTIC_PATENT_STATUS']) & pm['_exp'].notna()]
-            if not pm.empty:
-                mat = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('물질', na=False)]['_exp'].max()
-                use = reg[reg['PATENT_GB_CODE'].astype(str).str.contains('용도', na=False)]['_exp'].max()
-                parts.append(f"[특허] 매칭 {len(pm)}건 · 존속 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
-        if HAS_PRICE:
-            pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], qterm)
-            ls = mp[mp['급여구분'] == '급여'].sort_values('적용일자').groupby('제품코드').tail(1)
-            if not ls.empty:
-                parts.append(f"[약가] 급여 품목 {ls['제품코드'].nunique()}개 · 상한금액 최고 {ls['금액'].max():,.0f}원 · 최저 {ls['금액'].min():,.0f}원")
+        try:
+            got = _ctx_approval(qterm, ["업체명", "신약구분"])
+            if got:
+                n, am = got
+                newd = int((am["신약구분"] == "신약").sum()) if "신약구분" in am.columns else 0
+                parts.append(f"[허가] {n:,}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {newd}건")
+                del am, got
+                gc.collect()
+        except Exception:
+            pass
+        try:
+            got = _ctx_patent(qterm)
+            if got:
+                n, nlive, mat, use, _ = got
+                parts.append(f"[특허] 매칭 {n}건 · 존속 등록 {nlive}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                gc.collect()
+        except Exception:
+            pass
+        try:
+            got = _ctx_price(qterm)
+            if got:
+                ncode, lo, hi = got
+                parts.append(f"[약가] 급여 품목 {ncode}개 · 상한금액 최고 {hi:,.0f}원 · 최저 {lo:,.0f}원")
+                gc.collect()
             ny = ss.nego_years(qterm) if hasattr(ss, 'nego_available') and ss.nego_available() else []
             if ny:
                 parts.append(f"[공단 약가협상 완료 연도(공식)] {', '.join(ny)}")
-        # 임상(동일성분)
+        except Exception:
+            pass
         try:
-            cl = ss.load_clinical(); cm = contains(cl, ["제품명", "성분명"], qterm)
-            if not cm.empty:
-                steps = ", ".join(cm["CLINIC_STEP_NM"].dropna().astype(str).value_counts().head(6).index) if "CLINIC_STEP_NM" in cm.columns else ""
-                parts.append(f"[임상·동일성분] {len(cm)}건 · 단계: {steps or '미상'}")
+            got = _ctx_clinical(qterm)
+            if got:
+                n, steps = got
+                parts.append(f"[임상·동일성분] {n}건 · 단계: {steps or '미상'}")
+                gc.collect()
         except Exception:
             pass
         # 재심사(PMS)
@@ -1716,6 +1835,8 @@ if PAGE == "ai":
             if rm is not None and not rm.empty:
                 show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE"])][:4]
                 parts.append(f"[PMS·재심사] 매칭 {len(rm)}건" + (f" · 예시 {rm.iloc[0][show].to_dict()}" if show else ""))
+            del rm
+            gc.collect()
         except Exception:
             pass
         # DMF(동일성분)
@@ -1724,6 +1845,8 @@ if PAGE == "ai":
             if dm is not None and not dm.empty and "ENTP_NAME" in dm.columns:
                 ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:15])
                 parts.append(f"[DMF 등록업체(동일성분)] {len(dm)}건 · {ents}")
+            del dm
+            gc.collect()
         except Exception:
             pass
         return "\n".join(parts) if parts else "(데이터 매칭 없음)"
@@ -1732,25 +1855,27 @@ if PAGE == "ai":
         """제품 검토서 양식용 데이터 수집(항목별)."""
         L = []
         try:
-            if HAS_REG:
-                ap = ss.load_approval(); am = contains(ap, ["품목명", "주성분", "주성분(영문)"], qterm)
-                if not am.empty:
-                    gubun = ", ".join(am["전문/일반"].dropna().astype(str).unique()[:3]) if "전문/일반" in am.columns else ""
-                    ings = ", ".join(am["주성분"].dropna().astype(str).unique()[:6]) if "주성분" in am.columns else ""
-                    newd = int((am["신약구분"] == "신약").sum()) if "신약구분" in am.columns else 0
-                    reps = ", ".join(am["품목명"].dropna().astype(str).unique()[:8])
-                    L.append(f"[허가] 매칭 {len(am)}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {newd}건")
-                    L.append(f"  허가분류(전문/일반): {gubun or '미상'}")
-                    L.append(f"  주성분: {ings or '미상'}")
-                    L.append(f"  대표 품목명: {reps}")
+            got = _ctx_approval(qterm, ["업체명", "신약구분", "전문/일반", "주성분", "품목명"])
+            if got:
+                n, am = got
+                gubun = ", ".join(am["전문/일반"].dropna().astype(str).unique()[:3]) if "전문/일반" in am.columns else ""
+                ings = ", ".join(am["주성분"].dropna().astype(str).unique()[:6]) if "주성분" in am.columns else ""
+                newd = int((am["신약구분"] == "신약").sum()) if "신약구분" in am.columns else 0
+                reps = ", ".join(am["품목명"].dropna().astype(str).unique()[:8]) if "품목명" in am.columns else ""
+                L.append(f"[허가] 매칭 {n:,}건 · 업체 {am['업체명'].nunique()}곳 · 신약(오리지널) {newd}건")
+                L.append(f"  허가분류(전문/일반): {gubun or '미상'}")
+                L.append(f"  주성분: {ings or '미상'}")
+                L.append(f"  대표 품목명: {reps}")
+                del am, got
+                gc.collect()
         except Exception:
             pass
         try:
-            if HAS_PRICE:
-                pr = ss.load_price(); mp = contains(pr, ["제품명", "주성분명"], qterm)
-                ls = mp[mp["급여구분"] == "급여"].sort_values("적용일자").groupby("제품코드").tail(1)
-                if not ls.empty:
-                    L.append(f"[약가] 급여 품목 {ls['제품코드'].nunique()}개 · 상한금액 {ls['금액'].min():,.0f}~{ls['금액'].max():,.0f}원")
+            got = _ctx_price(qterm)
+            if got:
+                ncode, lo, hi = got
+                L.append(f"[약가] 급여 품목 {ncode}개 · 상한금액 {lo:,.0f}~{hi:,.0f}원")
+                gc.collect()
         except Exception:
             pass
         try:
@@ -1758,40 +1883,37 @@ if PAGE == "ai":
             if rm is not None and not rm.empty:
                 show = [c for c in rm.columns if any(k in c.upper() for k in ["REEXAM", "YEAR", "DATE", "CODE"])][:5]
                 L.append(f"[PMS·재심사] 매칭 {len(rm)}건 · 예시: {rm.iloc[0][show].to_dict() if show else '컬럼확인필요'}")
+            del rm
+            gc.collect()
         except Exception:
             pass
         try:
-            if HAS_REG:
-                pt = ss.load_patent()
-                pm = contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)  # 특허 탭과 동일한 텍스트 매칭
-                keys = ss.resolve_keys(qterm)
-                if keys:
-                    pm = pd.concat([pm, pt[pt["_key"].isin(keys)]]).drop_duplicates()
-                reg = pm[ss.active_patent_mask(pm["DOMESTIC_PATENT_STATUS"]) & pm["_exp"].notna()]
-                if not pm.empty:
-                    mat = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("물질", na=False)]["_exp"].max()
-                    use = reg[reg["PATENT_GB_CODE"].astype(str).str.contains("용도", na=False)]["_exp"].max()
-                    pats = ", ".join(pm["PATENTEE"].dropna().astype(str).unique()[:5]) if "PATENTEE" in pm.columns else ""
-                    L.append(f"[특허] 매칭 {len(pm)}건 · 존속 등록 {len(reg)}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
-                    if pats:
-                        L.append(f"  특허권자: {pats}")
+            got = _ctx_patent(qterm, extra_cols=("PATENTEE",))
+            if got:
+                n, nlive, mat, use, pats = got
+                L.append(f"[특허] 매칭 {n}건 · 존속 등록 {nlive}건 · 물질특허 만료 {mat.date() if pd.notna(mat) else '-'} · 용도특허 만료 {use.date() if pd.notna(use) else '-'}")
+                if pats:
+                    L.append(f"  특허권자: {pats}")
+                gc.collect()
         except Exception:
             pass
         try:
-            cl = ss.load_clinical(); cm = contains(cl, ["제품명", "성분명"], qterm)
-            if not cm.empty:
-                steps = ", ".join(cm["CLINIC_STEP_NM"].dropna().astype(str).value_counts().head(6).index) if "CLINIC_STEP_NM" in cm.columns else ""
-                L.append(f"[임상·동일성분] {len(cm)}건 · 단계: {steps or '미상'}")
+            got = _ctx_clinical(qterm)
+            if got:
+                n, steps = got
+                L.append(f"[임상·동일성분] {n}건 · 단계: {steps or '미상'}")
+                gc.collect()
         except Exception:
             pass
         try:
-            if not has_sales("IQVIA"):
-                raise RuntimeError("IQVIA 매출 자료 미연결")
-            df, yr, cfg = get("IQVIA"); hit = sales_search(df, cfg, qterm)
-            if not hit.empty and yr:
+            got = _ctx_sales(qterm, last_n=5)
+            if got:
+                hit, yr, cfg = got
                 last5 = yr[-5:]; s = hit[last5].sum()
                 mm = " · ".join(f"{year_of(y)}년 {s[y] / 1e6:,.0f}" for y in last5)
                 L.append(f"[매출·IQVIA 최근5개년(백만원)] {mm}")
+                del hit, got
+                gc.collect()
         except Exception:
             pass
         try:
@@ -1799,10 +1921,11 @@ if PAGE == "ai":
             if dm is not None and not dm.empty and "ENTP_NAME" in dm.columns:
                 ents = ", ".join(dm["ENTP_NAME"].dropna().astype(str).unique()[:20])
                 L.append(f"[DMF 등록업체(동일성분)] {len(dm)}건 · {ents}")
+            del dm
+            gc.collect()
         except Exception:
             pass
         return "\n".join(L) if L else "(데이터 매칭 없음)"
-
     REVIEW_TEMPLATE = ("제품명 | 허가분류 | 약가 | 주성분/함량 | 효능/효과 | PMS | 용법/용량 | "
                        "관련 특허 | 임상시험 진행 현황(동일성분) | 매출액(최근 5개년 연간, 백만원) | DMF 등록 업체")
 
