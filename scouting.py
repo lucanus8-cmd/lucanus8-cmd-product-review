@@ -461,6 +461,10 @@ AFTER_ADDON = .45        # 가산이 끝나면 요건률이 아니라 45% 로 �
 MP_TOTAL = 14            # 기등재 + 동시신청 합계가 이 수 이상이면 다품목 등재관리
 STEP_PRIOR = 13          # 기등재가 이 수 이상이면 계단식 약가인하
 
+# ⑤ 함량배수: 자사제품이 없으면 최근접 함량 최고가의 45%(마약·생물 70%)가 A.
+DOSE_A = .45
+DOSE_A_SPECIAL = .70
+
 # ① 단일제 자료제출의 세 갈래. 70% 가산은 가운데(동시 조정)에만 붙는다.
 OSTATE = ["조정 전 — 이번 등재로도 오리지널 조정이 일어나지 않음",
           "동시 조정 — 이번 등재와 함께 오리지널이 조정됨 (70% 가산)",
@@ -481,6 +485,16 @@ def cheap_kind(route, unit):
     if r == "외용":
         return "1회용 외용제(관포장)" if "관" in u else "외용제(일반)"
     return None
+
+def dose_b(mg_new, mg_ref):
+    """함량배수 산식의 B = {(높은함량/낮은함량 - 1) × 0.5} + 1.
+    늘 높은쪽/낮은쪽으로 잡으므로 B 는 항상 1 이상이고, 신청 함량이 많으면
+    곱하고 적으면 나눈다. 함량 차이의 절반만 값에 반영되는 셈이다."""
+    a, b = float(mg_new), float(mg_ref)
+    if a <= 0 or b <= 0:
+        return 1.0
+    return ((max(a, b) / min(a, b)) - 1) * 0.5 + 1
+
 
 def calc_route(prior, applying):
     """일반 / 다품목 / 계단식 중 어디에 해당하나. prior 는 오리지널을 포함해 센다."""
@@ -569,6 +583,29 @@ def _calc_phases(ty, base, opt):
         return ph, (f"기준요건 {opt['reqs']}개 충족 → {req*100:.0f}%. "
                     f"기등재 {opt['prior']}개 + 동시신청 {opt['apply']}개라 "
                     "다품목·계단식에는 해당하지 않습니다.")
+    if ty.startswith("④"):
+        # 자사가 이미 등재한 것과 똑같은 품목이면 그 품목과 같은 금액으로 준다.
+        return ([("자사 동일가", "이후", 1.0)],
+                "자사가 이미 등재한 동일 품목과 같은 금액입니다. "
+                "계단식·다품목 판정을 타지 않고, 가산도 붙지 않습니다.")
+    if ty.startswith("⑤"):
+        mg_new, mg_ref = float(opt["mg_new"]), float(opt["mg_ref"])
+        if mg_new <= 0 or mg_ref <= 0 or base <= 0:
+            return [("함량배수 산정", "이후", 0)], "함량과 기준가를 넣어주세요."
+        b = float(opt["bval"]) if opt["bio"] else dose_b(mg_new, mg_ref)
+        if b <= 0:
+            return [("함량배수 산정", "이후", 0)], "B 값을 넣어주세요."
+        # A: 자사제품이 있으면 자사 최근접 함량 상한금액, 없으면 최고가의 45%(마약·생물 70%)
+        a_rate = 1.0 if opt["own"] else (DOSE_A_SPECIAL if opt["special"] else DOSE_A)
+        rate = a_rate * b if mg_new > mg_ref else a_rate / b
+        how = "×" if mg_new > mg_ref else ("÷" if mg_new < mg_ref else "=")
+        src = ("자사 최근접 함량 품목의 상한금액" if opt["own"]
+               else f"최근접 함량 최고가의 {a_rate*100:.0f}%"
+                    f"{' (마약·생물의약품)' if opt['special'] else ''}")
+        return ([("함량배수 산정", "이후", rate)],
+                f"A = {src} = {won(base*a_rate):,}원 · B = {b:.4f} · "
+                f"신청 {mg_new:g} {how} 비교 {mg_ref:g} → A {how if how != '=' else '×'} B."
+                + (" 생물의약품이라 B 를 직접 넣은 값으로 계산했습니다." if opt["bio"] else ""))
     rate = {"제": R["combo_base"], "개": R["combo_imp"]}[opt["ct"][0]]
     if "혁신형" in opt["ct"]:
         rate = R["combo_innov"]
@@ -633,7 +670,8 @@ def _price_calc_page():
         return
     st.markdown("**🧮 유형별 예상 상한금액** · 기준가는 같은 성분·함량·제형 묶음의 "
                 "**최고가**에서 자동으로 채웁니다 (고쳐 쓸 수 있습니다)")
-    ty = st.radio("유형", ["① 단일제 자료제출", "② 제네릭", "③ 복합제"],
+    ty = st.radio("유형", ["① 단일제 자료제출", "② 제네릭", "③ 복합제",
+                          "④ 자사 동일가", "⑤ 함량배수"],
                   horizontal=True, key="calc_ty")
 
     pool = gsum
@@ -741,12 +779,17 @@ def _price_calc_page():
     with L:
         # 이름표(key)가 고정이면 성분을 바꿔도 앞서 입력한 숫자가 그대로 남는다.
         # 제제코드를 섞어 성분마다 다른 칸으로 만들어, 바꾸는 즉시 새 기준가가 들어오게 한다.
-        base = st.number_input("기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)",
+        _blabel = {"④": "자사 기등재 동일 품목의 상한금액",
+                   "⑤": "비교(최근접 함량) 품목의 상한금액"}.get(
+            ty[0], "기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)")
+        base = st.number_input(_blabel,
                                value=float(row["최고가"]), step=1.0, format="%.0f",
                                key=f"calc_base_{row['제제코드']}")
         opt = {"sub": "", "imp": "", "ostate": 0, "co": "혁", "ext": True, "ct": "제",
                "reqs": 2, "prior": int(row["품목수"]), "apply": 1,
-               "low": float(row["최저가"]), "cheap": 0.0}
+               "low": float(row["최저가"]), "cheap": 0.0,
+               "mg_new": 0.0, "mg_ref": 0.0, "own": True,
+               "special": False, "bio": False, "bval": 1.0}
         if ty.startswith("①"):
             opt["sub"] = st.radio("산정 유형",
                                   ["염·이성체 / 신규제형 (90% · 조정가 기준 100%)",
@@ -808,10 +851,44 @@ def _price_calc_page():
                     opt["cheap"] = float(CHEAP[_sel])
                     c2.caption(f"{CHEAP[_sel]:,}원 — 투여 {row.get('투여') or '?'} · "
                                f"단위 {row.get('단위') or '?'} 로 자동 판정")
-        else:
+        elif ty.startswith("③"):
             opt["ct"] = st.radio("복합제 유형", ["제네릭/자료제출 (45%)", "개량신약 복합제 (60%)",
                                              "개량신약 복합제 + 혁신형 (68%)"], key="calc_ct")
             opt["ext"] = st.checkbox("+3년 연장 요건 충족 가정", value=True, key="calc_ext2")
+        elif ty.startswith("④"):
+            st.caption("자사가 이미 등재한 것과 **똑같은 품목**을 허가받는 경우입니다. "
+                       "위 칸에 그 자사 품목의 상한금액을 넣으면 같은 금액이 나옵니다. "
+                       "입력할 것이 더 없습니다.")
+        else:
+            m1, m2 = st.columns(2)
+            opt["mg_new"] = float(m1.number_input(
+                "신청 제품 함량", min_value=0.0, value=0.0, step=1.0,
+                format="%.4g", key="calc_mgnew"))
+            opt["mg_ref"] = float(m2.number_input(
+                "비교(최근접 함량) 제품 함량", min_value=0.0, value=0.0, step=1.0,
+                format="%.4g", key="calc_mgref"))
+            st.caption(f"단위는 둘이 같기만 하면 됩니다 (이 제제의 단위: "
+                       f"{row.get('단위') or '?'}).")
+            opt["own"] = st.radio(
+                "A 를 무엇으로 잡나", ["(가) 자사제품이 등재되어 있다 — 그 상한금액",
+                                 "(나) 자사제품이 없다 — 최근접 함량 최고가의 45%"],
+                key="calc_own").startswith("(가)")
+            if not opt["own"]:
+                opt["special"] = st.checkbox("마약 또는 생물의약품 (45% 대신 70%)",
+                                             value=False, key="calc_special")
+            opt["bio"] = st.checkbox("생물의약품이라 B 대신 B′ 를 쓴다",
+                                     value=False, key="calc_bio2")
+            if opt["bio"]:
+                opt["bval"] = float(st.number_input(
+                    "B′ 값 직접 입력", min_value=0.0001, value=1.0, step=0.01,
+                    format="%.4f", key="calc_bval"))
+                st.caption("고시에 B′ 식이 따로 있으면 알려주세요. 코드에 넣겠습니다.")
+            elif opt["mg_new"] > 0 and opt["mg_ref"] > 0:
+                _b = dose_b(opt["mg_new"], opt["mg_ref"])
+                _h = "×" if opt["mg_new"] > opt["mg_ref"] else ("÷" if opt["mg_new"] < opt["mg_ref"] else "=")
+                st.caption(f"B = {{({max(opt['mg_new'], opt['mg_ref']):g} ÷ "
+                           f"{min(opt['mg_new'], opt['mg_ref']):g} − 1) × 0.5}} + 1 = "
+                           f"**{_b:.4f}** → A {_h} B")
 
     phases, note = _calc_phases(ty, base, opt)
     with R:
