@@ -8,6 +8,7 @@
 원자료는 남기지 않는다. 작업 브랜치 전용 — 사이트 동작과 무관하다.
 """
 import os
+import re
 import time
 
 import pandas as pd
@@ -141,28 +142,66 @@ def col_report(df, col, label):
               + ("자유 입력에 가깝다" if uniq and once / uniq > 0.5 else "정해진 값에 가깝다"))
 
 
+def bucket(v):
+    """단계 값을 바구니로. 글자 모양으로 판단한다."""
+    t = str(v).strip()
+    if "생동" in t:
+        return "생동"
+    if "연구자" in t:
+        return "(제외) 연구자"
+    if "연장" in t:
+        return "(제외) 연장"
+    m = re.fullmatch(r"(\d)[ab]?상", t)
+    if m:
+        return f"{m.group(1)}상"
+    if re.fullmatch(r"\d[ab]?/\d[ab]?상", t):
+        return re.sub(r"[ab]", "", t)      # 1/2a상 → 1/2상
+    return "미분류"
+
+
+CODEY = re.compile(r"[A-Za-z]")
+DIGIT = re.compile(r"\d")
+
+
+def looks_like_code(v):
+    """한글이 하나도 없는 이름인가. 개발코드(DS-8201a, HCP1701)와
+    영문 성분명(nivolumab)이 함께 걸린다 — 둘 다 한글 주성분명과 바로
+    못 잇는다는 점은 같아서 하나로 센다. 예시를 같이 뽑아 구분한다."""
+    t = str(v).strip()
+    if not t:
+        return False
+    has_kor = any("\uac00" <= ch <= "\ud7a3" for ch in t)
+    return (not has_kor) and bool(CODEY.search(t))
+
+
 def main():
     if not fetch():
         return 1
     df = pd.read_csv(OUT, dtype=str, keep_default_na=False)
-    print(f"\n받은 행 {len(df):,} · 열 {list(df.columns)}\n")
+    print(f"\n받은 행 {len(df):,}\n")
+    df["_b"] = df["단계"].map(bucket) if "단계" in df.columns else "?"
 
-    step = "단계"
-    if step in df.columns:
-        print("── 단계 전체 분포 (상위 15개가 아닌 전부) ──")
-        vc = df[step].astype(str).str.strip().replace("", "(공백)").value_counts()
-        for k, v in vc.items():
-            print(f"  {k:<18}{v:>8,}")
-        print(f"  합계 {vc.sum():,} · 값 종류 {len(vc)}개\n")
+    s = df["성분명"].astype(str).str.strip()
+    df["_blank"] = s == ""
+    df["_code"] = s.map(looks_like_code)
+    df["_multi"] = s.str.contains(",")
 
-    for name, sel in [("전체", df),
-                      ("생동", df[df.get(step, pd.Series("", index=df.index))
-                                 .astype(str).str.contains("생동", na=False)])]:
-        print(f"── {name} {len(sel):,}건 ──")
-        col_report(sel, "성분명", "성분명")
-        col_report(sel, "대상질환", "대상질환 (TRGT_DISS_NM)")
-        col_report(sel, "대상질환(세부)", "대상질환 세부 (TRGT_DISS_DTL_CD_NM)")
-        print()
+    print("── 바구니별 성분명 상태 ──")
+    print(f"{'바구니':<14}{'건수':>7}{'빈칸':>7}{'비한글명':>9}{'비율':>9}{'복합(쉼표)':>11}{'이름 종류':>9}")
+    for b, g in sorted(df.groupby("_b"), key=lambda kv: -len(kv[1])):
+        gs = g["성분명"].astype(str).str.strip()
+        nz = gs[gs != ""]
+        print(f"{b:<14}{len(g):>7,}{int(g['_blank'].sum()):>7,}"
+              f"{int(g['_code'].sum()):>9,}{100*g['_code'].mean():>8.1f}%"
+              f"{int(g['_multi'].sum()):>11,}{nz.nunique():>9,}")
+
+    print("\n── 바구니별 '한글 아닌 이름' 예시 ──")
+    for b in ["1상", "2상", "3상", "생동"]:
+        g = df[(df["_b"] == b) & df["_code"]]["성분명"].astype(str)
+        if len(g):
+            print(f"  {b}: " + " · ".join(g.value_counts().head(6).index.tolist())[:200])
+        else:
+            print(f"  {b}: (없음)")
     return 0
 
 
