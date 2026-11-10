@@ -23,14 +23,14 @@ jobs:
 
       - name: 브라우저 준비
         run: |
-          python -m pip install --quiet playwright==1.49.0 pandas==2.2.3
+          python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
 
-      - name: 승인일 최신성 확인
+      - name: 약가 산정 화면 확인
         env:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-        run: python .github/scripts/clin_stats.py
+        run: python .github/scripts/check_calc.py
 
       - name: 화면 남기기
         if: always()
