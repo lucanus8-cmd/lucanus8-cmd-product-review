@@ -143,65 +143,48 @@ def col_report(df, col, label):
 
 
 def bucket(v):
-    """단계 값을 바구니로. 글자 모양으로 판단한다."""
     t = str(v).strip()
-    if "생동" in t:
-        return "생동"
-    if "연구자" in t:
-        return "(제외) 연구자"
-    if "연장" in t:
-        return "(제외) 연장"
+    if "생동" in t: return "생동"
+    if "연구자" in t: return "(제외) 연구자"
+    if "연장" in t: return "(제외) 연장"
     m = re.fullmatch(r"(\d)[ab]?상", t)
-    if m:
-        return f"{m.group(1)}상"
-    if re.fullmatch(r"\d[ab]?/\d[ab]?상", t):
-        return re.sub(r"[ab]", "", t)      # 1/2a상 → 1/2상
+    if m: return f"{m.group(1)}상"
+    if re.fullmatch(r"\d[ab]?/\d[ab]?상", t): return re.sub(r"[ab]", "", t)
     return "미분류"
 
 
-CODEY = re.compile(r"[A-Za-z]")
-DIGIT = re.compile(r"\d")
-
-
-def looks_like_code(v):
-    """한글이 하나도 없는 이름인가. 개발코드(DS-8201a, HCP1701)와
-    영문 성분명(nivolumab)이 함께 걸린다 — 둘 다 한글 주성분명과 바로
-    못 잇는다는 점은 같아서 하나로 센다. 예시를 같이 뽑아 구분한다."""
-    t = str(v).strip()
-    if not t:
-        return False
-    has_kor = any("\uac00" <= ch <= "\ud7a3" for ch in t)
-    return (not has_kor) and bool(CODEY.search(t))
-
-
 def main():
+    """승인일이 얼마나 최신인지, 기간 버튼(1주/1달/1년)이 성립하는지 본다."""
     if not fetch():
         return 1
     df = pd.read_csv(OUT, dtype=str, keep_default_na=False)
-    print(f"\n받은 행 {len(df):,}\n")
-    df["_b"] = df["단계"].map(bucket) if "단계" in df.columns else "?"
+    d = pd.to_datetime(df["승인일"], errors="coerce")
+    df["_d"] = d
+    df["_b"] = df["단계"].map(bucket)
+    ok = d.notna()
+    print(f"\n받은 행 {len(df):,} · 승인일 읽힘 {int(ok.sum()):,} ({100*ok.mean():.1f}%)")
+    print(f"가장 이른 승인일 {d.min()}  ·  가장 늦은 승인일 {d.max()}")
 
-    s = df["성분명"].astype(str).str.strip()
-    df["_blank"] = s == ""
-    df["_code"] = s.map(looks_like_code)
-    df["_multi"] = s.str.contains(",")
+    today = pd.Timestamp.now().normalize()
+    print(f"오늘 {today.date()} 기준, 자료가 뒤처진 날수: {(today - d.max()).days}일\n")
 
-    print("── 바구니별 성분명 상태 ──")
-    print(f"{'바구니':<14}{'건수':>7}{'빈칸':>7}{'비한글명':>9}{'비율':>9}{'복합(쉼표)':>11}{'이름 종류':>9}")
-    for b, g in sorted(df.groupby("_b"), key=lambda kv: -len(kv[1])):
-        gs = g["성분명"].astype(str).str.strip()
-        nz = gs[gs != ""]
-        print(f"{b:<14}{len(g):>7,}{int(g['_blank'].sum()):>7,}"
-              f"{int(g['_code'].sum()):>9,}{100*g['_code'].mean():>8.1f}%"
-              f"{int(g['_multi'].sum()):>11,}{nz.nunique():>9,}")
+    print("── 최근 기간별 승인 건수 ──")
+    print(f"{'기간':<10}{'전체':>8}{'생동':>8}{'1상':>7}{'2상':>7}{'3상':>7}")
+    for label, days in [("1주", 7), ("1달", 30), ("3달", 90), ("1년", 365), ("3년", 1095)]:
+        cut = today - pd.Timedelta(days=days)
+        sub = df[df["_d"] >= cut]
+        g = sub["_b"].value_counts()
+        print(f"{label:<10}{len(sub):>8,}{g.get('생동', 0):>8,}"
+              f"{g.get('1상', 0):>7,}{g.get('2상', 0):>7,}{g.get('3상', 0):>7,}")
 
-    print("\n── 바구니별 '한글 아닌 이름' 예시 ──")
-    for b in ["1상", "2상", "3상", "생동"]:
-        g = df[(df["_b"] == b) & df["_code"]]["성분명"].astype(str)
-        if len(g):
-            print(f"  {b}: " + " · ".join(g.value_counts().head(6).index.tolist())[:200])
-        else:
-            print(f"  {b}: (없음)")
+    print("\n── 최근 12개월, 월별 승인 건수 ──")
+    recent = df[df["_d"] >= today - pd.Timedelta(days=365)]
+    if len(recent):
+        m = recent.groupby(recent["_d"].dt.to_period("M")).size()
+        for k, v in m.items():
+            print(f"  {k}  {v:>5,}  {'█' * max(1, int(v / max(1, m.max()) * 40))}")
+    else:
+        print("  최근 1년 자료 없음")
     return 0
 
 
