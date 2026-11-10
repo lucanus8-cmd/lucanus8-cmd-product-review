@@ -135,8 +135,31 @@ def probe(pg, term):
             o.click()
             break
     if picked is None:
-        print("  드롭다운에 후보가 없다 — 허가 자료에 이 성분이 없다는 뜻")
+        # 왜 없는지 단정하지 말고, 검색어를 지운 목록이 어떻게 생겼는지 찍어 둔다.
+        print(f"  '{term}' 로는 후보가 없다. 검색어를 지우고 목록 형태를 본다:")
         pg.keyboard.press("Escape")
+        time.sleep(2)
+        inp.fill("")
+        inp.press("Enter")
+        time.sleep(10)
+        sb2 = widget_with(pg, "stSelectbox", "허가 주성분 선택")
+        if sb2:
+            try:
+                print("    드롭다운 머리글:", (sb2.inner_text() or "").splitlines()[0][:70])
+            except Exception:
+                pass
+            sb2.click()
+            time.sleep(3)
+            sample = []
+            for o in find_all(pg, "li[role='option'], [data-baseweb='menu'] li")[:10]:
+                try:
+                    t = (o.inner_text() or "").strip()
+                except Exception:
+                    continue
+                if t:
+                    sample.append(t[:28])
+            print("    목록 앞부분:", sample or "(비어 있음)")
+            pg.keyboard.press("Escape")
         return
     print(f"  고른 성분: {picked[:48]}")
     time.sleep(14)
