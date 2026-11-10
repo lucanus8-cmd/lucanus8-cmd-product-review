@@ -26,11 +26,11 @@ jobs:
           python -m pip install --quiet playwright==1.49.0 pandas==2.2.3
           python -m playwright install --with-deps chromium
 
-      - name: 단계별 성분명 상태 집계
+      - name: 질환 분류 칸 떠보기
         env:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-        run: python .github/scripts/clin_stats.py
+        run: python .github/scripts/clin_probe.py
 
       - name: 화면 남기기
         if: always()
