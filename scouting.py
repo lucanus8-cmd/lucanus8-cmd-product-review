@@ -1506,6 +1506,10 @@ if PAGE == "clinical":
             _adev = b1.text_input("개발사", key="clin_dev2", placeholder="비우면 전체")
             _amode = b2.radio("키워드 조건", ["모두 포함(AND)", "하나라도 포함(OR)"],
                               horizontal=True, key="clin_kwmode")
+            # 어느 단계를 그래프에 올릴지. 기본은 전부.
+            _apick = st.multiselect("볼 단계", STEP_ORDER, default=STEP_ORDER,
+                                    key="clin_steps",
+                                    help="고른 단계만 추이 그래프에 그립니다. 지표와 표는 전체 기준입니다.")
 
             # 같은 조건을 '올해'와 '작년 같은 기간'에 각각 적용해 비교한다
             _d = pd.to_datetime(cl[_date_c], errors="coerce")
@@ -1576,13 +1580,26 @@ if PAGE == "clinical":
             _freq, _flab = ("W", "주") if _days and _days <= 60 else \
                            (("M", "월") if (_days or 9999) <= 400 else ("Q", "분기"))
             _per = _m[_date_c].pipe(pd.to_datetime, errors="coerce").dt.to_period(_freq)
-            _tr = (pd.DataFrame({"기간": _per.astype(str), "단계": _mb.values})
-                   .value_counts().reset_index(name="건수"))
-            _keep = [b for b in STEP_ORDER if b in set(_tr["단계"])]
-            _tr = _tr[_tr["단계"].isin(_keep)].sort_values("기간")
-            if _tr["기간"].nunique() >= 2 and not _tr.empty:
+            _keep = [b for b in (_apick or STEP_ORDER) if b in set(_mb)]
+            _cnt = (pd.DataFrame({"기간": _per, "단계": _mb.values})
+                    .dropna(subset=["기간"]))
+            _cnt = _cnt[_cnt["단계"].isin(_keep)]
+            if not _cnt.empty and _keep:
+                # 빈 구간은 0으로 채운다. 안 그러면 없는 분기를 건너뛰며 선이 이어져
+                # 실제보다 완만해 보이고, 단계마다 x축 차례가 달라져 선이 뒤로 꺾인다.
+                _idx = pd.period_range(_cnt["기간"].min(), _cnt["기간"].max(), freq=_freq)
+                _grid = (_cnt.value_counts(["기간", "단계"])
+                         .unstack("단계").reindex(_idx).fillna(0)
+                         .reindex(columns=_keep, fill_value=0).astype(int))
+                _order = [str(x) for x in _idx]          # 시간 순서를 x축에 못박는다
+                _tr = (_grid.rename_axis("기간").reset_index()
+                       .assign(기간=lambda d: d["기간"].astype(str))
+                       .melt(id_vars="기간", var_name="단계", value_name="건수"))
+            else:
+                _tr, _order = pd.DataFrame(columns=["기간", "단계", "건수"]), []
+            if len(_order) >= 2:
                 g1.plotly_chart(px.line(_tr, x="기간", y="건수", color="단계", markers=True,
-                                        category_orders={"단계": _keep},
+                                        category_orders={"단계": _keep, "기간": _order},
                                         title=f"단계별 추이 ({_flab} 단위)"),
                                 use_container_width=True)
             else:
@@ -1596,8 +1613,10 @@ if PAGE == "clinical":
             if not _yr.empty:
                 _yc = _yr.astype(int).value_counts().sort_index().reset_index()
                 _yc.columns = ["연도", "건수"]
-                g2.plotly_chart(px.bar(_yc, x="연도", y="건수", title="연도별 임상 승인 추이"),
-                                use_container_width=True)
+                _fy = px.bar(_yc, x="연도", y="건수", title="연도별 임상 승인 추이")
+                # 연도는 정수다. 그냥 두면 2,022.5 같은 눈금이 생긴다.
+                _fy.update_xaxes(type="category", tickformat="d", separatethousands=False)
+                g2.plotly_chart(_fy, use_container_width=True)
                 if int(_yr.max()) == _now.year:
                     g2.caption(f"{_now.year}년은 아직 진행 중이라 건수가 적게 보입니다.")
 
