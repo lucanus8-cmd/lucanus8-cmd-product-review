@@ -99,7 +99,11 @@ def probe(pg, term):
 
     # 검색 기준을 '주성분'으로
     if not click_label(pg, "주성분"):
-        print("  '주성분' 기준 칸을 못 찾았다")
+        print("  '주성분' 기준 칸을 못 찾았다 — 그때 화면 앞부분:")
+        print("    " + (text_of(pg) or "(빈 화면)")[:500].replace("\n", " | "))
+        print("    라디오 칸들:", [
+            (w.inner_text() or "").replace("\n", "/")[:60]
+            for w in find_all(pg, "[data-testid='stRadio']")][:4])
         return
     time.sleep(6)
 
@@ -187,7 +191,7 @@ def main():
         br = pw.chromium.launch()
         ctx = br.new_context(viewport={"width": 1600, "height": 1500}, locale="ko-KR")
         pg = ctx.new_page()
-        pg.goto(URL + "/", wait_until="domcontentloaded", timeout=120_000)
+        pg.goto(URL + "/?page=search", wait_until="domcontentloaded", timeout=120_000)
         for _ in range(60):
             if app_frame(pg):
                 break
@@ -209,9 +213,13 @@ def main():
                     print("로그인했다")
                     time.sleep(14)
                     continue
-            if find_all(pg, "[data-testid='stTextInput']"):
+            if any("검색 기준" in (w.inner_text() or "")
+                   for w in find_all(pg, "[data-testid='stRadio']")):
                 break
             time.sleep(2)
+        else:
+            print("검색 화면이 끝내 안 떴다 — 홈에 머물러 있을 수 있다")
+            print("  지금 화면:", (text_of(pg) or "")[:300].replace("\n", " | "))
 
         for term in TERMS:
             try:
