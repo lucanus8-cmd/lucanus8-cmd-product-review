@@ -461,6 +461,11 @@ AFTER_ADDON = .45        # 가산이 끝나면 요건률이 아니라 45% 로 �
 MP_TOTAL = 14            # 기등재 + 동시신청 합계가 이 수 이상이면 다품목 등재관리
 STEP_PRIOR = 13          # 기등재가 이 수 이상이면 계단식 약가인하
 
+# ① 단일제 자료제출의 세 갈래. 70% 가산은 가운데(동시 조정)에만 붙는다.
+OSTATE = ["조정 전 — 이번 등재로도 오리지널 조정이 일어나지 않음",
+          "동시 조정 — 이번 등재와 함께 오리지널이 조정됨 (70% 가산)",
+          "이미 조정됨 — 오리지널이 전에 조정을 마친 상태"]
+
 # 저가의약품 기준금액(원). 계단식에서 '이 값 이하면 인하 없이 최저가와 동일가'.
 # 실제 고시 자료 22,062 품목 중 22,058 개(99.98%)가 투여·단위로 가려진다.
 CHEAP = {"내복제(일반)": 77, "내복 액상제": 165, "외용제(일반)": 1100,
@@ -494,18 +499,27 @@ def _calc_phases(ty, base, opt):
         #   용법용량 개선      : 조정 전 가격 100% / 조정된 가격 110%
         salt = opt["sub"].startswith("염")
         imp = opt["imp"].startswith("개량")
-        if not opt["adj"]:
-            # 오리지널이 아직 조정되지 않았으면 산정 비율을 계속 유지한다.
-            init = R["salt"] if salt else R["dose"]
-            ph.append(("최초 등재 (조정 전 유지)", "이후", init))
-            return ph, (f"오리지널이 조정되지 않은 상태로 보고 {init*100:.0f}% 를 계속 적용했습니다. "
-                        "조정이 일어나면 위 체크를 켜세요.")
-        # 조정된 현재 약가 기준 — 70% 부터 시작해 가산이 끝나면 45%
-        ph.append(("최초등재 가산", "1년", R["addon"]))
-        ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
-                   R["improved"] if imp else R["dataonly"]))
-        ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
-        return ph, "조정된 오리지널 약가 기준으로 70% → 가산 → 45% 순으로 계산했습니다."
+        # 오리지널의 조정 상태로 세 갈래가 갈린다. 70% 가산은 '등재와 동시에
+        # 오리지널이 조정되는' 경우에만 붙는다. 이미 조정을 마친 오리지널을
+        # 기준으로 삼으면 가산 없이 100%(용법용량 개선 110%)로 산정한다.
+        st3 = int(opt.get("ostate", 0))
+        if st3 == 1:
+            ph.append(("최초등재 가산", "1년", R["addon"]))
+            ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
+                       R["improved"] if imp else R["dataonly"]))
+            ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
+            return ph, ("등재와 동시에 오리지널이 조정되는 경우입니다. "
+                        "기준가는 **조정 전** 오리지널 가격이어야 하며, "
+                        "70%에서 시작해 가산이 끝나면 45%로 유지됩니다.")
+        if st3 == 2:
+            rate = R["salt_adj"] if salt else R["dose_adj"]
+            ph.append(("이미 조정된 가격 기준", "이후", rate))
+            return ph, (f"오리지널이 이미 조정을 마친 경우라 가산 없이 {rate*100:.0f}% 로 산정합니다. "
+                        "기준가는 **조정된 뒤의** 가격이어야 합니다.")
+        init = R["salt"] if salt else R["dose"]
+        ph.append(("최초 등재 (조정 전 유지)", "이후", init))
+        return ph, (f"오리지널이 조정 전이고 이번 등재로도 조정이 일어나지 않는 경우라 "
+                    f"{init*100:.0f}% 를 계속 적용합니다. 가산은 붙지 않습니다.")
     if ty.startswith("②"):
         # 2026.8 개정고시: 기준요건(DMF·자체생동) 충족 수로 산정률이 갈린다.
         req = REQ_RATE[opt["reqs"]]
@@ -661,6 +675,9 @@ def _price_calc_page():
         if _etc:
             st.warning("고시 비고: " + " / ".join(_etc))
 
+    # 기준가가 '이미 조정된 가격'인지는 사람이 외워 둘 일이 아니라 이력에 남는다.
+    # 최고가 계열(=오리지널로 보는 줄)이 내려온 적이 있는지로 기본값만 잡아 준다.
+    adj_guess, adj_msg, adj_tail = 0, "", ""
     yr = ss.price_group_yearly()
     h = yr[yr["제제코드"] == row["제제코드"]].sort_values("연").copy()
     if h.empty:
@@ -687,6 +704,39 @@ def _price_calc_page():
         if _flat:
             st.caption("등재 이후 상한금액이 바뀐 적이 없습니다 — 선이 평평한 것이 정상입니다.")
 
+        _hi = pd.to_numeric(h["최고"], errors="coerce").ffill()
+        _y0 = int(h["연"].iloc[0])
+        adj_tail = f" 이력은 {_y0}년부터라, 그 이전의 조정은 이 자료에 없습니다."
+        if len(_hi) >= 2 and float(_hi.max()) > 0:
+            # 조정(특허만료·제네릭 진입)은 한 번에 30% 안팎으로 뚝 떨어진다.
+            # 사용량-약가 연동이나 실거래가 인하는 한 자릿수라, 섞이지 않게 나눠 본다.
+            _cuts = [(int(h["연"].iloc[i]), float(_hi.iloc[i - 1]), float(_hi.iloc[i]))
+                     for i in range(1, len(_hi))
+                     if _hi.iloc[i - 1] > 0 and _hi.iloc[i] < _hi.iloc[i - 1]]
+            _big = [c for c in _cuts if c[2] < c[1] * 0.80]
+            _peak, _now = float(_hi.max()), float(_hi.iloc[-1])
+            _ratio = _now / _peak
+            _head = (f"역대 최고 {_peak:,.0f}원({int(h['연'].iloc[int(_hi.argmax())])}) "
+                     f"→ 현재 {_now:,.0f}원 · **{_ratio * 100:.0f}%**")
+            if _big:
+                adj_guess = 2
+                _cy, _p0, _p1 = max(_big, key=lambda c: (c[1] - c[2]) / c[1])
+                adj_msg = (f"{_head}. 가장 큰 인하는 {_cy}년 {_p0:,.0f} → {_p1:,.0f}원 "
+                           f"({(_p1 - _p0) / _p0 * 100:.0f}%)입니다.")
+                st.warning("**조정 자국이 뚜렷합니다** — " + adj_msg
+                           + " 기준가가 이미 조정된 가격일 가능성이 큽니다." + adj_tail)
+            elif _ratio <= 0.80:
+                adj_msg = (f"{_head}. 한 번에 20% 넘게 떨어진 적은 없고 "
+                           f"{len(_cuts)}번에 나눠 내려왔습니다.")
+                st.warning("**여러 번에 걸쳐 내려왔습니다** — " + adj_msg
+                           + " 조정인지 사용량-약가 연동·실거래가 인하인지는 "
+                           "약가 조회 탭의 인하 시점 표에서 확인하세요." + adj_tail)
+            else:
+                adj_msg = (f"{_head}. {_y0}년 이후 20% 넘는 인하가 없습니다."
+                           if _cuts else f"{_y0}년 이후 인하 기록이 없습니다 (현재 {_now:,.0f}원).")
+                st.info("**조정 자국이 보이지 않습니다** — " + adj_msg + adj_tail
+                        + " 이번 등재로 조정이 일어나는지는 아래에서 고르세요.")
+
     L, R = st.columns(2)
     with L:
         # 이름표(key)가 고정이면 성분을 바꿔도 앞서 입력한 숫자가 그대로 남는다.
@@ -694,7 +744,7 @@ def _price_calc_page():
         base = st.number_input("기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)",
                                value=float(row["최고가"]), step=1.0, format="%.0f",
                                key=f"calc_base_{row['제제코드']}")
-        opt = {"sub": "", "imp": "", "adj": True, "co": "혁", "ext": True, "ct": "제",
+        opt = {"sub": "", "imp": "", "ostate": 0, "co": "혁", "ext": True, "ct": "제",
                "reqs": 2, "prior": int(row["품목수"]), "apply": 1,
                "low": float(row["최저가"]), "cheap": 0.0}
         if ty.startswith("①"):
@@ -703,10 +753,12 @@ def _price_calc_page():
                                    "용법용량 개선 (100% · 조정가 기준 110%)"], key="calc_sub")
             opt["imp"] = st.radio("개량신약 인정", ["개량신약 (70% · 3년+α)", "자료제출 (60% · 최대 3년)"],
                                   key="calc_imp")
-            opt["adj"] = st.checkbox(
-                "**기준가가 이미 조정된 오리지널 가격이다**", value=False, key="calc_adj")
-            st.caption("조정 전 가격이면 90%(용법용량 개선은 100%), "
-                       "이미 조정된 가격이면 100%(용법용량 개선은 110%)를 적용합니다.")
+            opt["ostate"] = OSTATE.index(st.radio(
+                "**오리지널 조정 상태**", OSTATE, index=adj_guess,
+                key=f"calc_ostate_{row['제제코드']}"))
+            st.caption("70% 가산은 **등재와 동시에 오리지널이 조정되는** 경우에만 붙습니다. "
+                       "이미 조정을 마친 오리지널을 기준으로 삼으면 가산 없이 "
+                       "100%(용법용량 개선 110%)입니다.")
         elif ty.startswith("②"):
             q1, q2 = st.columns(2)
             _dmf = q1.checkbox("DMF 등록 원료", value=True, key="calc_dmf")
