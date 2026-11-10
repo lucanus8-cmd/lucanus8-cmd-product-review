@@ -452,7 +452,38 @@ CALC_RATE = {"salt": .90, "salt_adj": 1.00, "dose": 1.00, "dose_adj": 1.10,
              "addon": .70, "improved": .70, "dataonly": .60, "after": .45,
              "gen_base": .45, "gen_innov": .60, "gen_semi": .50,
              "combo_base": .45, "combo_imp": .60, "combo_innov": .68}
-MP_LIMIT, MP_RATE = 13, .85      # 다품목 등재: 13개 이상 → 1년 뒤 직전 최저가의 85%
+# ── 2026.8 개정고시 ─────────────────────────────────────────────────────
+# 기준요건(DMF·자체생동) 충족 수에 따른 산정률. 0개는 산술로 28.8% 지만 고시 표기대로 29%.
+REQ_RATE = {2: .45, 1: .36, 0: .29}
+STEP_RATE = .29          # 계단식은 기준요건과 무관하게 29% 기준
+AFTER_CUT = .85          # 다품목 1년 후 · 계단식 모두 85%
+AFTER_ADDON = .45        # 가산이 끝나면 요건률이 아니라 45% 로 유지된다
+MP_TOTAL = 14            # 기등재 + 동시신청 합계가 이 수 이상이면 다품목 등재관리
+STEP_PRIOR = 13          # 기등재가 이 수 이상이면 계단식 약가인하
+
+# 저가의약품 기준금액(원). 계단식에서 '이 값 이하면 인하 없이 최저가와 동일가'.
+# 실제 고시 자료 22,062 품목 중 22,058 개(99.98%)가 투여·단위로 가려진다.
+CHEAP = {"내복제(일반)": 77, "내복 액상제": 165, "외용제(일반)": 1100,
+         "1회용 외용제(관포장)": 165, "주사제": 1000}
+
+def cheap_kind(route, unit):
+    """투여·단위로 저가의약품 분류를 고른다. 못 가리면 None."""
+    r, u = str(route or "").strip(), str(unit or "")
+    if r == "주사":
+        return "주사제"
+    if r == "내복":
+        return "내복 액상제" if "mL" in u else "내복제(일반)"
+    if r == "외용":
+        return "1회용 외용제(관포장)" if "관" in u else "외용제(일반)"
+    return None
+
+def calc_route(prior, applying):
+    """일반 / 다품목 / 계단식 중 어디에 해당하나. prior 는 오리지널을 포함해 센다."""
+    if prior >= STEP_PRIOR:
+        return "계단식"
+    if prior + applying >= MP_TOTAL:
+        return "다품목"
+    return "일반"
 
 def _calc_phases(ty, base, opt):
     """유형별 단계 목록 [(이름, 기간, 비율)] 과 안내문."""
@@ -476,21 +507,54 @@ def _calc_phases(ty, base, opt):
         ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
         return ph, "조정된 오리지널 약가 기준으로 70% → 가산 → 45% 순으로 계산했습니다."
     if ty.startswith("②"):
-        rate = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": R["gen_base"]}[opt["co"][0]]
-        if opt["mp"]:
-            ph.append(("등재 ~ 1년", "1년", rate))
-            ph.append(("1년 뒤 — 15% 인하", "이후",
-                       (opt["low"] * MP_RATE / base) if base else 0))
-            return ph, ("다품목 등재를 적용했습니다(1년 뒤 15% 인하, 한 번). "
-                        "가산과 함께 걸릴 때의 선후관계는 확인이 필요합니다.")
-        if rate == R["gen_base"]:
-            ph.append(("기본 산정", "이후", rate))
-        else:
-            ph.append(("가산 1년", "1년", rate))
+        # 2026.8 개정고시: 기준요건(DMF·자체생동) 충족 수로 산정률이 갈린다.
+        req = REQ_RATE[opt["reqs"]]
+        way = calc_route(opt["prior"], opt["apply"])
+        add = {"혁": R["gen_innov"], "준": R["gen_semi"], "해": None}[opt["co"][0]]
+
+        if way == "계단식":
+            # min(기등재 최저가, 기준가×29%) × 85%
+            # 단, 기등재 최저가가 저가의약품 기준금액 이하면 인하 없이 최저가와 동일가.
+            low, cheap = float(opt["low"]), float(opt["cheap"])
+            if base <= 0:
+                return [("계단식 산정", "이후", 0)], "기준가를 넣어주세요."
+            if cheap and low <= cheap:
+                ph.append(("저가의약품 — 최저가와 동일", "이후", low / base))
+                return ph, (f"기등재 최저가 {low:,.0f}원이 저가의약품 기준금액 "
+                            f"{cheap:,.0f}원 이하라, 인하 없이 최저가와 같은 값으로 산정합니다.")
+            amt = min(low, base * STEP_RATE) * AFTER_CUT
+            ph.append(("계단식 산정", "이후", amt / base))
+            pick = "기등재 최저가" if low < base * STEP_RATE else "29% 산정액"
+            return ph, (f"기등재 동일제제가 {opt['prior']}개라 계단식 약가인하 대상입니다. "
+                        f"min(기등재 최저가 {low:,.0f}원, 29% 산정액 {base*STEP_RATE:,.0f}원)"
+                        f" = {pick} → ×85%. 기준요건 충족 여부와 무관합니다.")
+
+        if add:
+            ph.append(("가산 1년", "1년", add))
             if opt["ext"]:
-                ph.append(("가산 연장", "3년", rate))
-            ph.append((f"가산 종료 후 ({R['gen_base']*100:.0f}%)", "이후", R["gen_base"]))
-        return ph, "등재 순번에 따른 계단식 인하는 반영하지 않았습니다."
+                ph.append(("가산 연장", "3년", add))
+
+        if way == "다품목":
+            if add:
+                # 가산 중에는 인하가 걸리지 않는다. 가산이 끝나면 45% 하락과 85% 인하가 한 번에.
+                ph.append(("가산 종료 — 45% × 85%", "이후", AFTER_ADDON * AFTER_CUT))
+                note = ("다품목 등재관리 대상입니다. 가산을 받는 동안은 인하가 걸리지 않고, "
+                        "가산이 끝나는 순간 45%로 떨어짐과 동시에 85%가 같이 걸립니다.")
+            else:
+                ph.append(("등재 ~ 1년", "1년", req))
+                ph.append(("1년 후 — 다품목 85%", "이후", req * AFTER_CUT))
+                note = ("다품목 등재관리 대상입니다. 등재 1년 뒤 최초 산정가의 85%로 조정됩니다 "
+                        f"({req*100:.0f}% → {req*AFTER_CUT*100:.2f}%).")
+            return ph, (f"기등재 {opt['prior']}개 + 동시신청 {opt['apply']}개 = "
+                        f"{opt['prior']+opt['apply']}개. " + note)
+
+        if add:
+            ph.append((f"가산 종료 후 ({AFTER_ADDON*100:.0f}%)", "이후", AFTER_ADDON))
+            return ph, ("가산이 끝나면 기준요건과 무관하게 45%로 유지됩니다.")
+        ph.append(("기본 산정", "이후", req))
+        return ph, (f"기준요건 {opt['reqs']}개 충족 → {req*100:.0f}%. "
+                    f"기등재 {opt['prior']}개 + 동시신청 {opt['apply']}개라 "
+                    "다품목·계단식에는 해당하지 않습니다.")
     rate = {"제": R["combo_base"], "개": R["combo_imp"]}[opt["ct"][0]]
     if "혁신형" in opt["ct"]:
         rate = R["combo_innov"]
@@ -502,6 +566,13 @@ def _calc_phases(ty, base, opt):
             ph.append(("가산 연장", "3년", rate))
         ph.append((f"가산 종료 후 ({R['combo_base']*100:.0f}%)", "이후", R["combo_base"]))
     return ph, "성분별 금액은 해당 단일제의 산정 기준가를 씁니다."
+
+def won(x):
+    """원 단위 반올림. int() 로 버리면 고시 금액과 1원씩 어긋난다
+    (예: 2,032 × 36% = 731.52 → 고시 732, 버리면 731).
+    파이썬 round() 는 .5 에서 짝수로 가므로 사사오입을 직접 쓴다."""
+    import math
+    return math.floor(float(x) + 0.5)
 
 def _calc_chart(base, phases):
     """단계별 예상 상한금액을 계단 그래프로. '이후' 구간은 2년 폭으로 그린다."""
@@ -527,7 +598,7 @@ def _calc_chart(base, phases):
     t = 0.0
     for name, term, rate in phases:
         dur = 2.0 if term == "이후" else float(str(term).replace("년", "") or 1)
-        fig.add_annotation(x=t + dur / 2, y=base * rate, text=f"{int(base*rate):,}원",
+        fig.add_annotation(x=t + dur / 2, y=base * rate, text=f"{won(base*rate):,}원",
                            showarrow=False, yshift=14, font=dict(size=12, color="#c9376b"))
         t += dur
     fig.update_layout(height=260, margin=dict(l=10, r=10, t=36, b=10), showlegend=False,
@@ -624,7 +695,8 @@ def _price_calc_page():
                                value=float(row["최고가"]), step=1.0, format="%.0f",
                                key=f"calc_base_{row['제제코드']}")
         opt = {"sub": "", "imp": "", "adj": True, "co": "혁", "ext": True, "ct": "제",
-               "mp": False, "low": float(row["최저가"])}
+               "reqs": 2, "prior": int(row["품목수"]), "apply": 1,
+               "low": float(row["최저가"]), "cheap": 0.0}
         if ty.startswith("①"):
             opt["sub"] = st.radio("산정 유형",
                                   ["염·이성체 / 신규제형 (90% · 조정가 기준 100%)",
@@ -636,20 +708,54 @@ def _price_calc_page():
             st.caption("조정 전 가격이면 90%(용법용량 개선은 100%), "
                        "이미 조정된 가격이면 100%(용법용량 개선은 110%)를 적용합니다.")
         elif ty.startswith("②"):
-            opt["co"] = st.radio("기업 유형", ["혁신형 (60%)", "준혁신형 (50%)", "해당 없음 (45%)"],
+            q1, q2 = st.columns(2)
+            _dmf = q1.checkbox("DMF 등록 원료", value=True, key="calc_dmf")
+            _bio = q2.checkbox("자체 생동시험", value=True, key="calc_bio")
+            opt["reqs"] = int(_dmf) + int(_bio)
+            st.caption(f"기준요건 **{opt['reqs']}개 충족 → 산정률 "
+                       f"{REQ_RATE[opt['reqs']]*100:.0f}%** "
+                       "(2개 45% · 1개 36% · 0개 29%)")
+
+            opt["co"] = st.radio("기업 유형 (정책가산)",
+                                 ["혁신형 (60%)", "준혁신형 (50%)", "해당 없음 (가산 없음)"],
                                  key="calc_co")
             opt["ext"] = st.checkbox("+3년 연장 요건 충족 가정", value=True, key="calc_ext")
+
             st.markdown("---")
-            opt["mp"] = st.checkbox(
-                f"**다품목 등재 적용** — 제네릭 등재 시 동일 제제 {MP_LIMIT}개 이상이면 "
-                "등재 1년 뒤 직전 최저가에서 15% 인하", value=False, key="calc_mp")
-            st.caption(f"참고: 지금 동일제제 {int(row['품목수'])}품목 · 최저가 {row['최저가']:,.0f}원 "
-                       "— 진입 시점의 품목수는 달라집니다. 적용 여부는 직접 정하세요.")
-            if opt["mp"]:
-                opt["low"] = st.number_input("직전 최저가 (자동 채움 · 고쳐 쓸 수 있음)",
-                                             value=float(row["최저가"]), step=1.0,
-                                             format="%.0f", key=f"calc_low_{row['제제코드']}")
-                st.caption("내 앞서 들어온 품목이 이미 15% 인하를 받았다면, 그 내려간 가격을 넣으세요.")
+            st.markdown("**등재 상황** — 어느 규칙에 걸리는지 여기서 정해집니다")
+            n1, n2 = st.columns(2)
+            opt["prior"] = int(n1.number_input(
+                "기등재 동일제제 수 (오리지널 포함)", min_value=0, step=1,
+                value=int(row["품목수"]), key=f"calc_prior_{row['제제코드']}"))
+            opt["apply"] = int(n2.number_input(
+                "동시 신청 품목 수", min_value=1, step=1, value=1, key="calc_apply"))
+            _way = calc_route(opt["prior"], opt["apply"])
+            st.caption(f"지금 이 제제의 등재 품목은 {int(row['품목수'])}개입니다 — "
+                       "진입 시점에는 달라지니 직접 고쳐 쓰세요.")
+            {"일반": st.info, "다품목": st.warning, "계단식": st.error}[_way](
+                {"일반": f"**일반 산정** — 합계 {opt['prior']+opt['apply']}개. "
+                         f"{REQ_RATE[opt['reqs']]*100:.0f}% 로 등재됩니다.",
+                 "다품목": f"**다품목 등재관리** — 기등재 {opt['prior']} + 신청 {opt['apply']} = "
+                          f"{opt['prior']+opt['apply']}개 (14개 이상). 1년 뒤 85%로 조정됩니다.",
+                 "계단식": f"**계단식 약가인하** — 기등재가 {opt['prior']}개 (13개 이상)라 "
+                          "min(기등재 최저가, 29% 산정액) × 85% 로 산정됩니다."}[_way])
+
+            if _way == "계단식":
+                c1, c2 = st.columns(2)
+                opt["low"] = c1.number_input(
+                    "기등재 동일제제 최저가", value=float(row["최저가"]), step=1.0,
+                    format="%.0f", key=f"calc_low_{row['제제코드']}")
+                _kind = cheap_kind(row.get("투여"), row.get("단위"))
+                _opts = list(CHEAP) + ["직접 입력"]
+                _idx = _opts.index(_kind) if _kind in _opts else len(_opts) - 1
+                _sel = c2.selectbox("저가의약품 기준", _opts, index=_idx, key="calc_cheapkind")
+                if _sel == "직접 입력":
+                    opt["cheap"] = c2.number_input("기준금액(원)", value=0.0, step=1.0,
+                                                   format="%.0f", key="calc_cheapamt")
+                else:
+                    opt["cheap"] = float(CHEAP[_sel])
+                    c2.caption(f"{CHEAP[_sel]:,}원 — 투여 {row.get('투여') or '?'} · "
+                               f"단위 {row.get('단위') or '?'} 로 자동 판정")
         else:
             opt["ct"] = st.radio("복합제 유형", ["제네릭/자료제출 (45%)", "개량신약 복합제 (60%)",
                                              "개량신약 복합제 + 혁신형 (68%)"], key="calc_ct")
@@ -657,15 +763,15 @@ def _price_calc_page():
 
     phases, note = _calc_phases(ty, base, opt)
     with R:
-        st.metric("등재 시 예상 상한금액", f"{int(base * phases[0][2]):,} 원",
+        st.metric("등재 시 예상 상한금액", f"{won(base * phases[0][2]):,} 원",
                   delta=f"기준가 대비 {phases[0][2]*100:.2f}%", delta_color="off")
         if base > 0:
             st.plotly_chart(_calc_chart(base, phases), use_container_width=True)
         st.dataframe(pd.DataFrame([{"단계": n, "기간": y, "비율": f"{r*100:.2f}%",
-                                    "상한금액": f"{int(base*r):,} 원"} for n, y, r in phases]),
+                                    "상한금액": f"{won(base*r):,} 원"} for n, y, r in phases]),
                      use_container_width=True, hide_index=True)
         st.caption("산정 근거")
-        st.code("\n".join(f"{n}: {base:,.0f} × {r*100:.2f}% = {int(base*r):,}원"
+        st.code("\n".join(f"{n}: {base:,.0f} × {r*100:.2f}% = {won(base*r):,}원"
                           for n, y, r in phases), language=None)
     st.caption(note + "  산정 비율은 제도 변경 시 코드 상단 CALC_RATE 에서 고칩니다.")
 
