@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       drug:
-        description: "확인할 성분명"
+        description: "확인할 성분명(쉼표로 여러 개)"
         required: false
-        default: "아토르바스타틴"
+        default: "아토르바스타틴,로수바스타틴"
 
 jobs:
   check:
@@ -31,9 +31,9 @@ jobs:
           python -m pip install --quiet playwright==1.49.0 pandas
           python -m playwright install --with-deps chromium
 
-      - name: 연도별 약가 인하 확인
+      - name: 허가-약가 연결 확인
         env:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
-          DRUG: ${{ inputs.drug }}
-        run: python .github/scripts/price_drop.py
+          DRUGS: ${{ inputs.drug }}
+        run: python .github/scripts/check_join.py
