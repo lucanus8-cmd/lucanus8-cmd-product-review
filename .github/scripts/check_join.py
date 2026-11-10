@@ -97,13 +97,8 @@ def probe(pg, term):
     print(f"성분: {term}")
     print("=" * 68)
 
-    # 검색 기준을 '주성분'으로
     if not click_label(pg, "주성분"):
-        print("  '주성분' 기준 칸을 못 찾았다 — 그때 화면 앞부분:")
-        print("    " + (text_of(pg) or "(빈 화면)")[:500].replace("\n", " | "))
-        print("    라디오 칸들:", [
-            (w.inner_text() or "").replace("\n", "/")[:60]
-            for w in find_all(pg, "[data-testid='stRadio']")][:4])
+        print("  '주성분' 기준 칸을 못 찾았다")
         return
     time.sleep(6)
 
@@ -114,9 +109,8 @@ def probe(pg, term):
     inp = box.query_selector("input")
     inp.fill(term)
     inp.press("Enter")
-    time.sleep(10)
+    time.sleep(12)
 
-    # 드롭다운에서 첫 후보를 고른다
     sb = widget_with(pg, "stSelectbox", "허가 주성분 선택")
     if sb is None:
         print("  성분 드롭다운을 못 찾았다")
@@ -125,36 +119,33 @@ def probe(pg, term):
         print("  드롭다운 머리글:", (sb.inner_text() or "").splitlines()[0][:70])
     except Exception:
         pass
-    # 목록 항목을 직접 읽는 대신 키보드로 고른다 — 이 화면의 목록은 DOM 으로 안 잡힌다.
+
+    # 드롭다운을 열고 아래 화살표로 첫 후보를 고른다(타자 + Enter 가 안 먹었다).
     sb.click()
     time.sleep(3)
-    pg.keyboard.type(term, delay=60)
-    time.sleep(4)
+    pg.keyboard.press("ArrowDown")
+    time.sleep(1)
     pg.keyboard.press("Enter")
-    time.sleep(16)
+    time.sleep(18)
 
+    # 위젯 값은 input 의 value 에 들어 있다. 글자로는 안 읽힌다.
+    val = ""
     sb = widget_with(pg, "stSelectbox", "허가 주성분 선택")
-    picked = ""
     if sb:
         try:
-            lines = [x.strip() for x in (sb.inner_text() or "").splitlines() if x.strip()]
-            picked = next((x for x in lines if "허가 주성분 선택" not in x), "")
+            i2 = sb.query_selector("input")
+            val = (i2.get_attribute("value") or "") if i2 else ""
         except Exception:
             pass
-    if not picked or "선택하세요" in picked:
-        print(f"  '{term}' 로 고르지 못했다 (지금 값: {picked or '(빈칸)'})")
-        return
-    print(f"  고른 성분: {picked[:48]}")
-    time.sleep(14)
+    print(f"  고른 값: {val[:48] or '(못 읽음 — 아래 화면 글자로 판단)'}")
 
-    body = text_of(pg)
+    body = text_of(pg) or ""
     i = body.find("허가 ")
-    if i >= 0:
-        print(f"  허가 탭 요약: {body[i:i+60].splitlines()[0]}")
-    else:
-        print("  허가 탭 요약을 못 읽었다")
+    print(f"  허가 탭 줄: {body[i:i+70].splitlines()[0] if i >= 0 else '(없음)'}")
+    if "선택하세요" in body:
+        print("  아직 '(선택하세요)' 상태 — 성분이 안 골라졌다")
+        return
 
-    # 약가·이벤트 탭으로
     moved = False
     for t in find_all(pg, "[data-baseweb='tab'], button[role='tab']"):
         try:
@@ -167,29 +158,27 @@ def probe(pg, term):
     if not moved:
         print("  약가·이벤트 탭을 못 찾았다")
         return
-    time.sleep(16)
+    time.sleep(20)
 
-    # 오리지널이 자동으로 골라졌나
     sb2 = widget_with(pg, "stSelectbox", "약가 추이를 볼 품목")
     if sb2:
         try:
-            cur = (sb2.inner_text() or "").replace("약가 추이를 볼 품목", "").strip()
-            print(f"  자동 선택된 품목: {cur.splitlines()[0][:44] if cur else '(빈칸)'}")
+            i3 = sb2.query_selector("input")
+            print("  자동 선택된 품목:", (i3.get_attribute("value") or "(빈칸)")[:44] if i3 else "(못 읽음)")
         except Exception:
             pass
     else:
-        print("  품목 드롭다운이 없다 (제품 기준으로 열렸거나 자료 없음)")
+        print("  품목 드롭다운이 없다")
 
     names = legend_names(pg)
     print(f"  그래프 범례: {names if names else '(없음)'}")
     hit = any("등재" in n or "허가" in n for n in names)
-    print(f"  >>> 초록 세모(동일성분 등재·허가): {'있다  — 연결 살아 있음' if hit else '없다  — 연결 끊김'}")
+    print(f"  >>> 초록 세모(동일성분 등재·허가): "
+          f"{'있다 — 연결 살아 있음' if hit else '없다 — 연결 끊김 또는 그래프 자체가 없음'}")
 
-    b2 = text_of(pg)
-    for mark in ("물질특허만료", "용도특허만료", "공단 약가협상", "급여삭제"):
+    b2 = text_of(pg) or ""
+    for mark in ("최초 급여가", "물질특허만료", "용도특허만료", "급여삭제", "가격 인하 시점 전후 사실"):
         print(f"      {mark}: {'보임' if mark in b2 else '안 보임'}")
-    if "가격 인하 시점 전후 사실" in b2:
-        print("      인하 시점 표: 보임")
 
 
 def main():
