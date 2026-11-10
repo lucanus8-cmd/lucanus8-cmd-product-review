@@ -1509,7 +1509,8 @@ if PAGE == "clinical":
             # 어느 단계를 그래프에 올릴지. 기본은 전부.
             _apick = st.multiselect("볼 단계", STEP_ORDER, default=STEP_ORDER,
                                     key="clin_steps",
-                                    help="고른 단계만 추이 그래프에 그립니다. 지표와 표는 전체 기준입니다.")
+                                    help="고른 단계만 봅니다. 지표·그래프·성분 순위에 모두 걸립니다. "
+                                         "비우면 전체로 돌아갑니다.")
 
             # 같은 조건을 '올해'와 '작년 같은 기간'에 각각 적용해 비교한다
             _d = pd.to_datetime(cl[_date_c], errors="coerce")
@@ -1521,6 +1522,8 @@ if PAGE == "clinical":
                 _sel &= cl["원개발사"].astype(str).str.contains(
                     _adev.strip(), case=False, na=False, regex=False)
             _sel &= _bk.ne("제외")              # 연구자 임상시험·연장은 분석에서 제외
+            if _apick and set(_apick) != set(STEP_ORDER):
+                _sel &= _bk.isin(_apick)       # 고른 단계만 — 아래 전부에 걸린다
 
             _days = _PERIODS[_pname]
             _now = pd.Timestamp.now().normalize()
@@ -1610,7 +1613,10 @@ if PAGE == "clinical":
                 g1.caption("기간이 짧아 구간이 하나뿐입니다 — 추이 대신 건수로 보여드립니다.")
 
             _yr = pd.to_datetime(_m[_date_c], errors="coerce").dt.year.dropna()
-            if not _yr.empty:
+            if _yr.nunique() < 2:
+                g2.info("고른 기간이 한 해 안에 들어 있어 연도별 그래프는 생략했습니다. "
+                        "기간을 1년 이상으로 넓히면 나타납니다.")
+            elif not _yr.empty:
                 _yc = _yr.astype(int).value_counts().sort_index().reset_index()
                 _yc.columns = ["연도", "건수"]
                 _fy = px.bar(_yc, x="연도", y="건수", title="연도별 임상 승인 추이")
@@ -1622,13 +1628,19 @@ if PAGE == "clinical":
 
             # ── 성분 순위 / 개발코드 목록 ──
             h1, h2 = st.columns(2)
-            _bio = _mb == "생동"
-            _ok = _bio.values & _named.values
-            h1.markdown(f"**🧬 생동 성분별** · {int(_bio.sum()):,}건 중 성분 확인 {int(_ok.sum()):,}건")
+            _ok = _named.values
+            _scope = "·".join(_apick) if (_apick and set(_apick) != set(STEP_ORDER)) else "전 단계"
+            h1.markdown(f"**🧬 성분별 ({_scope})** · {len(_m):,}건 중 성분 확인 {int(_ok.sum()):,}건")
             if _ok.any():
-                _rank = (_core[_ok].replace("", pd.NA).dropna()
-                         .value_counts().head(12).reset_index())
-                _rank.columns = ["성분", "건수"]
+                # 성분마다 어느 단계에 몇 건인지까지 보여준다(생동 3 · 3상 1 처럼).
+                _rk = pd.DataFrame({"성분": _core[_ok].values, "단계": _mb.values[_ok]})
+                _rk = _rk[_rk["성분"].astype(str).str.len() > 0]
+                _tot = _rk["성분"].value_counts()
+                _rank = (_rk.groupby("성분")["단계"]
+                         .apply(lambda v: " · ".join(f"{k} {n}" for k, n in v.value_counts().items()))
+                         .rename("단계별").to_frame()
+                         .assign(건수=_tot).sort_values("건수", ascending=False)
+                         .head(15).reset_index()[["성분", "건수", "단계별"]])
                 h1.dataframe(_rank, hide_index=True, use_container_width=True, height=300)
                 h1.caption("‘아토르바스타틴칼슘삼수화물’처럼 염 표기가 붙은 이름은 떼어 한 성분으로 묶습니다.")
             else:
@@ -1653,7 +1665,12 @@ if PAGE == "clinical":
                 _cols = [c for c in [_date_c, _step_c, "성분명", "제품명",
                                      "TRGT_DISS_NM", "원개발사"] if c in _m.columns]
                 _v = _m[_cols].copy()
-                _v.insert(0, "묶인 성분", _core.where(_named, "— 코드명").values)
+                # 한글 성분명은 염을 뗀 이름을, 코드명은 코드 자체를 그대로 싣는다.
+                # (예전엔 코드일 때 '— 코드명'으로 덮어써 멀쩡한 코드를 버렸다)
+                _raw = _m["성분명"].astype(str).str.strip() if "성분명" in _m.columns \
+                    else pd.Series("", index=_m.index)
+                _v.insert(0, "묶인 성분/코드", _core.where(_named, _raw).values)
+                _v.insert(0, "구분", pd.Series(_named.values).map({True: "성분", False: "코드명"}).values)
                 _v.insert(0, "바구니", _mb.values)
                 _v = _v.rename(columns={_date_c: "승인일", _step_c: "단계",
                                         "TRGT_DISS_NM": "대상질환", "원개발사": "개발사"})
