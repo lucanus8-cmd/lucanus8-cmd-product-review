@@ -143,22 +143,35 @@ def probe(pg, term):
     # ('li[role=option]' 은 이 구조에 없어서 앞서 아무것도 못 읽었다.)
     sb.click()
     time.sleep(3)
-    val = ""
+    cands = []
     for o in find_all(pg, "[role='option']"):
         try:
             t = (o.inner_text() or "").strip()
         except Exception:
             continue
         if t and "선택하세요" not in t:
-            val = t
-            o.click()
-            break
-    if not val:
+            cands.append((t, o))
+    if not cands:
         print(f"  '{term}' 로 후보가 안 나온다 — 목록은 한글 주성분 기준이다")
         pg.keyboard.press("Escape")
         return
-    time.sleep(18)
-    print(f"  고른 성분: {val[:48]}")
+    # 복합제('메트포르민염산염|아토르바스타틴')가 아니라 단일 성분을 고른다.
+    pick = (next((c for c in cands if c[0] == term), None)
+            or next((c for c in cands if "|" not in c[0]), None)
+            or cands[0])
+    val, el = pick
+    el.click()
+    print(f"  고른 성분: {val[:48]}  (후보 {len(cands)}개)")
+
+    # 성분을 고르면 탭이 생긴다. 실제 사이트는 느리니 떠오를 때까지 기다린다.
+    for _ in range(15):
+        if len(find_all(pg, "[role='tab']")) >= 5:
+            break
+        time.sleep(10)
+    else:
+        print("  성분을 골라도 탭이 안 생겼다 (2분 반 기다림)")
+        return
+    time.sleep(6)
 
     body = text_of(pg) or ""
     mm = re.search(r"허가 [\d,]+건[^\n]*", body)
