@@ -13,13 +13,18 @@ PW = os.environ.get("APP_PASSWORD") or ""
 APP_SEL = ("[data-testid='stApp']", "[data-testid='stAppViewContainer']",
            "[data-testid='stMain']", "input[type='password']", "section.main")
 
-# (찾을 글자, 설명, 새 코드에만 있나)
+# (찾을 글자, 설명, 없으면 실패로 볼 것인가)
 MARKS = [
     ("④ 자사 동일가", "유형 ④ 자사 동일가", True),
     ("⑤ 함량배수", "유형 ⑤ 함량배수", True),
     ("오리지널의 인하 이력 보기", "오리지널 인하 이력 체크 칸", True),
     ("오리지널 조정 상태", "조정 상태 라디오 셋", True),
     ("① 단일제 자료제출", "유형 ① (전부터 있던 칸)", False),
+]
+# ⑤ 를 눌렀을 때만 보이는 것
+MARKS_DOSE = [
+    ("비교 제품 선택", "⑤ 비교 제품 고르는 칸", True),
+    ("비교 제품의 상한금액", "⑤ A 의 기준 칸", True),
 ]
 
 
@@ -106,6 +111,18 @@ def main():
         time.sleep(22)
 
         body = text_of(pg) or ""
+
+        # ⑤ 함량배수까지 눌러 본다(비교 제품 칸은 그때만 생긴다)
+        for lb in find_all(pg, "label"):
+            try:
+                if "⑤ 함량배수" in (lb.inner_text() or ""):
+                    lb.click()
+                    time.sleep(26)
+                    break
+            except Exception:
+                pass
+        body += "\n" + (text_of(pg) or "")
+
         ex = find_all(pg, "[data-testid='stException'], .stException")
         print(f"\n예외 {len(ex)}건")
         if ex:
@@ -113,7 +130,7 @@ def main():
 
         print("\n새 칸이 보이는지")
         missing_new = 0
-        for word, desc, is_new in MARKS:
+        for word, desc, is_new in MARKS + MARKS_DOSE:
             ok = word in body
             if is_new and not ok:
                 missing_new += 1
