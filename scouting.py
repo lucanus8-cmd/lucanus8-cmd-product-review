@@ -163,6 +163,9 @@ def msel(container, label, series, key, default=None):
 # 몇 초씩 걸린다. 화면에는 상위 N건만 그리고, 전체는 CSV로 내려받게 한다.
 TABLE_CAP = 500
 
+# 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
+BUILD = "2026-11-11-a"
+
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
     c = container or st
@@ -535,7 +538,7 @@ def _price_products():
                                 "급여구분", "적용일자", "금액"])
     if pr is None or "제제코드" not in pr.columns:
         return pd.DataFrame()
-    sub = pr[_text(pr["제제코드"]).str.len() > 0] if False else pr
+    sub = pr
     if "급여구분" in sub.columns:
         sub = sub[sub["급여구분"] == "급여"]
     if sub.empty:
@@ -874,9 +877,18 @@ def _price_calc_page():
         _psel = c2.selectbox(f"비교 제품 선택 ({len(cand):,}품목)", _plab, key="calc_psel")
         picked_prod = cand.iloc[_plab.index(_psel)]
         _hit = gsum[gsum["제제코드"].astype(str) == str(picked_prod["제제코드"])]
-        if _hit.empty:   # 위에서 걸렀으므로 여기 올 일은 없지만, 와도 멈추지 않는다
-            st.warning("고른 제품의 성분 묶음을 찾지 못했습니다. 다른 제품을 골라보세요.")
-            return
+        if _hit.empty:
+            # 여기서 멈추면 아래 칸이 통째로 안 그려진다. 묶음이 있는 다른
+            # 후보로 넘어가고, 그마저 없으면 성분으로 고르게 돌려보낸다.
+            _ok = cand[cand["제제코드"].astype(str).isin(set(gsum["제제코드"].astype(str)))]
+            if _ok.empty:
+                st.warning("고른 제품의 성분 묶음을 찾지 못했습니다. "
+                           "검색어를 바꾸거나 다른 유형으로 계산해 주세요.")
+                return
+            picked_prod = _ok.iloc[0]
+            st.warning(f"고른 제품의 성분 묶음이 없어 **{picked_prod['제품명']}** 으로 "
+                       "대신 계산합니다. 다른 제품을 고르시면 바뀝니다.")
+            _hit = gsum[gsum["제제코드"].astype(str) == str(picked_prod["제제코드"])]
         row = _hit.iloc[0]
     else:
         pool = gsum
@@ -2698,6 +2710,7 @@ if PAGE == "ai":
 # ══════════════════════════ 상태 ══════════════════════════
 if PAGE == "status":
     st.subheader("데이터 연결 상태")
+    st.caption(f"코드 버전: {BUILD}")
     if _DATA_ERR is not None:
         st.error(f"마지막 자동 갱신이 실패했습니다 — {type(_DATA_ERR).__name__}: {_DATA_ERR}")
 

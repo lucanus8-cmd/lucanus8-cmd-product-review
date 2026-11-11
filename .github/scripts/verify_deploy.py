@@ -96,6 +96,23 @@ def main():
                 break
             time.sleep(2)
 
+        # 어느 코드가 돌고 있는지부터 읽는다(상태 화면의 '코드 버전').
+        try:
+            pg.goto(URL + "/?page=status", wait_until="domcontentloaded", timeout=120_000)
+            for _ in range(24):
+                time.sleep(5)
+                _b = text_of(pg) or ""
+                if "코드 버전" in _b:
+                    _i = _b.find("코드 버전")
+                    print("사이트가 돌리는 " + _b[_i:_i + 28].splitlines()[0])
+                    break
+            else:
+                print("코드 버전 표시를 못 찾았다 — 그 표시가 없는 옛 코드다")
+        except Exception as e:
+            print(f"코드 버전 확인 실패: {str(e)[:120]}")
+        pg.goto(URL + "/?page=price", wait_until="domcontentloaded", timeout=120_000)
+        time.sleep(20)
+
         # '약가 산정' 으로 전환
         hit = False
         for lb in find_all(pg, "label"):
