@@ -2502,6 +2502,9 @@ if PAGE == "ai":
             # Streamlit 이 그걸 화면에 출력한다(파이썬 설명문이 쏟아진다).
             if ok:
                 st.markdown(ans)
+            if gemini_ai.LAST_MODEL and gemini_ai.LAST_MODEL != gemini_ai.model_name():
+                st.caption(f"설정된 모델({gemini_ai.model_name()})이 붐벼서 "
+                           f"**{gemini_ai.LAST_MODEL}** 로 답했습니다.")
             else:
                 st.error(ans)
     else:
@@ -2529,6 +2532,9 @@ if PAGE == "ai":
                     st.markdown(ans)
                     st.download_button("⬇️ 검토서 다운로드(.md)", ans,
                                        file_name=f"제품검토_{aq}.md", mime="text/markdown", key="ai_dl")
+                    if gemini_ai.LAST_MODEL and gemini_ai.LAST_MODEL != gemini_ai.model_name():
+                        st.caption(f"설정된 모델({gemini_ai.model_name()})이 붐벼서 "
+                                   f"**{gemini_ai.LAST_MODEL}** 로 답했습니다.")
                 else:
                     st.error(ans)
 
