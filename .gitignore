@@ -15,3 +15,10 @@ _*.json
 
 cloudflared.exe
 deploy_secrets.toml
+
+# 점검 스크립트가 남기는 화면 캡처 (저장소에 들어갈 것이 아님)
+calc*.png
+ostate_*.png
+newtypes_*.png
+fold_*.png
+shot_*.png
