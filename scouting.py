@@ -527,6 +527,27 @@ def dose_core(text):
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+@st.cache_data(show_spinner="제품 목록 준비 중…")
+def _price_products():
+    """급여 품목의 최신 상한금액 목록. ⑤ 함량배수에서 '비교 제품'을 제품명으로
+    찾게 하려고 쓴다. 신청 제품은 아직 없으므로, 찾아야 하는 것은 비교 제품이다."""
+    pr = ss.load_slim("price", ["제품코드", "제품명", "제제코드", "업체명",
+                                "급여구분", "적용일자", "금액"])
+    if pr is None or "제제코드" not in pr.columns:
+        return pd.DataFrame()
+    sub = pr[_text(pr["제제코드"]).str.len() > 0] if False else pr
+    if "급여구분" in sub.columns:
+        sub = sub[sub["급여구분"] == "급여"]
+    if sub.empty:
+        return pd.DataFrame()
+    sub = sub.assign(적용일자=pd.to_datetime(sub["적용일자"], errors="coerce"))
+    out = sub.dropna(subset=["적용일자"]).sort_values("적용일자").groupby("제품코드").tail(1)
+    out["금액"] = pd.to_numeric(out["금액"], errors="coerce")
+    ss.release_memory()
+    return out.dropna(subset=["금액"])[
+        ["제품코드", "제품명", "업체명", "제제코드", "금액"]].reset_index(drop=True)
+
+
 @st.cache_data(show_spinner="같은 성분의 다른 함량 품목을 찾는 중…")
 def _dose_peers(code):
     """같은 성분·투여경로의 품목 목록(함량별). 함량배수 산식의 '비교 제품' 후보다.
@@ -825,20 +846,49 @@ def _price_calc_page():
                           "④ 자사 동일가", "⑤ 함량배수"],
                   horizontal=True, key="calc_ty")
 
-    pool = gsum
-    if ty.startswith("③"):
-        pool = pool[pd.to_numeric(pool["성분수"], errors="coerce").fillna(1) > 1]
-    c1, c2 = st.columns([1, 2])
-    kw = c1.text_input("성분 검색", key="calc_kw", placeholder="성분명 일부 (예: atorvastatin)")
-    if kw:
-        pool = pool[pool["성분명"].astype(str).str.contains(kw, case=False, na=False, regex=False)]
-    if pool.empty:
-        st.warning("조건에 맞는 성분이 없습니다. 검색어를 지우거나 바꿔보세요.")
-        return
-    pool = pool.sort_values("품목수", ascending=False)
-    opts = pool["라벨"].tolist()[:300]
-    sel = c2.selectbox(f"성분 선택 ({len(pool):,}개 묶음 중 상위 {len(opts)}개)", opts, key="calc_sel")
-    row = pool[pool["라벨"] == sel].iloc[0]
+    # ⑤ 함량배수는 '비교 제품'을 제품명으로 찾는 게 맞다. 신청 제품은 아직
+    # 없고, 고시가 기준으로 삼으라는 것은 가장 근접한 함량의 '제품'이다.
+    picked_prod = None
+    if ty.startswith("⑤"):
+        prods = _price_products()
+        if prods.empty:
+            st.warning("약가 자료를 읽지 못했습니다.")
+            return
+        c1, c2 = st.columns([1, 2])
+        kw = c1.text_input("제품 검색", key="calc_pkw",
+                           placeholder="제품명 일부 (예: 리피토 / 아토르바)")
+        cand = prods
+        if kw:
+            cand = cand[cand["제품명"].astype(str).str.contains(
+                kw, case=False, na=False, regex=False)]
+        if cand.empty:
+            st.warning("조건에 맞는 제품이 없습니다. 검색어를 지우거나 바꿔보세요.")
+            return
+        cand = cand.sort_values(["제품명", "금액"]).head(300).reset_index(drop=True)
+        _plab = [f"{str(r['제품명'])[:42]} · {str(r['업체명'])[:12]} · {r['금액']:,.0f}원"
+                 for _, r in cand.iterrows()]
+        _psel = c2.selectbox(f"비교 제품 선택 ({len(cand):,}품목)", _plab, key="calc_psel")
+        picked_prod = cand.iloc[_plab.index(_psel)]
+        _hit = gsum[gsum["제제코드"].astype(str) == str(picked_prod["제제코드"])]
+        if _hit.empty:
+            st.warning("고른 제품의 성분 묶음을 찾지 못했습니다. 다른 제품을 골라보세요.")
+            return
+        row = _hit.iloc[0]
+    else:
+        pool = gsum
+        if ty.startswith("③"):
+            pool = pool[pd.to_numeric(pool["성분수"], errors="coerce").fillna(1) > 1]
+        c1, c2 = st.columns([1, 2])
+        kw = c1.text_input("성분 검색", key="calc_kw", placeholder="성분명 일부 (예: atorvastatin)")
+        if kw:
+            pool = pool[pool["성분명"].astype(str).str.contains(kw, case=False, na=False, regex=False)]
+        if pool.empty:
+            st.warning("조건에 맞는 성분이 없습니다. 검색어를 지우거나 바꿔보세요.")
+            return
+        pool = pool.sort_values("품목수", ascending=False)
+        opts = pool["라벨"].tolist()[:300]
+        sel = c2.selectbox(f"성분 선택 ({len(pool):,}개 묶음 중 상위 {len(opts)}개)", opts, key="calc_sel")
+        row = pool[pool["라벨"] == sel].iloc[0]
 
     st.markdown(f"**🔎 {row['대표품목']}** · {row['대표업체']}  ·  `{row['제제코드']}`")
     m = st.columns(5)
@@ -931,33 +981,22 @@ def _price_calc_page():
     with L:
         # 이름표(key)가 고정이면 성분을 바꿔도 앞서 입력한 숫자가 그대로 남는다.
         # 제제코드를 섞어 성분마다 다른 칸으로 만들어, 바꾸는 즉시 새 기준가가 들어오게 한다.
-        # ⑤ 함량배수는 묶음이 아니라 '비교 제품' 하나를 골라야 한다.
-        # 고시가 "가장 근접한 함량 제품의 상한금액"이라고 하기 때문이다.
-        _peer, _mg_me = None, dose_of(row["성분명"])[0]
-        if ty.startswith("⑤"):
+        # ⑤ 는 위에서 고른 제품이 곧 비교 제품이다. 함량은 그 제품이 속한
+        # 묶음(성분·함량·제형)의 함량으로 자동으로 채운다.
+        _peer = picked_prod if ty.startswith("⑤") else None
+        _ref_mg, _ref_unit = dose_of(row["성분명"])
+        if _peer is not None:
+            st.caption(f"비교 제품: **{_peer['제품명']}** · "
+                       f"{_ref_mg:g}{_ref_unit} · {_peer['업체명']} · "
+                       f"{_peer['금액']:,.0f}원" if _ref_mg else
+                       f"비교 제품: **{_peer['제품명']}** · {_peer['업체명']} · "
+                       f"{_peer['금액']:,.0f}원 (함량을 못 읽어 직접 넣어 주세요)")
             _pe = _dose_peers(row["제제코드"])
-            if _pe.empty:
-                st.warning("같은 성분의 다른 함량 품목을 찾지 못했습니다. "
-                           "아래 칸에 직접 넣어 주세요.")
-            else:
-                # 고른 묶음의 함량에 가까운 것부터, 같은 함량이면 비싼 것부터
-                _ref = _mg_me if _mg_me else float(_pe["함량"].iloc[0])
-                _pe = _pe.assign(_d=(_pe["함량"] - _ref).abs()).sort_values(
-                    ["_d", "금액"], ascending=[True, False]).reset_index(drop=True)
-                _lab = [f"{r['함량']:g}{r['함량단위']} · {str(r['제품명'])[:30]} · "
-                        f"{str(r['업체명'])[:12]} · {r['금액']:,.0f}원"
-                        for _, r in _pe.iterrows()]
-                # 기본값은 '신청 함량과 다른' 함량 중 가장 가까운 것
-                _idx = next((i for i, r in _pe.iterrows()
-                             if _mg_me and r["함량"] != _mg_me), 0)
-                _sel2 = st.selectbox(
-                    f"비교 제품 선택 — 같은 성분 {len(_pe):,}품목 "
-                    f"(함량 {_pe['함량'].nunique()}가지)",
-                    _lab, index=int(_idx), key=f"calc_peer_{row['제제코드']}")
-                _peer = _pe.iloc[_lab.index(_sel2)]
-                st.caption(f"고른 비교 제품: **{_peer['제품명']}** · "
-                           f"{_peer['함량']:g}{_peer['함량단위']} · "
-                           f"{_peer['업체명']} · {_peer['금액']:,.0f}원")
+            if not _pe.empty and _pe["함량"].nunique() > 1:
+                _all = sorted(_pe["함량"].unique())
+                st.caption("같은 성분에 있는 함량: "
+                           + " · ".join(f"{v:g}{_ref_unit}" for v in _all)
+                           + " — 고시는 **가장 근접한 함량**의 제품을 기준으로 삼습니다.")
 
         _blabel = {"④": "자사 기등재 동일 품목의 상한금액",
                    "⑤": "비교 제품의 상한금액 (A 의 기준 · 고쳐 쓸 수 있음)"}.get(
@@ -1043,15 +1082,14 @@ def _price_calc_page():
         else:
             m1, m2 = st.columns(2)
             opt["mg_new"] = float(m1.number_input(
-                "신청 제품 함량", min_value=0.0,
-                value=float(_mg_me or 0.0), step=1.0, format="%.4g",
-                key=f"calc_mgnew_{row['제제코드']}"))
-            _refmg = float(_peer["함량"]) if _peer is not None else 0.0
+                f"신청 제품 함량 ({_ref_unit or '단위'})", min_value=0.0,
+                value=0.0, step=1.0, format="%.4g", key="calc_mgnew"))
             opt["mg_ref"] = float(m2.number_input(
-                "비교 제품 함량", min_value=0.0, value=_refmg, step=1.0,
-                format="%.4g", key=f"calc_mgref_{_bkey}"))
-            st.caption("고른 성분·비교 제품에서 자동으로 채웁니다. "
-                       "단위는 둘이 같기만 하면 됩니다.")
+                f"비교 제품 함량 ({_ref_unit or '단위'})", min_value=0.0,
+                value=float(_ref_mg or 0.0), step=1.0, format="%.4g",
+                key=f"calc_mgref_{_bkey}"))
+            st.caption("비교 제품의 함량과 상한금액은 위에서 고른 제품에서 자동으로 "
+                       "채웁니다. 신청 함량만 넣으시면 됩니다.")
             opt["own"] = st.radio(
                 "A 를 무엇으로 잡나", ["(가) 자사제품이 등재되어 있다 — 그 상한금액",
                                  "(나) 자사제품이 없다 — 최근접 함량 최고가의 45%"],
