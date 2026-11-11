@@ -164,13 +164,16 @@ def probe(pg, term):
     print(f"  고른 성분: {val[:48]}  (후보 {len(cands)}개)")
 
     # 성분을 고르면 탭이 생긴다. 실제 사이트는 느리니 떠오를 때까지 기다린다.
-    for _ in range(15):
+    t0 = time.time()
+    for _ in range(60):
         if len(find_all(pg, "[role='tab']")) >= 5:
             break
         time.sleep(10)
     else:
-        print("  성분을 골라도 탭이 안 생겼다 (2분 반 기다림)")
+        print(f"  성분을 골라도 탭이 안 생겼다 ({time.time() - t0:.0f}초 기다림)")
+        print("    그때 화면:", (text_of(pg) or "")[:300].replace("\n", " | "))
         return
+    print(f"  탭이 뜨기까지 {time.time() - t0:.0f}초")
     time.sleep(6)
 
     body = text_of(pg) or ""
@@ -196,12 +199,12 @@ def probe(pg, term):
     # 로컬(품목 250개 남짓)에서 80초가 걸렸다. 넉넉히 기다린다.
     t0 = time.time()
     drew = False
-    for _ in range(18):
+    for _ in range(30):
         if any_plot(pg):
             drew = True
             break
         time.sleep(10)
-    print(f"  그래프 그리기: {'끝남' if drew else '3분 안에 안 끝남'} "
+    print(f"  그래프 그리기: {'끝남' if drew else '5분 안에 안 끝남'} "
           f"({time.time() - t0:.0f}초)")
 
     sb2 = widget_with(pg, "stSelectbox", "약가 추이를 볼 품목")
