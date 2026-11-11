@@ -827,28 +827,37 @@ def _price_calc_page():
 
     # 오리지널 한 품목을 짚어 그 품목의 인하 시점을 날짜로 보여준다.
     # 묶음 최고가 선은 해마다 꼭대기 품목이 바뀌어 낙차를 인하로 잘못 읽는다.
-    _nm, _why, _cuts, _y0 = _orig_cuts(row["제제코드"])
-    if _nm is None:
-        st.info(f"오리지널을 짚지 못했습니다 — {_why}")
-    else:
-        _tail = (f" 이력은 {_y0}년부터라, 그 이전의 조정은 이 자료에 없습니다."
-                 if _y0 else "")
-        if _cuts:
-            adj_guess = 2
-            _big = [c for c in _cuts if c[3] <= -0.30]
-            st.warning(f"**{_nm}** 에 20% 넘는 인하가 {len(_cuts)}번 있습니다"
-                       + (f" (그중 30% 이상 {len(_big)}번)" if _big else "")
-                       + f". 기준가가 이미 조정된 가격일 가능성이 큽니다.{_tail}")
-            st.dataframe(pd.DataFrame(
-                [{"적용일자": d, "이전가": f"{p0:,.0f}원", "인하가": f"{p1:,.0f}원",
-                  "인하율": f"{r*100:.1f}%", "": "30% 이상" if r <= -0.30 else ""}
-                 for d, p0, p1, r in _cuts]),
-                hide_index=True, use_container_width=True,
-                height=min(38 * (len(_cuts) + 1) + 4, 220))
+    #
+    # 계산이 1초쯤 걸려서 평소에는 접어 둔다. expander 는 접혀 있어도 안쪽
+    # 코드가 그냥 실행되므로, 체크 칸으로 막아야 실제로 미뤄진다.
+    if st.checkbox("🔎 **오리지널의 인하 이력 보기** — 기준가가 이미 조정된 가격인지 확인합니다",
+                   value=False, key=f"calc_orig_{row['제제코드']}"):
+        _nm, _why, _cuts, _y0 = _orig_cuts(row["제제코드"])
+        if _nm is None:
+            st.info(f"오리지널을 짚지 못했습니다 — {_why}")
         else:
-            st.info(f"**{_nm}** 에 20% 넘는 인하가 없습니다. "
-                    f"이번 등재로 조정이 일어나는지는 아래에서 고르세요.{_tail}")
-        st.caption(f"오리지널로 본 품목: {_why}")
+            _tail = (f" 이력은 {_y0}년부터라, 그 이전의 조정은 이 자료에 없습니다."
+                     if _y0 else "")
+            if _cuts:
+                adj_guess = 2
+                _big = [c for c in _cuts if c[3] <= -0.30]
+                st.warning(f"**{_nm}** 에 20% 넘는 인하가 {len(_cuts)}번 있습니다"
+                           + (f" (그중 30% 이상 {len(_big)}번)" if _big else "")
+                           + f". 기준가가 이미 조정된 가격일 가능성이 큽니다.{_tail}")
+                st.dataframe(pd.DataFrame(
+                    [{"적용일자": d, "이전가": f"{p0:,.0f}원", "인하가": f"{p1:,.0f}원",
+                      "인하율": f"{r*100:.1f}%", "": "30% 이상" if r <= -0.30 else ""}
+                     for d, p0, p1, r in _cuts]),
+                    hide_index=True, use_container_width=True,
+                    height=min(38 * (len(_cuts) + 1) + 4, 220))
+            else:
+                st.info(f"**{_nm}** 에 20% 넘는 인하가 없습니다. "
+                        f"이번 등재로 조정이 일어나는지는 아래에서 고르세요.{_tail}")
+            st.caption(f"오리지널로 본 품목: {_why}")
+    else:
+        st.caption("펼치면 오리지널 한 품목을 짚어 20% 넘는 인하 시점을 날짜로 보여줍니다. "
+                   "아래 **오리지널 조정 상태**의 기본값도 그때 맞춰집니다 "
+                   "(접어 두면 '조정 전'에서 시작합니다). 1초쯤 걸립니다.")
 
     L, R = st.columns(2)
     with L:
