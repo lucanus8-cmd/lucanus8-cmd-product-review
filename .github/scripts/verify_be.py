@@ -56,12 +56,43 @@ def app_frame(page):
     return None
 
 
-def wait_text(page, word, tries=48, gap=5):
-    """화면에 그 글자가 나올 때까지 기다린다."""
-    for _ in range(tries):
-        if word in (text_of(page) or ""):
+def relogin(page):
+    """화면을 옮기면 비밀번호 칸이 다시 나올 수 있다 — 나오면 다시 넣는다."""
+    if not PW:
+        return False
+    got = find_all(page, "input[type='password']")
+    if not got:
+        return False
+    try:
+        got[0].fill(PW)
+        got[0].press("Enter")
+        print("   (비밀번호 다시 넣음)")
+        time.sleep(14)
+        return True
+    except Exception:
+        return False
+
+
+def wait_text(page, word, tries=48, gap=5, label=""):
+    """화면에 그 글자가 나올 때까지 기다린다.
+
+    안 나오면 그때 화면이 어떤 상태였는지 남긴다 — 추측하지 않으려고.
+    """
+    for i in range(tries):
+        b = text_of(page) or ""
+        if word in b:
             return True
+        if i and i % 12 == 0:            # 1분마다 상태를 남긴다
+            print(f"   [{label or word}] {i * gap}초째 · 글자 {len(b)}자 · "
+                  f"{b[:120].replace(chr(10), ' | ')}")
+            relogin(page)
         time.sleep(gap)
+    b = text_of(page) or ""
+    print(f"   [{label or word}] 못 찾음. 그때 화면({len(b)}자):")
+    print("   " + b[:800].replace("\n", " | "))
+    ex = find_all(page, "[data-testid='stException'], .stException")
+    if ex:
+        print("   화면의 예외:", (ex[0].inner_text() or "")[:400])
     return False
 
 
@@ -150,7 +181,7 @@ def main():
             if app_frame(pg):
                 break
             time.sleep(2)
-        if not wait_text(pg, "임상 분석", tries=60):
+        if not wait_text(pg, "임상 분석", tries=96, label="임상 분석 화면"):
             print("임상 분석 화면이 안 떴다 — 판정 불가")
             br.close()
             return 1
