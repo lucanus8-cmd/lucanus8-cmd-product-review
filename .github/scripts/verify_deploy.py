@@ -119,7 +119,12 @@ def main():
             try:
                 if "⑤ 함량배수" in (lb.inner_text() or ""):
                     lb.click()
-                    time.sleep(26)
+                    # 실제 사이트는 2만 품목 목록을 만드느라 오래 걸린다. 고정
+                    # 시간으로 기다리면 다 그려지기 전에 '없다'고 판정한다.
+                    for _ in range(18):
+                        time.sleep(5)
+                        if "신청 제품 함량" in (text_of(pg) or ""):
+                            break
                     break
             except Exception:
                 pass
