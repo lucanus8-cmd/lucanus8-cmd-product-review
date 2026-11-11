@@ -1097,6 +1097,18 @@ def _price_calc_page():
             if not opt["own"]:
                 opt["special"] = st.checkbox("마약 또는 생물의약품 (45% 대신 70%)",
                                              value=False, key="calc_special")
+                # 고시는 (나)에서 '가장 근접한 함량 제품의 상한금액 중 최고가'를
+                # 기준으로 한다. 고른 품목이 그 함량의 최고가가 아니면 A 가 낮게
+                # 잡히므로, 그 사실과 최고가를 알려 준다.
+                _top = float(row["최고가"]) if row.get("최고가") is not None else 0.0
+                if _top > 0 and abs(base - _top) >= 1:
+                    st.warning(f"(나)는 **그 함량 제품들 중 최고가**를 기준으로 합니다. "
+                               f"이 함량({_ref_mg:g}{_ref_unit})의 최고가는 "
+                               f"**{_top:,.0f}원**인데 지금은 {base:,.0f}원으로 잡혀 있습니다. "
+                               f"위 '비교 제품의 상한금액'을 고쳐 쓰거나 최고가 품목을 고르세요."
+                               if _ref_mg else
+                               f"(나)는 그 함량 제품들 중 최고가를 기준으로 합니다. "
+                               f"이 묶음의 최고가는 {_top:,.0f}원입니다.")
             opt["bio"] = st.checkbox("생물의약품이라 B 대신 B′ 를 쓴다",
                                      value=False, key="calc_bio2")
             if opt["bio"]:
