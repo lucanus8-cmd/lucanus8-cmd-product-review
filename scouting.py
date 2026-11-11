@@ -857,7 +857,11 @@ def _price_calc_page():
         c1, c2 = st.columns([1, 2])
         kw = c1.text_input("제품 검색", key="calc_pkw",
                            placeholder="제품명 일부 (예: 리피토 / 아토르바)")
-        cand = prods
+        # 성분 묶음을 못 찾는 품목은 아예 목록에 넣지 않는다. 옛 이력에만 있고
+        # 지금 고시에 없는 품목은 제제코드가 비어 있어, 고르면 함량·기준가를
+        # 채울 수 없다(그 상태로 두면 아래 칸이 통째로 안 그려졌다).
+        _known = set(gsum["제제코드"].astype(str))
+        cand = prods[prods["제제코드"].astype(str).isin(_known)]
         if kw:
             cand = cand[cand["제품명"].astype(str).str.contains(
                 kw, case=False, na=False, regex=False)]
@@ -870,7 +874,7 @@ def _price_calc_page():
         _psel = c2.selectbox(f"비교 제품 선택 ({len(cand):,}품목)", _plab, key="calc_psel")
         picked_prod = cand.iloc[_plab.index(_psel)]
         _hit = gsum[gsum["제제코드"].astype(str) == str(picked_prod["제제코드"])]
-        if _hit.empty:
+        if _hit.empty:   # 위에서 걸렀으므로 여기 올 일은 없지만, 와도 멈추지 않는다
             st.warning("고른 제품의 성분 묶음을 찾지 못했습니다. 다른 제품을 골라보세요.")
             return
         row = _hit.iloc[0]

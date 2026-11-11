@@ -151,6 +151,11 @@ def main():
             return 1
         if missing_new:
             print(f"새 칸 {missing_new}개가 안 보인다 — 옛 코드가 돌고 있을 수 있다")
+            for hint in ("고른 제품의 성분 묶음을 찾지 못했습니다",
+                         "조건에 맞는 제품이 없습니다",
+                         "약가 자료를 읽지 못했습니다"):
+                if hint in body:
+                    print(f"  >>> 화면에 이 말이 떠 있다: {hint}")
             print("그때 화면 앞부분:", body[:400].replace("\n", " | "))
             br.close()
             return 1
