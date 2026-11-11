@@ -536,12 +536,20 @@ def _orig_cuts(code, drop=0.20):
         raw = ap["보험코드(EDI)"].astype(str)
         # 한 품목에 포장단위별 코드가 여럿이면 쉼표로 이어진다. 시트가 숫자로
         # 읽어 1,000 단위 쉼표가 찍힌 값은 앞 9자리(첫 코드)만 쓸 수 있다.
-        ex = (ap.assign(_e=raw.str.split(","))
-                .explode("_e"))
-        ex["_e"] = ex["_e"].astype(str).str.strip()
-        head9 = ap.assign(_e=raw.str.replace(r"[^0-9]", "", regex=True).str[:9])
-        ex = pd.concat([ex, head9], ignore_index=True)
+        #
+        # 15만 행을 통째로 펼치면(explode) 30만 행짜리 표가 생겨 메모리를
+        # 200MB 넘게 먹는다. 우리가 찾는 건 이 제제의 코드 수백 개뿐이므로,
+        # 먼저 '앞 9자리'로 한 번에 거르고, 그래도 없을 때만 쉼표가 있는
+        # 행들만 펼쳐 본다.
+        ex = ap.assign(_e=raw.str.replace(r"[^0-9]", "", regex=True).str[:9])
         ex = ex[ex["_e"].isin(codes)]
+        if ex.empty:
+            multi = ap[raw.str.contains(",", na=False)]
+            if not multi.empty:
+                ex = multi.assign(
+                    _e=multi["보험코드(EDI)"].astype(str).str.split(",")).explode("_e")
+                ex["_e"] = ex["_e"].astype(str).str.strip()
+                ex = ex[ex["_e"].isin(codes)]
         if not ex.empty:
             ex = ex.assign(_hd=pd.to_datetime(ex["허가일자"], format="%Y%m%d", errors="coerce"))
             ex = ex.dropna(subset=["_hd"]).drop_duplicates("_e")
@@ -565,6 +573,7 @@ def _orig_cuts(code, drop=0.20):
         name = str(top["제품명"])
         why = f"허가 자료로 못 짚어, **{y0}년에 가장 비쌌던 품목**으로 봤습니다"
 
+    ss.release_memory()
     one = sub[sub["제품명"].astype(str) == name].copy()
     one["금액"] = pd.to_numeric(one["금액"], errors="coerce")
     one = one.dropna(subset=["금액"])
