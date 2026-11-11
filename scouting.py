@@ -504,6 +504,74 @@ def calc_route(prior, applying):
         return "다품목"
     return "일반"
 
+_DOSE_RE = re.compile(r"([\d.]+)\s*(mg|mcg|ug|g|ml|iu|%)", re.I)
+
+
+def dose_of(text):
+    """성분명에서 함량과 단위를 뽑는다.
+    'atorvastatin calcium (as atorvastatin 10mg)' → (10.0, 'mg')"""
+    got = _DOSE_RE.findall(str(text or ""))
+    if not got:
+        return None, ""
+    v, u = got[-1]
+    try:
+        return float(v), u.lower()
+    except ValueError:
+        return None, ""
+
+
+def dose_core(text):
+    """함량과 괄호를 떼어낸 성분 이름. 함량만 다른 묶음끼리 짝지을 때 쓴다."""
+    s = re.sub(r"\(.*?\)", " ", str(text or ""))
+    s = _DOSE_RE.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+@st.cache_data(show_spinner="같은 성분의 다른 함량 품목을 찾는 중…")
+def _dose_peers(code):
+    """같은 성분·투여경로의 품목 목록(함량별). 함량배수 산식의 '비교 제품' 후보다.
+
+    고시가 '가장 근접한 함량 제품의 상한금액'이라고 하므로 묶음이 아니라
+    품목 단위로 고르게 한다. 자사제품이 있으면 그 품목을, 없으면 최근접
+    함량 품목 중 최고가를 A 로 쓴다.
+    """
+    g = ss.price_groups()
+    if g.empty:
+        return pd.DataFrame()
+    me = g[g["제제코드"].astype(str) == str(code)]
+    if me.empty:
+        return pd.DataFrame()
+    core = dose_core(me["성분명"].iloc[0])
+    route = str(me["투여"].iloc[0] or "")
+    sib = g[g["성분명"].map(dose_core) == core]
+    if route:
+        sib = sib[sib["투여"].astype(str) == route]
+    if sib.empty:
+        return pd.DataFrame()
+    codes = set(sib["제제코드"].astype(str))
+    pr = ss.load_slim("price", ["제품코드", "제품명", "제제코드", "업체명",
+                                "급여구분", "적용일자", "금액"])
+    if pr is None or "제제코드" not in pr.columns:
+        return pd.DataFrame()
+    sub = pr[pr["제제코드"].astype(str).isin(codes)]
+    if "급여구분" in sub.columns:
+        sub = sub[sub["급여구분"] == "급여"]
+    if sub.empty:
+        return pd.DataFrame()
+    sub = sub.assign(적용일자=pd.to_datetime(sub["적용일자"], errors="coerce"))
+    latest = sub.dropna(subset=["적용일자"]).sort_values("적용일자").groupby("제품코드").tail(1)
+    mg = {str(r["제제코드"]): dose_of(r["성분명"]) for _, r in sib.iterrows()}
+    cc = latest["제제코드"].astype(str)
+    out = latest.assign(함량=[mg.get(c, (None, ""))[0] for c in cc],
+                        함량단위=[mg.get(c, (None, ""))[1] for c in cc])
+    out = out.dropna(subset=["함량"])
+    out["금액"] = pd.to_numeric(out["금액"], errors="coerce")
+    ss.release_memory()
+    return out.dropna(subset=["금액"])[
+        ["제품코드", "제품명", "업체명", "함량", "함량단위", "금액"]].sort_values(
+        ["함량", "금액"], ascending=[True, False]).reset_index(drop=True)
+
+
 @st.cache_data(show_spinner="오리지널 약가 이력 보는 중…")
 def _orig_cuts(code, drop=0.20):
     """제제(성분·함량·제형) 안에서 오리지널 한 품목을 짚고, 그 품목의 인하 시점을 돌려준다.
@@ -863,12 +931,41 @@ def _price_calc_page():
     with L:
         # 이름표(key)가 고정이면 성분을 바꿔도 앞서 입력한 숫자가 그대로 남는다.
         # 제제코드를 섞어 성분마다 다른 칸으로 만들어, 바꾸는 즉시 새 기준가가 들어오게 한다.
+        # ⑤ 함량배수는 묶음이 아니라 '비교 제품' 하나를 골라야 한다.
+        # 고시가 "가장 근접한 함량 제품의 상한금액"이라고 하기 때문이다.
+        _peer, _mg_me = None, dose_of(row["성분명"])[0]
+        if ty.startswith("⑤"):
+            _pe = _dose_peers(row["제제코드"])
+            if _pe.empty:
+                st.warning("같은 성분의 다른 함량 품목을 찾지 못했습니다. "
+                           "아래 칸에 직접 넣어 주세요.")
+            else:
+                # 고른 묶음의 함량에 가까운 것부터, 같은 함량이면 비싼 것부터
+                _ref = _mg_me if _mg_me else float(_pe["함량"].iloc[0])
+                _pe = _pe.assign(_d=(_pe["함량"] - _ref).abs()).sort_values(
+                    ["_d", "금액"], ascending=[True, False]).reset_index(drop=True)
+                _lab = [f"{r['함량']:g}{r['함량단위']} · {str(r['제품명'])[:30]} · "
+                        f"{str(r['업체명'])[:12]} · {r['금액']:,.0f}원"
+                        for _, r in _pe.iterrows()]
+                # 기본값은 '신청 함량과 다른' 함량 중 가장 가까운 것
+                _idx = next((i for i, r in _pe.iterrows()
+                             if _mg_me and r["함량"] != _mg_me), 0)
+                _sel2 = st.selectbox(
+                    f"비교 제품 선택 — 같은 성분 {len(_pe):,}품목 "
+                    f"(함량 {_pe['함량'].nunique()}가지)",
+                    _lab, index=int(_idx), key=f"calc_peer_{row['제제코드']}")
+                _peer = _pe.iloc[_lab.index(_sel2)]
+                st.caption(f"고른 비교 제품: **{_peer['제품명']}** · "
+                           f"{_peer['함량']:g}{_peer['함량단위']} · "
+                           f"{_peer['업체명']} · {_peer['금액']:,.0f}원")
+
         _blabel = {"④": "자사 기등재 동일 품목의 상한금액",
-                   "⑤": "비교(최근접 함량) 품목의 상한금액"}.get(
+                   "⑤": "비교 제품의 상한금액 (A 의 기준 · 고쳐 쓸 수 있음)"}.get(
             ty[0], "기준 상한금액 (자동 채움 · 고쳐 쓸 수 있음)")
-        base = st.number_input(_blabel,
-                               value=float(row["최고가"]), step=1.0, format="%.0f",
-                               key=f"calc_base_{row['제제코드']}")
+        _bval = float(_peer["금액"]) if _peer is not None else float(row["최고가"])
+        _bkey = (f"calc_base_{row['제제코드']}_{_peer['제품코드']}"
+                 if _peer is not None else f"calc_base_{row['제제코드']}")
+        base = st.number_input(_blabel, value=_bval, step=1.0, format="%.0f", key=_bkey)
         opt = {"sub": "", "imp": "", "ostate": 0, "co": "혁", "ext": True, "ct": "제",
                "reqs": 2, "prior": int(row["품목수"]), "apply": 1,
                "low": float(row["최저가"]), "cheap": 0.0,
@@ -946,13 +1043,15 @@ def _price_calc_page():
         else:
             m1, m2 = st.columns(2)
             opt["mg_new"] = float(m1.number_input(
-                "신청 제품 함량", min_value=0.0, value=0.0, step=1.0,
-                format="%.4g", key="calc_mgnew"))
+                "신청 제품 함량", min_value=0.0,
+                value=float(_mg_me or 0.0), step=1.0, format="%.4g",
+                key=f"calc_mgnew_{row['제제코드']}"))
+            _refmg = float(_peer["함량"]) if _peer is not None else 0.0
             opt["mg_ref"] = float(m2.number_input(
-                "비교(최근접 함량) 제품 함량", min_value=0.0, value=0.0, step=1.0,
-                format="%.4g", key="calc_mgref"))
-            st.caption(f"단위는 둘이 같기만 하면 됩니다 (이 제제의 단위: "
-                       f"{row.get('단위') or '?'}).")
+                "비교 제품 함량", min_value=0.0, value=_refmg, step=1.0,
+                format="%.4g", key=f"calc_mgref_{_bkey}"))
+            st.caption("고른 성분·비교 제품에서 자동으로 채웁니다. "
+                       "단위는 둘이 같기만 하면 됩니다.")
             opt["own"] = st.radio(
                 "A 를 무엇으로 잡나", ["(가) 자사제품이 등재되어 있다 — 그 상한금액",
                                  "(나) 자사제품이 없다 — 최근접 함량 최고가의 45%"],
@@ -969,10 +1068,14 @@ def _price_calc_page():
                 st.caption("고시에 B′ 식이 따로 있으면 알려주세요. 코드에 넣겠습니다.")
             elif opt["mg_new"] > 0 and opt["mg_ref"] > 0:
                 _b = dose_b(opt["mg_new"], opt["mg_ref"])
-                _h = "×" if opt["mg_new"] > opt["mg_ref"] else ("÷" if opt["mg_new"] < opt["mg_ref"] else "=")
-                st.caption(f"B = {{({max(opt['mg_new'], opt['mg_ref']):g} ÷ "
-                           f"{min(opt['mg_new'], opt['mg_ref']):g} − 1) × 0.5}} + 1 = "
-                           f"**{_b:.4f}** → A {_h} B")
+                if opt["mg_new"] == opt["mg_ref"]:
+                    st.caption("신청 함량과 비교 함량이 같습니다 — 함량배수가 아니라 "
+                               "**A 를 그대로** 씁니다 (B = 1).")
+                else:
+                    _h = "×" if opt["mg_new"] > opt["mg_ref"] else "÷"
+                    st.caption(f"B = {{({max(opt['mg_new'], opt['mg_ref']):g} ÷ "
+                               f"{min(opt['mg_new'], opt['mg_ref']):g} − 1) × 0.5}} + 1 = "
+                               f"**{_b:.4f}** → A {_h} B")
 
     phases, note = _calc_phases(ty, base, opt)
     with R:
