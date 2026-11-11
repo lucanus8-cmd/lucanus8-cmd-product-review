@@ -2498,7 +2498,12 @@ if PAGE == "ai":
                     system="너는 제약 산업 전문 분석가다. 한국어로 정확하고 실용적으로 답하라. "
                            "연결된 데이터 근거가 있으면 우선 활용하고, 없거나 부족하면 너의 전문 지식(효능·기전·규제·시장 등)을 "
                            "자유롭게 활용해 답하라. 단, 데이터에 근거한 사실과 일반 지식·추정을 구분해서 표기하라.")
-            st.markdown(ans) if ok else st.error(ans)
+            # 삼항식을 문장 하나로 두면 그 값(DeltaGenerator)이 남아,
+            # Streamlit 이 그걸 화면에 출력한다(파이썬 설명문이 쏟아진다).
+            if ok:
+                st.markdown(ans)
+            else:
+                st.error(ans)
     else:
         st.caption("제품/성분을 입력하고 실행하면, 연결된 데이터를 종합해 아래 양식으로 검토서를 만듭니다.")
         if st.button("📋 제품 검토서 생성", key="ai_review", type="primary"):
