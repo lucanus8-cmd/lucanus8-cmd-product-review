@@ -20,6 +20,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import scout_sources as ss
+import be_calc
 
 st.set_page_config(page_title="제품 검토", layout="wide", page_icon="🔎")
 
@@ -832,6 +833,111 @@ def _calc_chart(base, phases):
                       xaxis=dict(title="등재 후 경과", tickmode="array",
                                  tickvals=ticks, ticktext=tlabels))
     return fig
+
+def _be_page():
+    """생동 피험자 수 계산기. 자료를 읽지 않는 순수 계산이라 가볍다."""
+    st.markdown("**🧮 생동 피험자 수** · CV%를 넣으면 생물학적동등성시험에 몇 명이 "
+                "필요한지 계산합니다 (TOST · 평균생동)")
+
+    _names = [f"{be_calc.DESIGNS[k]['label']}  ({be_calc.DESIGNS[k]['seq']})"
+              for k in be_calc.DESIGN_ORDER]
+    _pick = st.radio("설계", _names, key="be_design")
+    dkey = be_calc.DESIGN_ORDER[_names.index(_pick)]
+    D = be_calc.DESIGNS[dkey]
+    st.caption(f"{D['note']}  ·  인원은 **{D['step']}의 배수**로 맞춥니다.")
+
+    _in = st.columns(2)
+    _kind = D["cv"]      # 개체내 / 전체
+    cv_auc = float(_in[0].number_input(
+        f"AUC CV% ({_kind})", min_value=0.0, max_value=200.0, value=25.0,
+        step=1.0, format="%.4g", key="be_cv_auc"))
+    cv_cmax = float(_in[1].number_input(
+        f"Cmax CV% ({_kind})", min_value=0.0, max_value=200.0, value=0.0,
+        step=1.0, format="%.4g", key="be_cv_cmax"))
+    if _kind == "전체":
+        st.warning("병렬설계의 CV 는 **개체내가 아니라 전체(개체간 포함) 변동**입니다. "
+                   "교차설계용 개체내 CV 를 그대로 넣으면 인원이 실제보다 적게 나옵니다.")
+    st.caption("보통 Cmax 의 변동이 더 큽니다. 둘 다 넣으면 **더 많이 필요한 쪽**으로 "
+               "정합니다. 모르는 쪽은 0 으로 두세요.")
+
+    _o = st.columns(3)
+    ratio = float(_o[0].number_input("기대 T/R 비", min_value=0.70, max_value=1.30,
+                                     value=0.95, step=0.01, format="%.3f", key="be_ratio"))
+    power_t = _o[1].radio("검정력", ["80%", "90%"], horizontal=True, key="be_power")
+    target = 0.80 if power_t.startswith("80") else 0.90
+    drop = float(_o[2].number_input("예상 탈락률 (%)", min_value=0.0, max_value=60.0,
+                                    value=15.0, step=1.0, format="%.4g", key="be_drop"))
+    _l = st.columns(2)
+    lo = float(_l[0].number_input("생동범위 아래 (%)", min_value=50.0, max_value=99.0,
+                                  value=80.0, step=0.01, format="%.2f", key="be_lo"))
+    alpha = float(_l[1].number_input("유의수준 (단측, %)", min_value=1.0, max_value=10.0,
+                                     value=5.0, step=0.5, format="%.4g", key="be_alpha"))
+    limit = 1.0 / (lo / 100)      # 80% → 125%
+    st.caption(f"생동범위 {lo:.2f} ~ {limit*100:.2f}% · 유의수준 {alpha:g}% 단측")
+
+    res = be_calc.plan(dkey, cv_auc / 100, cv_cmax / 100, target=target,
+                       ratio=ratio, alpha=alpha / 100, limit=limit, dropout=drop / 100)
+    if res["n"] is None:
+        st.info("CV% 를 넣으면 계산합니다. (한쪽만 넣으셔도 됩니다)")
+        return
+
+    m = st.columns(4)
+    m[0].metric("등록해야 할 인원", f"{res['enroll']:,} 명",
+                delta=f"탈락 {drop:g}% 감안", delta_color="off")
+    m[1].metric("완료 기준", f"{res['n']:,} 명")
+    m[2].metric("실제 검정력", f"{res['power']*100:.1f} %")
+    m[3].metric("결정한 쪽", res["driver"])
+
+    if len(res["parts"]) > 1:
+        a, c = res["parts"][0], res["parts"][1]
+        st.info(f"**{res['driver']}** 쪽이 더 많아 이쪽으로 정했습니다 — "
+                f"AUC(CV {a['cv']*100:g}%) {a['n']}명 · "
+                f"Cmax(CV {c['cv']*100:g}%) {c['n']}명.")
+
+    big = max((p["cv"] for p in res["parts"]), default=0)
+    if big > 0.30 and dkey != "2x1":
+        st.warning("CV 가 30%를 넘습니다 — **고변동 의약품**입니다. 반복설계와 "
+                   "기준조절(RSABE·ABEL)을 쓰면 인원을 크게 줄일 수 있습니다. "
+                   "이 계산기는 **평균생동만** 다루니, 적용 가능 여부는 규정에서 확인하세요.")
+
+    st.markdown("**CV 가 달라지면** (지금 설계 · 지금 T/R · 완료 기준)")
+    _base = big * 100
+    _cvs = sorted({round(max(5.0, _base + d)) for d in (-10, -5, 0, 5, 10)})
+    _rows = []
+    for c in _cvs:
+        n = be_calc.sample_size(dkey, c / 100, target, ratio, alpha / 100, limit)
+        p = be_calc.power(dkey, n, c / 100, ratio, alpha / 100, limit) if n else None
+        _rows.append({"CV%": f"{c:g}%", "완료 기준": f"{n:,} 명" if n else "—",
+                      "실제 검정력": f"{p*100:.1f}%" if p else "—",
+                      "": "← 지금 값" if abs(c - _base) < 0.5 else ""})
+    st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True,
+                 height=38 * (len(_rows) + 1) + 4)
+
+    st.markdown("**설계를 바꾸면** (지금 CV · 지금 T/R · 완료 기준)")
+    _d = []
+    for k in be_calc.DESIGN_ORDER:
+        n = be_calc.sample_size(k, big, target, ratio, alpha / 100, limit)
+        _d.append({"표기": be_calc.DESIGNS[k]["label"],
+                   "순서": be_calc.DESIGNS[k]["seq"],
+                   "CV 의미": be_calc.DESIGNS[k]["cv"],
+                   "완료 기준": f"{n:,} 명" if n else "—",
+                   "": "← 지금 설계" if k == dkey else ""})
+    st.dataframe(pd.DataFrame(_d), hide_index=True, use_container_width=True,
+                 height=38 * (len(_d) + 1) + 4)
+    st.caption("병렬(2×1)의 CV 는 전체 변동이라 교차설계 칸과 나란히 비교하면 안 됩니다. "
+               "같은 약이면 전체 CV 가 개체내보다 커서 실제로는 더 많이 필요합니다.")
+
+    with st.expander("계산 방법과 검산"):
+        st.markdown(
+            f"- σ = √(ln(1 + CV²)) · SE² = bk × σ² ÷ N · bk({D['label']}) = **{D['bk']:g}**\n"
+            f"- 자유도 = {('n − 2' if dkey in ('2x2', '2x1') else '2n − 3' if dkey in ('2x3', '3x3') else '3n − 4')}"
+            f" · TOST · 유의수준 {alpha:g}% 단측\n"
+            "- 검정력을 넘는 가장 작은 N 을 찾고, 등록 인원은 ⌈N ÷ (1−탈락률)⌉ 을 올림\n"
+            "- **검산**: 2×2 · CV 30% · T/R 0.95 · 검정력 80% → **40명 · 0.815845** "
+            "(PowerTOST 문서 예제와 소수 여섯째 자리까지 일치)\n"
+            "- 설계별 bk·자유도는 PowerTOST 설계 목록 문서에서 확인한 값입니다\n"
+            "- Williams 6×3 · 라틴방격 3×3 은 계수를 확인하지 못해 **넣지 않았습니다**")
+
 
 def _price_calc_page():
     """유형별 예상 상한금액. 기준가는 같은 제제(성분·함량·제형) 최고가에서 자동으로 채운다."""
@@ -1972,8 +2078,13 @@ if PAGE == "clinical":
         # ── 보기 전환: 검색(지금까지 쓰던 화면) / 분석(새 화면) ──────────────
         # 탭이 아니라 라디오를 쓰는 이유: st.tabs 는 안 보이는 탭까지 전부 계산한다.
         # 라디오 + st.stop() 이면 고른 쪽만 돈다(약가 분석 탭과 같은 방식).
-        _view = st.radio("보기", ["🔍 검색", "📊 분석"], horizontal=True,
-                         key="clin_view", label_visibility="collapsed")
+        _view = st.radio("보기", ["🔍 검색", "📊 분석", "🧮 생동 피험자 수"],
+                         horizontal=True, key="clin_view", label_visibility="collapsed")
+
+        if _view.endswith("피험자 수"):
+            _be_page()
+            ss.release_memory()
+            st.stop()
 
         if _view.endswith("분석"):
             _date_c = "CLST_APRV_DT" if "CLST_APRV_DT" in cl.columns else None
