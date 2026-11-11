@@ -8,6 +8,7 @@
 집계와 범례 이름만 로그에 남기고 원자료는 남기지 않는다. 작업 브랜치 전용.
 """
 import os
+import re
 import time
 
 from playwright.sync_api import sync_playwright
@@ -79,17 +80,34 @@ def click_label(page, text):
     return False
 
 
-def legend_names(page):
-    """Plotly 범례에 적힌 이름들."""
-    out = []
-    for e in find_all(page, "g.legend text, .legendtext"):
+def any_plot(page):
+    for fr in page.frames:
         try:
-            t = (e.inner_text() or "").strip()
+            if fr.query_selector(".js-plotly-plot"):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def trace_names(page):
+    """그래프에 실제로 들어간 선·표식 이름을 Plotly 객체에서 직접 읽는다.
+    범례 글자를 DOM 에서 긁는 방식은 이 화면에서 아무것도 못 잡았다."""
+    js = """() => {
+      const out = [];
+      document.querySelectorAll('.js-plotly-plot').forEach(p => {
+        (p.data || []).forEach(t => out.push(t.name || '(이름없음)'));
+      });
+      return out;
+    }"""
+    for fr in page.frames:
+        try:
+            got = fr.evaluate(js)
         except Exception:
             continue
-        if t:
-            out.append(t)
-    return out
+        if got:
+            return got
+    return []
 
 
 def probe(pg, term):
@@ -121,33 +139,36 @@ def probe(pg, term):
         pass
 
     # 드롭다운을 열고 아래 화살표로 첫 후보를 고른다(타자 + Enter 가 안 먹었다).
+    # 이 화면의 드롭다운은 react-aria ComboBox 라 항목이 [role='option'] 이다.
+    # ('li[role=option]' 은 이 구조에 없어서 앞서 아무것도 못 읽었다.)
     sb.click()
     time.sleep(3)
-    pg.keyboard.press("ArrowDown")
-    time.sleep(1)
-    pg.keyboard.press("Enter")
-    time.sleep(18)
-
-    # 위젯 값은 input 의 value 에 들어 있다. 글자로는 안 읽힌다.
     val = ""
-    sb = widget_with(pg, "stSelectbox", "허가 주성분 선택")
-    if sb:
+    for o in find_all(pg, "[role='option']"):
         try:
-            i2 = sb.query_selector("input")
-            val = (i2.get_attribute("value") or "") if i2 else ""
+            t = (o.inner_text() or "").strip()
         except Exception:
-            pass
-    print(f"  고른 값: {val[:48] or '(못 읽음 — 아래 화면 글자로 판단)'}")
+            continue
+        if t and "선택하세요" not in t:
+            val = t
+            o.click()
+            break
+    if not val:
+        print(f"  '{term}' 로 후보가 안 나온다 — 목록은 한글 주성분 기준이다")
+        pg.keyboard.press("Escape")
+        return
+    time.sleep(18)
+    print(f"  고른 성분: {val[:48]}")
 
     body = text_of(pg) or ""
-    i = body.find("허가 ")
-    print(f"  허가 탭 줄: {body[i:i+70].splitlines()[0] if i >= 0 else '(없음)'}")
+    mm = re.search(r"허가 [\d,]+건[^\n]*", body)
+    print(f"  허가 탭 줄: {mm.group(0)[:70] if mm else '(없음)'}")
     if "선택하세요" in body:
         print("  아직 '(선택하세요)' 상태 — 성분이 안 골라졌다")
         return
 
     moved = False
-    for t in find_all(pg, "[data-baseweb='tab'], button[role='tab']"):
+    for t in find_all(pg, "[role='tab'], [data-testid='stTab']"):
         try:
             if "약가" in (t.inner_text() or ""):
                 t.click()
@@ -158,7 +179,17 @@ def probe(pg, term):
     if not moved:
         print("  약가·이벤트 탭을 못 찾았다")
         return
-    time.sleep(20)
+    # 이 그래프는 동일성분 품목마다 회색 선을 하나씩 그려서 아주 느리다.
+    # 로컬(품목 250개 남짓)에서 80초가 걸렸다. 넉넉히 기다린다.
+    t0 = time.time()
+    drew = False
+    for _ in range(18):
+        if any_plot(pg):
+            drew = True
+            break
+        time.sleep(10)
+    print(f"  그래프 그리기: {'끝남' if drew else '3분 안에 안 끝남'} "
+          f"({time.time() - t0:.0f}초)")
 
     sb2 = widget_with(pg, "stSelectbox", "약가 추이를 볼 품목")
     if sb2:
@@ -170,8 +201,9 @@ def probe(pg, term):
     else:
         print("  품목 드롭다운이 없다")
 
-    names = legend_names(pg)
-    print(f"  그래프 범례: {names if names else '(없음)'}")
+    names = trace_names(pg)
+    named = [n for n in names if n and n != "(이름없음)"]
+    print(f"  그래프 선 {len(names)}개 (이름 있는 것 {len(named)}개): {named[:6]}")
     hit = any("등재" in n or "허가" in n for n in names)
     print(f"  >>> 초록 세모(동일성분 등재·허가): "
           f"{'있다 — 연결 살아 있음' if hit else '없다 — 연결 끊김 또는 그래프 자체가 없음'}")
@@ -183,7 +215,9 @@ def probe(pg, term):
 
 def main():
     with sync_playwright() as pw:
-        br = pw.chromium.launch()
+        _exe = os.environ.get("PW_CHROME")   # 로컬에서 미리 깔린 브라우저를 쓸 때
+        br = pw.chromium.launch(executable_path=_exe, args=["--no-sandbox"]) if _exe \
+            else pw.chromium.launch()
         ctx = br.new_context(viewport={"width": 1600, "height": 1500}, locale="ko-KR")
         pg = ctx.new_page()
         pg.goto(URL + "/?page=search", wait_until="domcontentloaded", timeout=120_000)
