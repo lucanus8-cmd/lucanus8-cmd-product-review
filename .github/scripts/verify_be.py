@@ -56,25 +56,46 @@ def app_frame(page):
     return None
 
 
-def click_text(page, sel, word, wait_for=None, tries=18):
-    """글자가 든 요소를 눌러 본다. wait_for 가 나올 때까지 기다린다."""
-    for el in find_all(page, sel):
-        try:
-            if word in (el.inner_text() or ""):
-                el.click()
-                break
-        except Exception:
-            pass
-    else:
-        return False
-    if not wait_for:
-        time.sleep(8)
-        return True
+def wait_text(page, word, tries=48, gap=5):
+    """화면에 그 글자가 나올 때까지 기다린다."""
     for _ in range(tries):
-        time.sleep(5)
-        if wait_for in (text_of(page) or ""):
+        if word in (text_of(page) or ""):
             return True
-    return True      # 눌리긴 했다 — 판정은 부르는 쪽에서
+        time.sleep(gap)
+    return False
+
+
+def click_text(page, sel, word, wait_for=None, tries=48, gap=5):
+    """글자가 든 요소를 눌러 본다.
+
+    실제 사이트는 자료를 읽느라 화면이 늦게 그려진다. 고정 시간만 기다리면
+    아직 그리는 중인 화면을 보고 '없다'고 잘못 판정한다 — 그래서 요소가
+    나올 때까지 기다렸다가 누른다.
+    """
+    el = None
+    for _ in range(tries):
+        for e in find_all(page, sel):
+            try:
+                if word in (e.inner_text() or ""):
+                    el = e
+                    break
+            except Exception:
+                pass
+        if el is not None:
+            break
+        time.sleep(gap)
+    if el is None:
+        return False
+    try:
+        el.click()
+    except Exception as e:
+        print(f"'{word}' 를 못 눌렀다: {str(e)[:120]}")
+        return False
+    if wait_for:
+        wait_text(page, wait_for, tries=tries, gap=gap)
+    else:
+        time.sleep(8)
+    return True
 
 
 def main():
@@ -125,9 +146,18 @@ def main():
 
         # 2) 임상 분석 → 생동 피험자 수
         pg.goto(URL + "/?page=clinical", wait_until="domcontentloaded", timeout=120_000)
-        time.sleep(20)
+        for _ in range(60):
+            if app_frame(pg):
+                break
+            time.sleep(2)
+        if not wait_text(pg, "임상 분석", tries=60):
+            print("임상 분석 화면이 안 떴다 — 판정 불가")
+            br.close()
+            return 1
+        time.sleep(5)
         if not click_text(pg, "label", "생동 피험자 수", wait_for="피험자 수 계산"):
             print("보기 칸에 '생동 피험자 수'가 없다 — 옛 코드다")
+            print("   화면 앞부분:", (text_of(pg) or "")[:400].replace("\n", " | "))
             br.close()
             return 1
         body = text_of(pg) or ""
@@ -144,7 +174,11 @@ def main():
         print("[정상] 화면 열림")
 
         # 3) 눌러서 계산
-        click_text(pg, "button", "피험자 수 계산", wait_for="필요 피험자 수", tries=24)
+        if not click_text(pg, "button", "피험자 수 계산",
+                          wait_for="필요 피험자 수", tries=36):
+            print("계산 버튼을 못 눌렀다")
+            br.close()
+            return 1
         time.sleep(4)
         body = text_of(pg) or ""
         ex = find_all(pg, "[data-testid='stException'], .stException")
