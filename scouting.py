@@ -504,6 +504,80 @@ def calc_route(prior, applying):
         return "다품목"
     return "일반"
 
+@st.cache_data(show_spinner="오리지널 약가 이력 보는 중…")
+def _orig_cuts(code, drop=0.20):
+    """제제(성분·함량·제형) 안에서 오리지널 한 품목을 짚고, 그 품목의 인하 시점을 돌려준다.
+
+    동일성분 품목을 전부 그리는 대신 오리지널 하나만 따라간다. 묶음 최고가 선은
+    해마다 다른 품목이 꼭대기를 차지해(아토르바스타틴 10mg 은 14년에 7번 바뀐다)
+    품목이 갈아탄 낙차를 인하로 잘못 읽는다.
+
+    돌려주는 값: (품목명, 짚은 근거, 인하목록, 이력시작연도)
+    인하목록은 [(적용일자, 이전가, 인하가, 인하율)] 로 drop 이상 떨어진 것만.
+    짚지 못하면 (None, 사유, [], None).
+    """
+    cols = ["제품코드", "제품명", "제제코드", "급여구분", "적용일자", "금액"]
+    pr = ss.load_slim("price", cols)
+    if pr is None or "제제코드" not in pr.columns:
+        return None, "약가 자료를 읽지 못했습니다", [], None
+    sub = pr[pr["제제코드"].astype(str) == str(code)]
+    if "급여구분" in sub.columns:
+        sub = sub[sub["급여구분"] == "급여"]
+    if sub.empty:
+        return None, "이 제제의 약가 이력이 없습니다", [], None
+    sub = sub.assign(적용일자=pd.to_datetime(sub["적용일자"], errors="coerce"))
+    sub = sub.dropna(subset=["적용일자"]).sort_values("적용일자")
+    y0 = int(sub["적용일자"].dt.year.min())
+    codes = set(sub["제품코드"].astype(str))
+
+    name, why = None, ""
+    ap = ss.load_slim("approval", ["품목명", "허가일자", "신약구분", "보험코드(EDI)"])
+    if ap is not None and "보험코드(EDI)" in ap.columns and not ap.empty:
+        raw = ap["보험코드(EDI)"].astype(str)
+        # 한 품목에 포장단위별 코드가 여럿이면 쉼표로 이어진다. 시트가 숫자로
+        # 읽어 1,000 단위 쉼표가 찍힌 값은 앞 9자리(첫 코드)만 쓸 수 있다.
+        ex = (ap.assign(_e=raw.str.split(","))
+                .explode("_e"))
+        ex["_e"] = ex["_e"].astype(str).str.strip()
+        head9 = ap.assign(_e=raw.str.replace(r"[^0-9]", "", regex=True).str[:9])
+        ex = pd.concat([ex, head9], ignore_index=True)
+        ex = ex[ex["_e"].isin(codes)]
+        if not ex.empty:
+            ex = ex.assign(_hd=pd.to_datetime(ex["허가일자"], format="%Y%m%d", errors="coerce"))
+            ex = ex.dropna(subset=["_hd"]).drop_duplicates("_e")
+            nov = ex[ex.get("신약구분", "").astype(str) == "신약"] if "신약구분" in ex.columns else ex.iloc[0:0]
+            if not nov.empty:
+                pickc = nov.sort_values("_hd").iloc[0]
+                why = f"허가 자료에 **신약**으로 적힌 품목 (허가 {pickc['_hd'].date()})"
+            else:
+                pickc = ex.sort_values("_hd").iloc[0]
+                why = f"이 제제에서 **가장 먼저 허가**받은 품목 ({pickc['_hd'].date()})"
+            got = sub[sub["제품코드"].astype(str) == pickc["_e"]]
+            if not got.empty:
+                name = str(got["제품명"].iloc[-1])
+
+    if name is None:
+        # 허가로 못 짚으면 이력 첫 해에 가장 비쌌던 품목으로 본다.
+        first = sub[sub["적용일자"].dt.year == y0]
+        if first.empty:
+            return None, "오리지널을 짚지 못했습니다", [], y0
+        top = first.loc[pd.to_numeric(first["금액"], errors="coerce").idxmax()]
+        name = str(top["제품명"])
+        why = f"허가 자료로 못 짚어, **{y0}년에 가장 비쌌던 품목**으로 봤습니다"
+
+    one = sub[sub["제품명"].astype(str) == name].copy()
+    one["금액"] = pd.to_numeric(one["금액"], errors="coerce")
+    one = one.dropna(subset=["금액"])
+    cuts = []
+    vals = one["금액"].tolist()
+    days = one["적용일자"].tolist()
+    for i in range(1, len(vals)):
+        p0, p1 = float(vals[i - 1]), float(vals[i])
+        if p0 > 0 and p1 < p0 * (1 - drop):
+            cuts.append((days[i].date(), p0, p1, (p1 - p0) / p0))
+    return name, why, cuts, y0
+
+
 def _calc_phases(ty, base, opt):
     """유형별 단계 목록 [(이름, 기간, 비율)] 과 안내문."""
     R, ph = CALC_RATE, []
@@ -742,38 +816,30 @@ def _price_calc_page():
         if _flat:
             st.caption("등재 이후 상한금액이 바뀐 적이 없습니다 — 선이 평평한 것이 정상입니다.")
 
-        _hi = pd.to_numeric(h["최고"], errors="coerce").ffill()
-        _y0 = int(h["연"].iloc[0])
-        adj_tail = f" 이력은 {_y0}년부터라, 그 이전의 조정은 이 자료에 없습니다."
-        if len(_hi) >= 2 and float(_hi.max()) > 0:
-            # 조정(특허만료·제네릭 진입)은 한 번에 30% 안팎으로 뚝 떨어진다.
-            # 사용량-약가 연동이나 실거래가 인하는 한 자릿수라, 섞이지 않게 나눠 본다.
-            _cuts = [(int(h["연"].iloc[i]), float(_hi.iloc[i - 1]), float(_hi.iloc[i]))
-                     for i in range(1, len(_hi))
-                     if _hi.iloc[i - 1] > 0 and _hi.iloc[i] < _hi.iloc[i - 1]]
-            _big = [c for c in _cuts if c[2] < c[1] * 0.80]
-            _peak, _now = float(_hi.max()), float(_hi.iloc[-1])
-            _ratio = _now / _peak
-            _head = (f"역대 최고 {_peak:,.0f}원({int(h['연'].iloc[int(_hi.argmax())])}) "
-                     f"→ 현재 {_now:,.0f}원 · **{_ratio * 100:.0f}%**")
-            if _big:
-                adj_guess = 2
-                _cy, _p0, _p1 = max(_big, key=lambda c: (c[1] - c[2]) / c[1])
-                adj_msg = (f"{_head}. 가장 큰 인하는 {_cy}년 {_p0:,.0f} → {_p1:,.0f}원 "
-                           f"({(_p1 - _p0) / _p0 * 100:.0f}%)입니다.")
-                st.warning("**조정 자국이 뚜렷합니다** — " + adj_msg
-                           + " 기준가가 이미 조정된 가격일 가능성이 큽니다." + adj_tail)
-            elif _ratio <= 0.80:
-                adj_msg = (f"{_head}. 한 번에 20% 넘게 떨어진 적은 없고 "
-                           f"{len(_cuts)}번에 나눠 내려왔습니다.")
-                st.warning("**여러 번에 걸쳐 내려왔습니다** — " + adj_msg
-                           + " 조정인지 사용량-약가 연동·실거래가 인하인지는 "
-                           "약가 조회 탭의 인하 시점 표에서 확인하세요." + adj_tail)
-            else:
-                adj_msg = (f"{_head}. {_y0}년 이후 20% 넘는 인하가 없습니다."
-                           if _cuts else f"{_y0}년 이후 인하 기록이 없습니다 (현재 {_now:,.0f}원).")
-                st.info("**조정 자국이 보이지 않습니다** — " + adj_msg + adj_tail
-                        + " 이번 등재로 조정이 일어나는지는 아래에서 고르세요.")
+    # 오리지널 한 품목을 짚어 그 품목의 인하 시점을 날짜로 보여준다.
+    # 묶음 최고가 선은 해마다 꼭대기 품목이 바뀌어 낙차를 인하로 잘못 읽는다.
+    _nm, _why, _cuts, _y0 = _orig_cuts(row["제제코드"])
+    if _nm is None:
+        st.info(f"오리지널을 짚지 못했습니다 — {_why}")
+    else:
+        _tail = (f" 이력은 {_y0}년부터라, 그 이전의 조정은 이 자료에 없습니다."
+                 if _y0 else "")
+        if _cuts:
+            adj_guess = 2
+            _big = [c for c in _cuts if c[3] <= -0.30]
+            st.warning(f"**{_nm}** 에 20% 넘는 인하가 {len(_cuts)}번 있습니다"
+                       + (f" (그중 30% 이상 {len(_big)}번)" if _big else "")
+                       + f". 기준가가 이미 조정된 가격일 가능성이 큽니다.{_tail}")
+            st.dataframe(pd.DataFrame(
+                [{"적용일자": d, "이전가": f"{p0:,.0f}원", "인하가": f"{p1:,.0f}원",
+                  "인하율": f"{r*100:.1f}%", "": "30% 이상" if r <= -0.30 else ""}
+                 for d, p0, p1, r in _cuts]),
+                hide_index=True, use_container_width=True,
+                height=min(38 * (len(_cuts) + 1) + 4, 220))
+        else:
+            st.info(f"**{_nm}** 에 20% 넘는 인하가 없습니다. "
+                    f"이번 등재로 조정이 일어나는지는 아래에서 고르세요.{_tail}")
+        st.caption(f"오리지널로 본 품목: {_why}")
 
     L, R = st.columns(2)
     with L:
