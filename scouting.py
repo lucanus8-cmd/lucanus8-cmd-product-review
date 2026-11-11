@@ -165,7 +165,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-11-a"
+BUILD = "2026-11-11-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -834,109 +834,196 @@ def _calc_chart(base, phases):
                                  tickvals=ticks, ticktext=tlabels))
     return fig
 
+@st.cache_data(show_spinner=False, max_entries=1024)
+def _be_n(design, cv, target, gmr, alpha, lo, hi):
+    """목표 검정력을 넘는 가장 작은 인원. 순수 계산이라 캐시가 안전하다."""
+    return be_calc.sample_size(design, cv, target, gmr, alpha, lo, hi)
+
+
+@st.cache_data(show_spinner=False, max_entries=1024)
+def _be_pw(design, n, cv, gmr, alpha, lo, hi):
+    return be_calc.power(design, n, cv, gmr, alpha, lo, hi)
+
+
 def _be_page():
-    """생동 피험자 수 계산기. 자료를 읽지 않는 순수 계산이라 가볍다."""
-    st.markdown("**🧮 생동 피험자 수** · CV%를 넣으면 생물학적동등성시험에 몇 명이 "
-                "필요한지 계산합니다 (TOST · 평균생동)")
+    """생동 피험자 수 계산기.
 
-    _names = [f"{be_calc.DESIGNS[k]['label']}  ({be_calc.DESIGNS[k]['seq']})"
-              for k in be_calc.DESIGN_ORDER]
-    _pick = st.radio("설계", _names, key="be_design")
-    dkey = be_calc.DESIGN_ORDER[_names.index(_pick)]
-    D = be_calc.DESIGNS[dkey]
-    st.caption(f"{D['note']}  ·  인원은 **{D['step']}의 배수**로 맞춥니다.")
+    화면 구성은 biostatistics.ca 의 PowerTOST 계산기와 같게 맞췄다
+    (왼쪽 입력 · 오른쪽 결과, 칸 일곱 개, 버튼 하나, 결과는 '전체' 인원).
+    자료를 전혀 읽지 않는 순수 계산이라 화면이 가볍다.
 
-    _in = st.columns(2)
-    _kind = D["cv"]      # 개체내 / 전체
-    cv_auc = float(_in[0].number_input(
-        f"AUC CV% ({_kind})", min_value=0.0, max_value=200.0, value=25.0,
-        step=1.0, format="%.4g", key="be_cv_auc"))
-    cv_cmax = float(_in[1].number_input(
-        f"Cmax CV% ({_kind})", min_value=0.0, max_value=200.0, value=0.0,
-        step=1.0, format="%.4g", key="be_cv_cmax"))
+    위젯 key 는 모두 be2_ 로 시작한다 — 예전 화면이 남긴 session_state 값과
+    종류가 달라(라디오 '80%' → 숫자칸) 섞이면 오류가 나기 때문이다.
+    """
+    st.markdown("**🧮 생동 피험자 수** · 변동계수(CV%)를 넣으면 생물학적동등성시험에 "
+                "몇 명이 필요한지 계산합니다 (TOST · 평균생동)")
+
+    left, right = st.columns([5, 7], gap="large")
+
+    with left:
+        _labels, _keys = [], []
+        for k in be_calc.DESIGN_ORDER:
+            d = be_calc.DESIGNS[k]
+            _labels.append(("⚠ 드묾 · " if d["rare"] else "")
+                           + f"{d['label']}  ({d['seq']})")
+            _keys.append(k)
+        _pick = st.selectbox("설계", _labels, index=0, key="be2_design")
+        dkey = _keys[_labels.index(_pick)]
+        D = be_calc.DESIGNS[dkey]
+        st.caption(D["note"])
+
+        _kind = D["cv"]      # 개체내 / 전체
+        _split = st.checkbox("AUC·Cmax 를 따로 넣기", value=False, key="be2_split")
+        if _split:
+            cv_auc = float(st.number_input(
+                f"AUC CV% ({_kind})", min_value=0.0, max_value=200.0,
+                value=25.0, step=1.0, format="%.4g", key="be2_cv_auc"))
+            cv_cmax = float(st.number_input(
+                f"Cmax CV% ({_kind})", min_value=0.0, max_value=200.0,
+                value=35.0, step=1.0, format="%.4g", key="be2_cv_cmax"))
+            _cvs = [("AUC", cv_auc), ("Cmax", cv_cmax)]
+        else:
+            cv_one = float(st.number_input(
+                f"변동계수 CV% ({_kind})", min_value=0.0, max_value=200.0,
+                value=30.0, step=1.0, format="%.4g", key="be2_cv"))
+            _cvs = [("CV", cv_one)]
+
+        gmr = float(st.number_input(
+            "기대 기하평균비 GMR (시험약/대조약)", min_value=0.70, max_value=1.30,
+            value=0.95, step=0.01, format="%.3f", key="be2_gmr"))
+        lo = float(st.number_input(
+            "생동한계 아래", min_value=0.50, max_value=0.99, value=0.80,
+            step=0.01, format="%.2f", key="be2_lo"))
+        hi = float(st.number_input(
+            "생동한계 위", min_value=1.01, max_value=2.00, value=1.25,
+            step=0.01, format="%.2f", key="be2_hi"))
+        st.caption(f"{lo * 100:.2f}% ~ {hi * 100:.2f}%")
+        target = float(st.number_input(
+            "목표 검정력 (%)", min_value=50.0, max_value=99.0, value=80.0,
+            step=1.0, format="%.4g", key="be2_pw"))
+        alpha = float(st.number_input(
+            "유의수준 α (단측, %)", min_value=0.5, max_value=20.0, value=5.0,
+            step=0.5, format="%.4g", key="be2_alpha"))
+        drop = float(st.number_input(
+            "예상 탈락률 (%)", min_value=0.0, max_value=60.0, value=0.0,
+            step=1.0, format="%.4g", key="be2_drop"))
+        st.caption("탈락률을 넣으면 **등록해야 할 인원**도 같이 내줍니다. "
+                   "0 이면 완료 기준만 봅니다.")
+        _go = st.button("피험자 수 계산", type="primary",
+                        use_container_width=True, key="be2_go")
+
+    if _go:
+        st.session_state["be2_done"] = True
+    if not st.session_state.get("be2_done"):
+        with right:
+            st.info("왼쪽 값을 확인하고 **피험자 수 계산** 을 누르세요.")
+        return
+
+    parts = []
+    for _nm, _cv in _cvs:
+        if _cv and _cv > 0:
+            n = _be_n(dkey, _cv / 100, target / 100, gmr, alpha / 100, lo, hi)
+            parts.append({"name": _nm, "cv": _cv, "n": n,
+                          "power": (_be_pw(dkey, n, _cv / 100, gmr,
+                                           alpha / 100, lo, hi) if n else None)})
+    done = [p for p in parts if p["n"]]
+
+    with right:
+        st.caption("값을 바꾸면 바로 다시 계산됩니다.")
+        if not done:
+            if not parts:
+                st.info("CV% 를 넣어주세요.")
+            else:
+                st.warning("이 조건에서는 2,000명 안에서 목표 검정력에 닿지 못했습니다. "
+                           "CV% 나 목표 검정력, 생동한계를 확인해 주세요.")
+            return
+        top = max(done, key=lambda q: q["n"])
+        st.metric("필요 피험자 수 (전체 · 완료 기준)", f"{top['n']:,} 명")
+        st.metric("실제 검정력", f"{top['power'] * 100:.2f} %")
+        if drop > 0:
+            _en = be_calc.enroll(top["n"], drop / 100, D["step"])
+            st.metric("등록해야 할 인원", f"{_en:,} 명" if _en else "—",
+                      delta=f"탈락 {drop:g}% 감안", delta_color="off")
+        st.caption(f"순서당·군당이 아니라 **전체** 인원입니다. "
+                   f"순서가 {D['step']}가지인 설계라 인원을 "
+                   f"**{D['step']}의 배수**로 맞춥니다.")
+        if len(done) > 1:
+            _a, _b = done[0], done[1]
+            st.info(f"**{top['name']}** 쪽이 더 많아 이쪽으로 정했습니다 — "
+                    f"{_a['name']}(CV {_a['cv']:g}%) {_a['n']}명 · "
+                    f"{_b['name']}(CV {_b['cv']:g}%) {_b['n']}명.")
+
+    big = max(p["cv"] for p in done)
+
     if _kind == "전체":
         st.warning("병렬설계의 CV 는 **개체내가 아니라 전체(개체간 포함) 변동**입니다. "
                    "교차설계용 개체내 CV 를 그대로 넣으면 인원이 실제보다 적게 나옵니다.")
-    st.caption("보통 Cmax 의 변동이 더 큽니다. 둘 다 넣으면 **더 많이 필요한 쪽**으로 "
-               "정합니다. 모르는 쪽은 0 으로 두세요.")
-
-    _o = st.columns(3)
-    ratio = float(_o[0].number_input("기대 T/R 비", min_value=0.70, max_value=1.30,
-                                     value=0.95, step=0.01, format="%.3f", key="be_ratio"))
-    power_t = _o[1].radio("검정력", ["80%", "90%"], horizontal=True, key="be_power")
-    target = 0.80 if power_t.startswith("80") else 0.90
-    drop = float(_o[2].number_input("예상 탈락률 (%)", min_value=0.0, max_value=60.0,
-                                    value=15.0, step=1.0, format="%.4g", key="be_drop"))
-    _l = st.columns(2)
-    lo = float(_l[0].number_input("생동범위 아래 (%)", min_value=50.0, max_value=99.0,
-                                  value=80.0, step=0.01, format="%.2f", key="be_lo"))
-    alpha = float(_l[1].number_input("유의수준 (단측, %)", min_value=1.0, max_value=10.0,
-                                     value=5.0, step=0.5, format="%.4g", key="be_alpha"))
-    limit = 1.0 / (lo / 100)      # 80% → 125%
-    st.caption(f"생동범위 {lo:.2f} ~ {limit*100:.2f}% · 유의수준 {alpha:g}% 단측")
-
-    res = be_calc.plan(dkey, cv_auc / 100, cv_cmax / 100, target=target,
-                       ratio=ratio, alpha=alpha / 100, limit=limit, dropout=drop / 100)
-    if res["n"] is None:
-        st.info("CV% 를 넣으면 계산합니다. (한쪽만 넣으셔도 됩니다)")
-        return
-
-    m = st.columns(4)
-    m[0].metric("등록해야 할 인원", f"{res['enroll']:,} 명",
-                delta=f"탈락 {drop:g}% 감안", delta_color="off")
-    m[1].metric("완료 기준", f"{res['n']:,} 명")
-    m[2].metric("실제 검정력", f"{res['power']*100:.1f} %")
-    m[3].metric("결정한 쪽", res["driver"])
-
-    if len(res["parts"]) > 1:
-        a, c = res["parts"][0], res["parts"][1]
-        st.info(f"**{res['driver']}** 쪽이 더 많아 이쪽으로 정했습니다 — "
-                f"AUC(CV {a['cv']*100:g}%) {a['n']}명 · "
-                f"Cmax(CV {c['cv']*100:g}%) {c['n']}명.")
-
-    big = max((p["cv"] for p in res["parts"]), default=0)
-    if big > 0.30 and dkey != "2x1":
-        st.warning("CV 가 30%를 넘습니다 — **고변동 의약품**입니다. 반복설계와 "
+    if dkey == "paired":
+        st.warning("**대응표본은 생동시험으로 인정되지 않습니다.** 순서를 무작위로 "
+                   "배정하지도, 기간을 나누지도 않아 약의 효과와 기간 효과를 갈라낼 수 "
+                   "없습니다. 같은 사람에게서 두 측정법을 비교할 때 쓰는 설계입니다.")
+    if dkey == "2x4x2":
+        st.warning("**Balaam 은 인원이 크게 늡니다.** 네 순서 중 RR·TT 군은 시험약과 "
+                   "대조약을 둘 다 받지 않아 T/R 비교에 직접 쓰이지 않습니다 — 같은 "
+                   "CV에서 2×2 교차의 약 4배가 듭니다.")
+    if big > 30 and _kind != "전체":
+        st.warning("CV 가 30% 를 넘습니다 — **고변동 의약품**입니다. 반복설계와 "
                    "기준조절(RSABE·ABEL)을 쓰면 인원을 크게 줄일 수 있습니다. "
-                   "이 계산기는 **평균생동만** 다루니, 적용 가능 여부는 규정에서 확인하세요.")
+                   "**이 계산기는 평균생동(ABE)만 다룹니다** — 기준조절 적용 가능 "
+                   "여부는 의약품동등성시험기준에서 확인하세요.")
 
-    st.markdown("**CV 가 달라지면** (지금 설계 · 지금 T/R · 완료 기준)")
-    _base = big * 100
-    _cvs = sorted({round(max(5.0, _base + d)) for d in (-10, -5, 0, 5, 10)})
-    _rows = []
-    for c in _cvs:
-        n = be_calc.sample_size(dkey, c / 100, target, ratio, alpha / 100, limit)
-        p = be_calc.power(dkey, n, c / 100, ratio, alpha / 100, limit) if n else None
-        _rows.append({"CV%": f"{c:g}%", "완료 기준": f"{n:,} 명" if n else "—",
-                      "실제 검정력": f"{p*100:.1f}%" if p else "—",
-                      "": "← 지금 값" if abs(c - _base) < 0.5 else ""})
-    st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True,
-                 height=38 * (len(_rows) + 1) + 4)
+    if st.checkbox("CV 가 달라지면 — 표로 보기", key="be2_tbl_cv"):
+        _rows = []
+        for c in sorted({round(max(2.0, big + d)) for d in (-10, -5, 0, 5, 10)}):
+            n = _be_n(dkey, c / 100, target / 100, gmr, alpha / 100, lo, hi)
+            p = _be_pw(dkey, n, c / 100, gmr, alpha / 100, lo, hi) if n else None
+            _rows.append({"CV%": f"{c:g}%",
+                          "완료 기준": f"{n:,} 명" if n else "—",
+                          "실제 검정력": f"{p * 100:.1f}%" if p else "—",
+                          "": "← 지금 값" if abs(c - big) < 0.5 else ""})
+        st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                     use_container_width=True, height=38 * (len(_rows) + 1) + 4)
+        st.caption("지금 설계·GMR·검정력 그대로 두고 CV 만 바꿨을 때입니다. "
+                   "가정 하나가 비용을 두 배로 만들 수 있습니다.")
 
-    st.markdown("**설계를 바꾸면** (지금 CV · 지금 T/R · 완료 기준)")
-    _d = []
-    for k in be_calc.DESIGN_ORDER:
-        n = be_calc.sample_size(k, big, target, ratio, alpha / 100, limit)
-        _d.append({"표기": be_calc.DESIGNS[k]["label"],
-                   "순서": be_calc.DESIGNS[k]["seq"],
-                   "CV 의미": be_calc.DESIGNS[k]["cv"],
-                   "완료 기준": f"{n:,} 명" if n else "—",
-                   "": "← 지금 설계" if k == dkey else ""})
-    st.dataframe(pd.DataFrame(_d), hide_index=True, use_container_width=True,
-                 height=38 * (len(_d) + 1) + 4)
-    st.caption("병렬(2×1)의 CV 는 전체 변동이라 교차설계 칸과 나란히 비교하면 안 됩니다. "
-               "같은 약이면 전체 CV 가 개체내보다 커서 실제로는 더 많이 필요합니다.")
+    if st.checkbox("설계를 바꾸면 — 표로 보기", key="be2_tbl_design"):
+        _d = []
+        for k in be_calc.DESIGN_ORDER:
+            d = be_calc.DESIGNS[k]
+            n = _be_n(k, big / 100, target / 100, gmr, alpha / 100, lo, hi)
+            _d.append({"설계": d["label"], "순서": d["seq"],
+                       "CV 의미": d["cv"],
+                       "완료 기준": f"{n:,} 명" if n else "—",
+                       "비고": ("생동에서 거의 쓰지 않음" if d["rare"] else ""),
+                       "": "← 지금 설계" if k == dkey else ""})
+        st.dataframe(pd.DataFrame(_d), hide_index=True,
+                     use_container_width=True, height=38 * (len(_d) + 1) + 4)
+        st.caption(f"CV {big:g}% 로 모두 계산했습니다. 병렬의 CV 는 전체 변동이라 "
+                   "교차설계 칸과 나란히 비교하면 안 됩니다 — 같은 약이면 전체 CV 가 "
+                   "개체내보다 커서 실제로는 더 많이 필요합니다. 반복설계는 인원이 "
+                   "적은 대신 기간·채혈이 늘어 1인당 비용이 올라갑니다.")
 
     with st.expander("계산 방법과 검산"):
         st.markdown(
-            f"- σ = √(ln(1 + CV²)) · SE² = bk × σ² ÷ N · bk({D['label']}) = **{D['bk']:g}**\n"
-            f"- 자유도 = {('n − 2' if dkey in ('2x2', '2x1') else '2n − 3' if dkey in ('2x3', '3x3') else '3n − 4')}"
-            f" · TOST · 유의수준 {alpha:g}% 단측\n"
-            "- 검정력을 넘는 가장 작은 N 을 찾고, 등록 인원은 ⌈N ÷ (1−탈락률)⌉ 을 올림\n"
-            "- **검산**: 2×2 · CV 30% · T/R 0.95 · 검정력 80% → **40명 · 0.815845** "
-            "(PowerTOST 문서 예제와 소수 여섯째 자리까지 일치)\n"
-            "- 설계별 bk·자유도는 PowerTOST 설계 목록 문서에서 확인한 값입니다\n"
-            "- Williams 6×3 · 라틴방격 3×3 은 계수를 확인하지 못해 **넣지 않았습니다**")
+            "**계산**\n\n"
+            "- σ = √(ln(1 + CV²)) · SE² = bk × σ² ÷ N\n"
+            f"- {D['label']}: bk = **{D['bk']:g}** · 자유도 = **{D['dfs']}** "
+            f"· 인원은 **{D['step']}의 배수**\n"
+            f"- TOST · 유의수준 {alpha:g}% 단측 · 생동한계 "
+            f"{lo * 100:.2f}~{hi * 100:.2f}% · GMR {gmr:.3f}\n"
+            "- 목표 검정력을 넘는 가장 작은 N 을 찾고, 등록 인원은 "
+            "⌈N ÷ (1−탈락률)⌉ 을 배수로 올립니다\n\n"
+            "**검산**\n\n"
+            "- PowerTOST 문서 예제: 2×2 · CV 30% · GMR 0.95 · 검정력 80% → "
+            "**40명 · 0.815845** (소수 여섯째 자리까지 일치)\n"
+            "- 설계 12개의 bk·자유도·배수는 PowerTOST 원본 소스에서 확인한 값입니다\n"
+            "- biostatistics.ca 의 PowerTOST 계산기에 **167가지 조건**을 직접 넣어 "
+            "받은 값과 대조 — 인원·달성검정력 모두 전부 일치했습니다 "
+            "(CV 5~60% · GMR 0.90~1.00 · 검정력 80~95% · α 5·10% · "
+            "생동한계 0.8~1.25 와 0.9~1.11)\n"
+            "- 저장소의 `tests/check_be_calc.py` 로 언제든 다시 돌려볼 수 있습니다\n\n"
+            "**다루지 않는 것** — 고변동 의약품의 기준조절(RSABE·ABEL), "
+            "비선형 약동학, 중간분석. 평균생동(ABE) 하나만 계산합니다.")
 
 
 def _price_calc_page():
