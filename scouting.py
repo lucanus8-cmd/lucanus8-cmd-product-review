@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-13-b"
+BUILD = "2026-11-13-c"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1787,9 +1787,19 @@ if PAGE == "search":
                 pt = ss.load_patent()
                 m = _kor_union(pt, _ing_union(pt, contains(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q)), "INGR_NAME").copy()
                 m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
-                st.caption(f"특허 {len(m):,}건 · 존속 등록 {int(ss.active_patent_mask(m['DOMESTIC_PATENT_STATUS']).sum())}건")
-                cmap = {"품목명": "품목명", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
+                _live = ss.active_patent_mask(m["DOMESTIC_PATENT_STATUS"])
+                if ss.has_listed_flag(m):
+                    _lst = ss.listed_patent_mask(m)
+                    st.caption(f"특허 {len(m):,}건 · 식약처 등재(제품특허) {int(_lst.sum())}건 "
+                               f"(존속 등록 {int((_lst & _live).sum())}건) · 기타특허 {int((~_lst).sum())}건")
+                    st.caption("만료일 판단은 **제품특허**(원개발사가 식약처 특허목록에 등재한 특허)로 합니다. "
+                               "기타특허는 같은 성분에 관한 다른 특허(다른 회사의 염·수화물·조성 특허 등)라 참고용입니다.")
+                else:
+                    st.caption(f"특허 {len(m):,}건 · 존속 등록 {int(_live.sum())}건")
+                cmap = {ss.PATENT_PAGE_COL: "구분", "품목명": "품목명", "PATENT_GB_CODE": "유형",
+                        "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
                         "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
+                cmap = {k2: v for k2, v in cmap.items() if k2 in m.columns}
                 show_df(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
                         height=300, file_name="특허목록.csv")
             else: st.info("특허 데이터 미연결")
@@ -1850,7 +1860,8 @@ if PAGE == "search":
                     mat_dates, use_dates, appr, reg = [], [], None, None
                     if HAS_REG:
                         pt = ss.load_patent()
-                        reg = pt[pt["_key"].isin(sel_keys) & ss.active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
+                        reg = pt[pt["_key"].isin(sel_keys) & ss.active_patent_mask(pt["DOMESTIC_PATENT_STATUS"])
+                                 & pt["_exp"].notna() & ss.listed_patent_mask(pt)]
                         mat_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("물질", na=False)]["_exp"].dropna().unique())
                         use_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("용도", na=False)]["_exp"].dropna().unique())
                         ap = ss.load_approval()
@@ -2150,6 +2161,16 @@ if PAGE == "patent":
         st.info("특허 데이터 미연결")
     else:
         pt = ss.load_patent().copy()
+        if ss.has_listed_flag(pt):
+            # 기본은 식약처 등재 특허(제품특허)만. 고른 값이 선택지에 없으면 오류가 나므로
+            # 기본값은 실제 선택지 안에서만 고른다.
+            _pg = pt[ss.PATENT_PAGE_COL].astype(str).str.strip()
+            _pg_opts = sorted(_pg[_pg.str.len() > 0].unique().tolist())
+            _pg_def = [o for o in _pg_opts if "제품" in o]
+            _pg_sel = st.multiselect("구분", _pg_opts, default=_pg_def, key="p_page",
+                                     help="제품특허 = 원개발사가 식약처 의약품 특허목록에 등재한 특허. "
+                                          "기타특허 = 같은 성분에 관한 다른 특허(다른 회사의 염·수화물·조성 특허 등).")
+            pt = isin(pt, ss.PATENT_PAGE_COL, _pg_sel)
         f = st.columns(4)
         pt = isin(pt, "PATENT_GB_CODE", msel(f[0], "특허유형", pt["PATENT_GB_CODE"], "p_type"))
         pt = isin(pt, "DOMESTIC_PATENT_STATUS", msel(f[1], "상태", pt["DOMESTIC_PATENT_STATUS"], "p_stat", default=["등록"]))
@@ -2181,8 +2202,9 @@ if PAGE == "patent":
             k[2].metric("향후 3년 내 만료", f"{int(((pt['만료D(년)']>=0)&(pt['만료D(년)']<3)).sum()):,}")
             cnt = pt.groupby(pt["_exp"].dt.year).size().reset_index(); cnt.columns = ["만료연도", "건수"]
             st.plotly_chart(px.bar(cnt, x="만료연도", y="건수", title="만료 연도별 특허 건수"), use_container_width=True)
-            cmap = {"품목명": "품목명", "INGR_NAME": "성분", "PATENT_GB_CODE": "유형", "PATENTEE": "특허권자",
-                    "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
+            cmap = {ss.PATENT_PAGE_COL: "구분", "품목명": "품목명", "INGR_NAME": "성분", "PATENT_GB_CODE": "유형",
+                    "PATENTEE": "특허권자", "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일",
+                    "만료D(년)": "만료D(년)"}
             cc = {k2: v for k2, v in cmap.items() if k2 in pt.columns}
             show_df(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), height=360, file_name="특허분석.csv")
 
@@ -2745,7 +2767,8 @@ if PAGE == "ai":
         if not HAS_REG:
             return None
         pt = ss.load_slim("patent", ["품목명", "INGR_ENG_NAME", "INGR_NAME", "PATENT_GB_CODE",
-                                     "DOMESTIC_PATENT_STATUS", "DOMESTIC_END_DATE", "PATENTEE"])
+                                     "DOMESTIC_PATENT_STATUS", "DOMESTIC_END_DATE", "PATENTEE",
+                                     ss.PATENT_PAGE_COL])
         pt = ss.enrich_patent(pt) if pt is not None else ss.load_patent()
         m = match_mask(pt, ["품목명", "INGR_ENG_NAME", "INGR_NAME"], qterm)
         keys = ss.resolve_keys(qterm)
@@ -2754,8 +2777,10 @@ if PAGE == "ai":
         n = int(m.sum())
         if n == 0:
             return None
-        sub = pick(pt, m, ["PATENT_GB_CODE", "DOMESTIC_PATENT_STATUS", "_exp", "PATENTEE"])
-        live = (sub[ss.active_patent_mask(sub["DOMESTIC_PATENT_STATUS"]) & sub["_exp"].notna()]
+        sub = pick(pt, m, ["PATENT_GB_CODE", "DOMESTIC_PATENT_STATUS", "_exp", "PATENTEE",
+                           ss.PATENT_PAGE_COL])
+        live = (sub[ss.active_patent_mask(sub["DOMESTIC_PATENT_STATUS"]) & sub["_exp"].notna()
+                    & ss.listed_patent_mask(sub)]
                 if {"DOMESTIC_PATENT_STATUS", "_exp"}.issubset(sub.columns) else sub.iloc[0:0])
         mat = use = pd.NaT
         if "PATENT_GB_CODE" in live.columns and not live.empty:

@@ -135,6 +135,9 @@ def main():
         time.sleep(6)
         st_txt = stat.inner_text().replace("\n", " | ")
         print(f"상태 칸: {st_txt}")
+        pgsel = app(pg).locator("[data-testid='stMultiSelect']").filter(has_text="구분").first
+        print("구분 칸:", pgsel.inner_text().replace("\n", " | ") if pgsel.count()
+              else "(없음 — 자료에 제품특허/기타특허 구분이 없다)")
 
         box = app(pg).locator("[data-testid='stTextInput']").filter(
             has_text="품목/성분 검색").locator("input").first

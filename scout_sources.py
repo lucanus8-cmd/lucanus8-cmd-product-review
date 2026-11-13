@@ -152,7 +152,29 @@ def patent_available():
 
 _PATENT_COLS = ["품목기준코드", "품목명", "업체명", "INGR_ENG_NAME", "INGR_NAME",
                 "DOMESTIC_PATENT_STATUS", "PATENT_GB_CODE", "PATENTEE",
-                "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE"]
+                "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE", "PAGE_GB_NM"]
+
+# 특허 자료의 PAGE_GB_NM: '제품특허' = 원개발사가 식약처 의약품 특허목록에 등재한
+# 특허, '기타특허' = 같은 성분에 관한 다른 특허(다른 회사의 염·수화물·조성 특허 등).
+# 제네릭 출시를 막는 것은 등재 특허라, 만료일은 제품특허로만 계산한다.
+# (예: 미라베그론 — 식약처 목록에는 아스텔라스 특허만 있는데, 기타특허에 있던
+#  국내 회사 수화물 특허 때문에 '물질특허 2038년'으로 잘못 보였다)
+PATENT_PAGE_COL = "PAGE_GB_NM"
+
+
+def has_listed_flag(pt):
+    """제품특허/기타특허 구분이 쓸 수 있게 들어 있나. 없으면 예전처럼 전부 본다."""
+    if pt is None or PATENT_PAGE_COL not in getattr(pt, "columns", []):
+        return False
+    return bool(pt[PATENT_PAGE_COL].astype(str).str.contains("제품", na=False).any())
+
+
+def listed_patent_mask(pt):
+    """식약처 등재 특허(제품특허)만 True.
+    구분 칸이 없는 예전 자료면 전부 True — 화면이 예전과 똑같이 돈다."""
+    if not has_listed_flag(pt):
+        return pd.Series(True, index=pt.index)
+    return pt[PATENT_PAGE_COL].astype(str).str.contains("제품", na=False)
 
 @st.cache_data(show_spinner="허가 로딩 중…")
 def _load_approval(_mt):
@@ -399,8 +421,11 @@ def original_patent_mask(pt):
     return m
 
 @st.cache_data
-def patent_by_key(single_only=False, original_only=False):
+def patent_by_key(single_only=False, original_only=False, listed_only=True):
     """성분(키)별 등록특허 만료: 물질/용도/전체 최종 만료일과 그 근거 특허.
+
+    listed_only=True(기본)면 식약처 등재 특허(제품특허)만 센다. 기타특허(다른
+    회사 특허)가 만료일을 늦춰 보이게 하지 않도록. 구분 칸이 없으면 전부 센다.
 
     키는 영문 성분명의 첫 단어라, 그 성분이 들어간 복합제 특허도 같은 키로 묶인다
     (예: 아토르바스타틴 단일제 키에 '아토르바스타틴+에제티미브' 복합제 특허가 포함).
@@ -411,6 +436,8 @@ def patent_by_key(single_only=False, original_only=False):
         pt = pt[pt["_single"]]
     if original_only:
         pt = pt[original_patent_mask(pt)]
+    if listed_only:
+        pt = pt[listed_patent_mask(pt)]
     reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
     out = pd.DataFrame({"특허만료_전체": g["_exp"].max(), "등록특허수": g.size()})
