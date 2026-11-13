@@ -1,0 +1,42 @@
+# 배포된 사이트의 '1상 비용 어림' 화면을 실제로 열어 확인한다.
+# 손으로만 돌린다(일정 실행 없음). 읽기만 하므로 사이트는 바뀌지 않는다.
+name: verify-cost
+
+on:
+  workflow_dispatch:
+    inputs:
+      want_build:
+        description: "기대하는 코드 버전 (비우면 확인만 하고 넘어감)"
+        required: false
+        default: ""
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.49.0-${{ runner.os }}
+
+      - name: 브라우저 준비
+        run: |
+          python -m pip install --quiet playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: 계산이 식대로 도는지
+        run: python tests/check_cost_calc.py
+
+      - name: 사이트에서 확인
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          WANT_BUILD: ${{ inputs.want_build }}
+        run: python .github/scripts/verify_cost.py

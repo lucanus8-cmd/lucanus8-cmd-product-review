@@ -21,6 +21,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import scout_sources as ss
 import be_calc
+import cost_calc
 
 st.set_page_config(page_title="제품 검토", layout="wide", page_icon="🔎")
 
@@ -165,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-11-b"
+BUILD = "2026-11-13-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1024,6 +1025,114 @@ def _be_page():
             "- 저장소의 `tests/check_be_calc.py` 로 언제든 다시 돌려볼 수 있습니다\n\n"
             "**다루지 않는 것** — 고변동 의약품의 기준조절(RSABE·ABEL), "
             "비선형 약동학, 중간분석. 평균생동(ABE) 하나만 계산합니다.")
+
+
+def _cost_prices():
+    """1상 비용 단가. Streamlit Secrets 의 [phase1_cost] 에서 읽는다.
+
+    단가는 실제 견적에서 나온 값이라 공개된 코드에 적지 않는다.
+    Secrets 가 없거나 칸이 비어도 죽지 않고 빈 값으로 돌려준다.
+    """
+    try:
+        raw = st.secrets.get("phase1_cost", None)
+    except Exception:
+        raw = None
+    out = {}
+    if raw:
+        for k in cost_calc.KEYS:
+            try:
+                out[k] = float(raw[k])
+            except Exception:
+                pass
+    return out
+
+
+def _cost_page():
+    """1상 비용 어림 계산기. 자료를 읽지 않는 순수 계산이라 가볍다."""
+    st.markdown("**💰 1상 비용 어림** · 숫자 다섯 개로 1상 시험의 대략적인 총 비용을 "
+                "봅니다 (견적을 대신하지 않습니다)")
+
+    base = cost_calc.clean(_cost_prices())
+    have = cost_calc.ready(base)
+    left, right = st.columns([5, 7], gap="large")
+
+    with left:
+        n = int(st.number_input("대상자 수 (명)", min_value=1, max_value=2000,
+                                value=60, step=1, key="cost_n"))
+        k = int(st.number_input("기 수", min_value=1, max_value=12,
+                                value=2, step=1, key="cost_k"))
+        pts = int(st.number_input("기당 채혈 포인트 (회)", min_value=1, max_value=100,
+                                  value=20, step=1, key="cost_pts"))
+        an = int(st.number_input("분석 성분 수 (개)", min_value=1, max_value=10,
+                                 value=1, step=1, key="cost_an"))
+        hrs = float(st.number_input("마지막 채혈 시점 (투약 후 시간)", min_value=1,
+                                    max_value=2000, value=240, step=12,
+                                    key="cost_hrs"))
+        st.caption(f"총 검체 수 **{n * k * pts:,}개** = {n} × {k} × {pts}")
+
+        # 단가가 없으면 바로 넣을 수 있게 칸을 펼쳐 둔다
+        edit = st.checkbox("단가 고치기", value=not have, key="cost_edit")
+        prices = dict(base)
+        if edit:
+            st.caption("단가는 **만 원** 단위로 넣습니다.")
+            for key, label, hint, step in cost_calc.PRICE_KEYS:
+                prices[key] = 1e4 * float(st.number_input(
+                    f"{label} (만 원)", min_value=0.0, max_value=10_000_000.0,
+                    value=float(base.get(key, 0)) / 1e4, step=step / 1e4,
+                    format="%.6g", help=hint, key=f"cost_pm_{key}"))
+
+    with right:
+        if not cost_calc.ready(prices):
+            st.info("단가가 아직 없습니다. 왼쪽 **단가 고치기**에 직접 넣거나, "
+                    "사이트 설정(Secrets)의 `[phase1_cost]` 에 넣어 두면 "
+                    "다음부터 자동으로 채워집니다.")
+            return
+        r = cost_calc.estimate(n, k, pts, an, hrs, prices)
+        tot = r["total"]
+        st.metric("총 비용 (VAT 별도)", f"약 {tot / 1e8:.2f}억 원")
+        st.metric("VAT 포함", f"약 {r['vat_total'] / 1e8:.2f}억 원")
+        st.caption("오차 ±10% 안팎 · 할인 전 기준")
+        _rows = []
+        for _nm, _key in (("임상 CRO", "cro"), ("분석", "lab"),
+                          ("병원 (실시기관 + 사례비)", "site")):
+            _rows.append({"블록": _nm, "금액": f"{r[_key] / 1e8:.2f}억",
+                          "비중": f"{(r[_key] / tot * 100) if tot else 0:.0f}%"})
+        st.dataframe(pd.DataFrame(_rows), hide_index=True, use_container_width=True,
+                     height=38 * (len(_rows) + 1) + 4)
+        st.caption(f"병원 단가는 1명·1기당 **{r['site_unit'] / 1e4:,.0f}만 원**으로 "
+                   f"잡았습니다 (마지막 채혈 {hrs:g}시간 기준).")
+        if not have:
+            st.caption("지금 단가는 이 화면에서만 쓰이고 저장되지 않습니다.")
+
+    st.caption("견적 네 건을 반올림한 어림값입니다. 업체와 성분에 따라 달라집니다. "
+               "대조약·임상약·표준품 구입비, 식약처 수수료, 사내 인건비는 들어 있지 않고, "
+               "실제 계약은 할인으로 3%에서 15%쯤 낮아질 수 있습니다. 건강한 성인 대상 1상 기준입니다.")
+
+    with st.expander("계산 방식과 한계"):
+        _p = cost_calc.clean(prices)
+
+        def _m(key):
+            return f"{_p[key] / 1e4:,.6g}만"
+
+        st.markdown(
+            "**계산**\n\n"
+            f"- 임상 CRO = {_m('cro_base')} + {_m('cro_per_period')} × 기 "
+            f"+ {_m('cro_per_subject')} × 대상자\n"
+            f"- 분석 = ({_m('lab_base')} + {_m('lab_per_sample')} × 검체 수) "
+            "× 성분 수\n"
+            "- 병원 = 병원 단가 × 대상자 × 기 (실시기관 비용과 사례비를 합친 값)\n"
+            f"- 병원 단가(1명·1기당): 24시간 이하 {_m('site_24h')} · "
+            f"72시간 {_m('site_72h')} · 240시간 이상 {_m('site_240h')}. "
+            "그 사이는 직선으로 이어 계산합니다\n"
+            "- 검체 수 = 대상자 × 기 × 기당 채혈 포인트\n\n"
+            "**맞춰 본 결과** — 견적 네 건(대상자 40명과 60명, 2기와 3기, 채혈 17회에서 "
+            "22회)에 넣었을 때 "
+            "총액 차이는 ±3% 안이었습니다. 단가를 그 네 건에서 뽑았으므로, "
+            "새 견적에서는 더 벗어날 수 있습니다.\n\n"
+            "**가정** — 성분이 여러 개면 분석을 성분마다 따로 한다고 보고 배수로 "
+            "곱합니다(한 번에 분석할 수 있으면 실제는 더 적습니다). 병원 단가의 "
+            "72시간·24시간 기준점은 추정이고, 240시간을 넘는 경우는 자료가 없어 "
+            "240시간 값으로 둡니다.")
 
 
 def _price_calc_page():
@@ -2165,11 +2274,17 @@ if PAGE == "clinical":
         # ── 보기 전환: 검색(지금까지 쓰던 화면) / 분석(새 화면) ──────────────
         # 탭이 아니라 라디오를 쓰는 이유: st.tabs 는 안 보이는 탭까지 전부 계산한다.
         # 라디오 + st.stop() 이면 고른 쪽만 돈다(약가 분석 탭과 같은 방식).
-        _view = st.radio("보기", ["🔍 검색", "📊 분석", "🧮 생동 피험자 수"],
+        _view = st.radio("보기", ["🔍 검색", "📊 분석", "🧮 생동 피험자 수",
+                                  "💰 1상 비용 어림"],
                          horizontal=True, key="clin_view", label_visibility="collapsed")
 
         if _view.endswith("피험자 수"):
             _be_page()
+            ss.release_memory()
+            st.stop()
+
+        if _view.endswith("비용 어림"):
+            _cost_page()
             ss.release_memory()
             st.stop()
 
