@@ -41,9 +41,26 @@ SCROLL_JS = """
 """
 
 
+APP_SEL = ("[data-testid='stAppViewContainer']", "[data-testid='stApp']",
+           "input[type='password']")
+
+
+def app(pg):
+    """앱이 그려진 틀. 실제 사이트는 앱을 iframe 안에 띄우므로 바깥 페이지만
+    읽으면 빈 화면으로 보인다. 틀은 다시 그려질 수 있어 매번 새로 찾는다."""
+    for fr in pg.frames:
+        for sel in APP_SEL:
+            try:
+                if fr.query_selector(sel):
+                    return fr
+            except Exception:
+                break
+    return pg.main_frame
+
+
 def body_text(pg):
     try:
-        return pg.inner_text("body")
+        return app(pg).inner_text("body")
     except Exception:
         return ""
 
@@ -53,7 +70,7 @@ def wait_for(pg, word, tries=96, gap=5):
         if word in body_text(pg):
             return True
         if PW:
-            box = pg.query_selector("input[type='password']")
+            box = app(pg).query_selector("input[type='password']")
             if box:
                 box.fill(PW)
                 box.press("Enter")
@@ -65,20 +82,20 @@ def wait_for(pg, word, tries=96, gap=5):
 
 def read_all_rows(pg):
     """보이는 줄만 그려지는 표를 스크롤하며 전부 모은다."""
-    first = pg.evaluate(GRID_JS)
+    first = app(pg).evaluate(GRID_JS)
     if not first:
         return [], []
     hdr = first["hdr"]
     seen, rows = set(), []
     y, last_h = 0, None
     for _ in range(400):
-        g = pg.evaluate(GRID_JS) or {"rows": []}
+        g = app(pg).evaluate(GRID_JS) or {"rows": []}
         for r in g["rows"]:
             t = tuple(r)
             if t not in seen:
                 seen.add(t)
                 rows.append(r)
-        h = pg.evaluate(SCROLL_JS, y + 200)
+        h = app(pg).evaluate(SCROLL_JS, y + 200)
         if h == -1:
             break
         time.sleep(0.4)
@@ -105,10 +122,9 @@ def main():
             br.close()
             return 1
         time.sleep(8)
-        m = re.search(r"코드 버전[:\s]*([0-9A-Za-z.\-]+)", body_text(pg))
 
         # 상태 칸 기본값('등록')을 지운다
-        stat = pg.locator("[data-testid='stMultiSelect']").filter(has_text="상태").first
+        stat = app(pg).locator("[data-testid='stMultiSelect']").filter(has_text="상태").first
         clr = stat.locator("[aria-label*='Clear'], [title*='Clear']")
         if clr.count():
             clr.first.click()
@@ -120,7 +136,7 @@ def main():
         st_txt = stat.inner_text().replace("\n", " | ")
         print(f"상태 칸: {st_txt}")
 
-        box = pg.locator("[data-testid='stTextInput']").filter(
+        box = app(pg).locator("[data-testid='stTextInput']").filter(
             has_text="품목/성분 검색").locator("input").first
         box.fill(QUERY)
         box.press("Enter")
@@ -131,7 +147,7 @@ def main():
             time.sleep(5)
         time.sleep(4)
 
-        ex = pg.query_selector_all("[data-testid='stException']")
+        ex = app(pg).query_selector_all("[data-testid='stException']")
         if ex:
             print("화면에 예외:", (ex[0].inner_text() or "")[:400])
             br.close()
@@ -143,7 +159,7 @@ def main():
             return 0
 
         mets = [e.inner_text().replace("\n", " ") for e in
-                pg.query_selector_all("[data-testid='stMetric']")]
+                app(pg).query_selector_all("[data-testid='stMetric']")]
         print(f"'{QUERY}' 검색 · 모든 상태 · " + " // ".join(mets))
 
         # 만료 연도 범위 슬라이더는 기본이 전체 구간이라 손대지 않는다
