@@ -31,9 +31,29 @@ def dump(pg, seq):
                 print(f"   {lines[j][:160]}")
         if len(shown) > 260:
             break
-    links = sorted({a for a in re.findall(r'href="([^"]*)"', pg.content()) if "atent" in a or "특허" in a})
-    if links:
-        print("특허 관련 링크:", links[:10])
+    links = []
+    for a in re.findall(r'href="([^"]*getPatentDetail[^"]*)"', pg.content()):
+        a = a.replace("&amp;", "&")
+        if a not in links:
+            links.append(a)
+    print(f"특허 상세 링크 {len(links)}개")
+    if os.environ.get("DETAIL") == "1":
+        for a in links:
+            detail(pg, "https://nedrug.mfds.go.kr" + a)
+
+
+def detail(pg, url):
+    """특허 상세 화면 — 발명의 명칭, 특허 종류 같은 칸을 적는다."""
+    pg.goto(url, wait_until="domcontentloaded", timeout=90_000)
+    time.sleep(4)
+    no = re.search(r"patentNo=([0-9-]+)", url)
+    lines = [l.strip() for l in pg.inner_text("body").splitlines() if l.strip()]
+    start = next((i for i, l in enumerate(lines) if "특허번호" in l or "특허권" in l), 0)
+    print(f"\n----- 특허 {no.group(1) if no else '?'}")
+    for l in lines[start:start + 45]:
+        if l.startswith("menu") or l in ("top", "이전", "뒤로", "닫기"):
+            continue
+        print(f"   {l[:200]}")
 
 
 def main():
