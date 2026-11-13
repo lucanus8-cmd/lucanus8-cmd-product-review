@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-13-a"
+BUILD = "2026-11-13-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1028,16 +1028,14 @@ def _be_page():
 
 
 def _cost_prices():
-    """1상 비용 단가. Streamlit Secrets 의 [phase1_cost] 에서 읽는다.
-
-    단가는 실제 견적에서 나온 값이라 공개된 코드에 적지 않는다.
-    Secrets 가 없거나 칸이 비어도 죽지 않고 빈 값으로 돌려준다.
+    """1상 비용 단가. 코드의 기본값을 쓰고, Secrets 의 [phase1_cost] 에 값이
+    있으면 그 값으로 덮어쓴다. Secrets 가 없어도 죽지 않는다.
     """
     try:
         raw = st.secrets.get("phase1_cost", None)
     except Exception:
         raw = None
-    out = {}
+    out = dict(cost_calc.DEFAULT_PRICES)
     if raw:
         for k in cost_calc.KEYS:
             try:
@@ -1083,9 +1081,7 @@ def _cost_page():
 
     with right:
         if not cost_calc.ready(prices):
-            st.info("단가가 아직 없습니다. 왼쪽 **단가 고치기**에 직접 넣거나, "
-                    "사이트 설정(Secrets)의 `[phase1_cost]` 에 넣어 두면 "
-                    "다음부터 자동으로 채워집니다.")
+            st.info("단가가 모두 0입니다. 왼쪽 **단가 고치기**에 값을 넣어 주세요.")
             return
         r = cost_calc.estimate(n, k, pts, an, hrs, prices)
         tot = r["total"]
@@ -1101,8 +1097,8 @@ def _cost_page():
                      height=38 * (len(_rows) + 1) + 4)
         st.caption(f"병원 단가는 1명·1기당 **{r['site_unit'] / 1e4:,.0f}만 원**으로 "
                    f"잡았습니다 (마지막 채혈 {hrs:g}시간 기준).")
-        if not have:
-            st.caption("지금 단가는 이 화면에서만 쓰이고 저장되지 않습니다.")
+        if edit:
+            st.caption("고친 단가는 이 화면에서만 쓰이고 저장되지 않습니다.")
 
     st.caption("견적 네 건을 반올림한 어림값입니다. 업체와 성분에 따라 달라집니다. "
                "대조약·임상약·표준품 구입비, 식약처 수수료, 사내 인건비는 들어 있지 않고, "

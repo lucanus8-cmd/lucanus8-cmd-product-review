@@ -2,8 +2,7 @@
 
     python3 tests/check_cost_calc.py
 
-여기 쓰는 단가는 계산을 확인하려고 지어낸 숫자다. 실제 단가는 저장소에
-두지 않는다(Streamlit Secrets 에 있다).
+여기 쓰는 단가 P 는 계산을 확인하려고 지어낸 숫자다(기본 단가와 무관).
 """
 import os
 import sys
@@ -46,6 +45,8 @@ def main():
     eq("입력 None", C.estimate(None, None, None, None, None, P)["total"], 1000)
     if C.ready({}) or C.ready(None) or not C.ready(P):
         bad.append("ready 판정")
+    if set(C.DEFAULT_PRICES) != set(C.KEYS) or not C.ready(C.DEFAULT_PRICES):
+        bad.append("기본 단가의 키가 맞지 않는다")
 
     if bad:
         print(f"불일치 {len(bad)}건:")
