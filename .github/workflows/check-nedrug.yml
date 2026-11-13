@@ -1,20 +1,37 @@
-# 식약처 의약품안전나라에 GitHub 로봇이 접속할 수 있는지 본다(상태 코드와 크기만).
-# 손으로만 돌린다. 사이트(제품 검토)와는 상관없다.
+# 식약처 의약품안전나라의 공개 화면을 읽어 적는다. 손으로만 돌린다.
+# 제품 검토 사이트와는 상관없다.
 name: check-nedrug
 
 on:
   workflow_dispatch:
+    inputs:
+      item_seq:
+        description: "품목기준코드 (쉼표로 여러 개)"
+        required: true
+        default: "201310988,201310989"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
-      - name: 접속 시험
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.49.0-${{ runner.os }}
+
+      - name: 브라우저 준비
         run: |
-          for u in "https://nedrug.mfds.go.kr/" \
-                   "https://nedrug.mfds.go.kr/searchDrug?itemName=%EB%B2%A0%ED%83%80%EB%AF%B8%EA%B0%80"; do
-            curl -sS -L --max-time 40 -A "Mozilla/5.0" -o page.html \
-                 -w "%{http_code} %{size_download}B  $u\n" "$u" || echo "실패  $u"
-            grep -oE "itemSeq=[0-9]+" page.html | sort -u | head -5 || true
-          done
+          python -m pip install --quiet playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: 품목 상세 읽기
+        env:
+          ITEM_SEQ: ${{ inputs.item_seq }}
+        run: python .github/scripts/check_nedrug.py
