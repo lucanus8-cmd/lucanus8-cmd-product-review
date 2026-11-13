@@ -1,0 +1,20 @@
+# 식약처 의약품안전나라에 GitHub 로봇이 접속할 수 있는지 본다(상태 코드와 크기만).
+# 손으로만 돌린다. 사이트(제품 검토)와는 상관없다.
+name: check-nedrug
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 접속 시험
+        run: |
+          for u in "https://nedrug.mfds.go.kr/" \
+                   "https://nedrug.mfds.go.kr/searchDrug?itemName=%EB%B2%A0%ED%83%80%EB%AF%B8%EA%B0%80"; do
+            curl -sS -L --max-time 40 -A "Mozilla/5.0" -o page.html \
+                 -w "%{http_code} %{size_download}B  $u\n" "$u" || echo "실패  $u"
+            grep -oE "itemSeq=[0-9]+" page.html | sort -u | head -5 || true
+          done
