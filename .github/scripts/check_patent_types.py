@@ -78,28 +78,59 @@ def settle(pg, gap=1.0, need=4, cap=180):
         time.sleep(gap)
 
 
+OPTS_JS = """
+() => {
+  const o = [...document.querySelectorAll("[role='option']")];
+  if (!o.length) return {opts: [], h: -1};
+  // 목록은 보이는 칸만 그린다 → 스크롤되는 상자를 찾아 한 화면씩 내린다
+  let s = o[0].parentElement;
+  while (s && !(s.scrollHeight > s.clientHeight + 2)) s = s.parentElement;
+  const opts = o.map(e => e.innerText.trim());
+  if (!s) return {opts, h: -1};
+  const before = s.scrollTop;
+  s.scrollTop = before + Math.max(s.clientHeight - 20, 40);
+  return {opts, h: s.scrollTop === before ? -1 : s.scrollTop};
+}
+"""
+
+
 def options(pg, label):
+    """선택칸의 값을 끝까지 다 읽는다(목록이 10개만 보이므로 스크롤하며 모은다)."""
     m = msel(pg, label)
     m.click()
     time.sleep(2)
-    opts = [o.inner_text().strip() for o in app(pg).query_selector_all("[role='option']")]
+    seen, out = set(), []
+    for _ in range(300):
+        r = app(pg).evaluate(OPTS_JS)
+        for o in r["opts"]:
+            if o and o not in seen:
+                seen.add(o)
+                out.append(o)
+        if r["h"] == -1:
+            break
+        time.sleep(0.3)
     pg.keyboard.press("Escape")
     time.sleep(1)
     # 이 버전의 선택칸은 맨 위에 '모두 고르기'를 붙인다 — 값이 아니므로 뺀다
-    return [o for o in opts if o and o.lower() not in ("select all", "모두 선택")]
+    return [o for o in out if o.lower() not in ("select all", "모두 선택")]
 
 
 def pick(pg, label, value):
+    """값을 검색칸에 쳐서 고른다(목록에서 안 보이는 값도 고를 수 있게)."""
     m = msel(pg, label)
     m.click()
+    time.sleep(1)
+    pg.keyboard.type(value, delay=20)
     time.sleep(1.5)
+    hit = None
     for o in app(pg).query_selector_all("[role='option']"):
         if (o.inner_text() or "").strip() == value:
-            o.click()
+            hit = o
             break
-    else:
+    if hit is None:
         pg.keyboard.press("Escape")
         return False
+    hit.click()
     pg.keyboard.press("Escape")
     settle(pg)
     return True
