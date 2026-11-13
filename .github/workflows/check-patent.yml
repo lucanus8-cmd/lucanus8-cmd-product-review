@@ -1,4 +1,4 @@
-# 배포된 사이트의 특허 화면에서 성분 하나를 검색해 나온 표를 그대로 적는다.
+# 배포된 사이트의 특허 자료를 읽어 적는다. 읽기만 하므로 사이트는 바뀌지 않는다.
 # 손으로만 돌린다(일정 실행 없음). 읽기만 하므로 사이트는 바뀌지 않는다.
 name: check-patent
 
@@ -9,11 +9,15 @@ on:
         description: "찾을 성분명 또는 품목명"
         required: true
         default: "미라베그론"
+      what:
+        description: "search = 성분 하나 찾기 · types = 특허유형별 건수"
+        required: true
+        default: "search"
 
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -36,4 +40,9 @@ jobs:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
           QUERY: ${{ inputs.query }}
-        run: python .github/scripts/check_patent.py
+        run: |
+          if [ "${{ inputs.what }}" = "types" ]; then
+            python .github/scripts/check_patent_types.py
+          else
+            python .github/scripts/check_patent.py
+          fi
