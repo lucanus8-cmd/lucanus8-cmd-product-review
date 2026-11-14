@@ -166,6 +166,9 @@ def main():
         for r in rows:
             st[r[ci] or "(빈칸)"] = st.get(r[ci] or "(빈칸)", 0) + 1
         meta["status"] = st
+    li = col("연계심사문서번호")
+    if li is not None:
+        meta["linked_review"] = sum(1 for r in rows if (r[li] or "").strip())
     with open(META, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
     print(json.dumps(meta, ensure_ascii=False))
