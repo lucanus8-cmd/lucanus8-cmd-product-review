@@ -13,6 +13,14 @@ on:
         description: "1 이면 특허 상세 화면까지 읽는다"
         required: false
         default: "0"
+      what:
+        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기"
+        required: false
+        default: "item"
+      urls:
+        description: "dmf 일 때 더 열어 볼 주소 (쉼표)"
+        required: false
+        default: ""
 
 jobs:
   check:
@@ -36,7 +44,14 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: 품목 상세 읽기
+        if: inputs.what != 'dmf'
         env:
           ITEM_SEQ: ${{ inputs.item_seq }}
           DETAIL: ${{ inputs.detail }}
         run: python .github/scripts/check_nedrug.py
+
+      - name: DMF 목록 화면 찾기
+        if: inputs.what == 'dmf'
+        env:
+          URLS: ${{ inputs.urls }}
+        run: python .github/scripts/check_nedrug_dmf.py
