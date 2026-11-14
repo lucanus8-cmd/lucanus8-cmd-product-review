@@ -21,6 +21,10 @@ on:
         description: "dmf 일 때 더 열어 볼 주소 (쉼표)"
         required: false
         default: ""
+      words:
+        description: "dmf 일 때 찾을 메뉴 글자 (쉼표, 비우면 DMF)"
+        required: false
+        default: ""
 
 jobs:
   check:
@@ -55,6 +59,7 @@ jobs:
         if: inputs.what == 'dmf'
         env:
           URLS: ${{ inputs.urls }}
+          WORDS: ${{ inputs.words }}
         run: python .github/scripts/check_nedrug_dmf.py
 
       - name: DMF 목록 전부 받아 보기 (저장은 안 함)

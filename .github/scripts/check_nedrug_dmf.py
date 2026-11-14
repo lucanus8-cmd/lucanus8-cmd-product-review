@@ -15,7 +15,7 @@ from playwright.sync_api import sync_playwright
 
 BASE = "https://nedrug.mfds.go.kr"
 START = [BASE + "/index", BASE + "/pbp/CCBAA01", BASE + "/sitemap"]
-WORDS = ("DMF", "원료의약품", "원료약")
+WORDS = tuple(w.strip() for w in (os.environ.get("WORDS") or "DMF,원료의약품,원료약").split(",") if w.strip())
 EXTRA = [u.strip() for u in (os.environ.get("URLS") or "").split(",") if u.strip()]
 
 
@@ -27,7 +27,7 @@ def links(pg):
             h = a.get_attribute("href") or ""
         except Exception:
             continue
-        if any(w in t for w in WORDS) or "dmf" in h.lower():
+        if any(w in t for w in WORDS) or (WORDS[0] == "DMF" and "dmf" in h.lower()):
             if h.startswith("/"):
                 h = BASE + h
             if h.startswith("http") and (t, h) not in out:
