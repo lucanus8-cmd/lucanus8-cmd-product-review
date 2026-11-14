@@ -108,6 +108,33 @@ def main():
             allrows.extend(r)
             page += 1
         print(f"받은 줄 {len(allrows)} · 칸: {' | '.join(hdr)}")
+        # 상세 화면에 대상질환·성분 같은 칸이 있는지 몇 건만 열어 본다(첫 쪽 결과에서)
+        nd = int(os.environ.get("DETAIL") or "0")
+        if nd:
+            pg.goto(BASE + "/PPBAB13", wait_until="domcontentloaded", timeout=120_000)
+            time.sleep(3)
+            with pg.expect_navigation(timeout=120_000):
+                pg.evaluate(SUBMIT_JS, [want, start.isoformat(), end.isoformat(), 1])
+            time.sleep(3)
+            links = pg.query_selector_all("table tbody tr a")
+            print(f"\n상세 링크 {len(links)}개 · 앞의 {nd}개를 연다")
+            for k in range(min(nd, len(links))):
+                links = pg.query_selector_all("table tbody tr a")
+                href = links[k].get_attribute("href") or ""
+                oc = links[k].get_attribute("onclick") or ""
+                print(f"\n----- 상세 {k + 1}: href={href[:120]} onclick={oc[:120]}")
+                try:
+                    with pg.expect_navigation(timeout=60_000):
+                        links[k].click()
+                except Exception:
+                    pass
+                time.sleep(3)
+                lines = [l.strip() for l in pg.inner_text("body").splitlines() if l.strip()]
+                st = next((i for i, l in enumerate(lines) if "의뢰자" in l or "임상시험 제목" in l), 0)
+                for l in lines[st:st + 60]:
+                    print("   " + l[:150])
+                pg.go_back(wait_until="domcontentloaded")
+                time.sleep(3)
         br.close()
 
     def col(name):

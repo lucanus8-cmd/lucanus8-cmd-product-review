@@ -96,4 +96,5 @@ jobs:
           STEP: 생동
           MONTHS: "24"
           FOCUS: ${{ inputs.words }}
+          DETAIL: ${{ inputs.detail }}
         run: python .github/scripts/check_nedrug_clinic.py
