@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-13-c"
+BUILD = "2026-11-14-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1857,13 +1857,15 @@ if PAGE == "search":
                         km[1].metric("최신 급여가", f"{f1:,.0f} 원")
                         km[2].metric("누적 인하율", f"{(f1-f0)/f0*100:+.1f}%" if f0 else "—")
                         km[3].metric("이력 기간", f"{one_gy['적용일자'].min().year}~{one_gy['적용일자'].max().year}")
-                    mat_dates, use_dates, appr, reg = [], [], None, None
+                    mat_dates, form_dates, use_dates, appr, reg = [], [], [], None, None
                     if HAS_REG:
                         pt = ss.load_patent()
                         reg = pt[pt["_key"].isin(sel_keys) & ss.active_patent_mask(pt["DOMESTIC_PATENT_STATUS"])
                                  & pt["_exp"].notna() & ss.listed_patent_mask(pt)]
-                        mat_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("물질", na=False)]["_exp"].dropna().unique())
-                        use_dates = sorted(reg[reg["PATENT_GB_CODE"].str.contains("용도", na=False)]["_exp"].dropna().unique())
+                        mat_dates = sorted(reg[ss.substance_mask(reg["PATENT_GB_CODE"])]["_exp"].dropna().unique())
+                        form_dates = sorted(reg[ss.gb_mask(reg["PATENT_GB_CODE"], "물질형태")
+                                                & ~ss.substance_mask(reg["PATENT_GB_CODE"])]["_exp"].dropna().unique())
+                        use_dates = sorted(reg[ss.gb_mask(reg["PATENT_GB_CODE"], "용도")]["_exp"].dropna().unique())
                         ap = ss.load_approval()
                         appr = ap[ap["_key"].isin(sel_keys) & (ap["상태"] == "정상")].copy()
                         appr["_hd"] = pd.to_datetime(appr["허가일자"], format="%Y%m%d", errors="coerce")
@@ -1879,14 +1881,21 @@ if PAGE == "search":
                     if not dele.empty:
                         fig.add_trace(go.Scatter(x=dele["적용일자"], y=[0] * len(dele), mode="markers",
                                       marker=dict(color="black", symbol="x", size=11), name="급여삭제"))
-                    for d in mat_dates:
-                        dt = pd.Timestamp(d); fig.add_vline(x=dt, line=dict(color="crimson", dash="dash"))
-                        fig.add_annotation(x=dt, y=1.0, yref="paper", text="물질특허만료", showarrow=False,
-                                           font=dict(color="crimson", size=9), textangle=-90, xanchor="left")
-                    for d in use_dates:
-                        dt = pd.Timestamp(d); fig.add_vline(x=dt, line=dict(color="darkorange", dash="dot"))
-                        fig.add_annotation(x=dt, y=0.82, yref="paper", text="용도특허만료", showarrow=False,
-                                           font=dict(color="darkorange", size=9), textangle=-90, xanchor="left")
+                    # 특허 만료선은 모아서 한 번에 넣는다. add_vline 을 하나씩 부르면 선이
+                    # 늘 때마다 그림 전체를 다시 복사해, 선 수의 제곱으로 느려진다.
+                    _shp, _ann = [], []
+                    for _ds, _col, _dash, _y, _txt in (
+                            (mat_dates, "crimson", "dash", 1.0, "물질특허만료"),
+                            (form_dates, "mediumpurple", "dashdot", 0.64, "염·형태특허만료"),
+                            (use_dates, "darkorange", "dot", 0.82, "용도특허만료")):
+                        for d in _ds:
+                            dt = pd.Timestamp(d)
+                            _shp.append(dict(type="line", xref="x", yref="paper", x0=dt, x1=dt, y0=0, y1=1,
+                                             line=dict(color=_col, dash=_dash)))
+                            _ann.append(dict(x=dt, y=_y, xref="x", yref="paper", text=_txt, showarrow=False,
+                                             font=dict(color=_col, size=9), textangle=-90, xanchor="left"))
+                    if _shp:
+                        fig.update_layout(shapes=_shp, annotations=_ann)
                     if appr is not None and not appr.empty:
                         by = (one_gy["금액"].max() if not one_gy.empty else 1) * 0.03
                         fig.add_trace(go.Scatter(x=appr["_hd"], y=[by] * len(appr), mode="markers",
@@ -1895,7 +1904,8 @@ if PAGE == "search":
                     fig.update_layout(height=440, title=f"{sel} — 급여 상한금액 전체 이력 + 등재·특허 만료",
                                       yaxis=_WON_AXIS, legend=dict(orientation="h", y=-0.25), hovermode="x unified")
                     st.plotly_chart(fig, use_container_width=True)
-                    st.caption("파란선=선택 품목 · 회색=동일성분 타 품목 · 초록△=동일성분 등재(허가) · 빨강=물질특허만료 · 주황=용도특허만료 · ✕=급여삭제")
+                    st.caption("파란선=선택 품목 · 회색=동일성분 타 품목 · 초록△=동일성분 등재(허가) · 빨강=물질특허만료 · "
+                               "보라=염·형태특허만료 · 주황=용도특허만료 · ✕=급여삭제 (특허는 식약처 등재 특허만)")
                     if not one_gy.empty:
                         nyears = ss.nego_years(sel) if hasattr(ss, "nego_available") and ss.nego_available() else []
                         if nyears:
@@ -2040,7 +2050,7 @@ if PAGE == "sugg":
             _, _, basis = ss.original_items()
 
             def _mark(dfx, tag):
-                for c in ("근거_물질", "근거_용도"):
+                for c in ("근거_물질", "근거_물질형태", "근거_물질기타", "근거_용도"):
                     if c in dfx.columns:
                         dfx[c] = [f"{tag(k)}{t}" if t else ""
                                   for k, t in zip(dfx["_key"], dfx[c].fillna(""))]
@@ -2076,7 +2086,16 @@ if PAGE == "sugg":
     min_cagr = f2.number_input("② 최소 성장 CAGR(%)", value=0.0, step=5.0)
     cy = int(TODAY.year)
     with f3:
-        ptypes = st.multiselect("③ 특허 만료 기준 유형", ["물질", "용도"], default=["물질"] if HAS_REG else [])
+        # 화면 이름 → 집계 칸(특허만료_○○). 염·수화물·이성체 특허는 다른 염·형태로
+        # 피할 수 있어 따로 둔다. 물질(기타)는 항체 의약품 등에서 실제 성분 특허일 수
+        # 있어 기본으로 함께 본다(예전 '물질'과 같고, 염·수화물·이성체만 빠진다).
+        _PT_KIND = {"물질": "물질", "물질(염·수화물·이성체)": "물질형태",
+                    "물질(기타)": "물질기타", "용도": "용도"}
+        _pt_sel = st.multiselect("③ 특허 만료 기준 유형", list(_PT_KIND),
+                                 default=["물질", "물질(기타)"] if HAS_REG else [],
+                                 help="물질 = 성분 자체 · 물질(염·수화물·이성체) = 다른 염·형태로 피할 수 "
+                                      "있는 특허 · 물질(기타) = 항체 의약품 등에서는 성분 특허일 수 있음")
+        ptypes = [_PT_KIND[t] for t in _pt_sel]
         sel_year = st.selectbox("이 연도까지 특허 만료", list(range(cy, cy + 16)), index=5,
                                 help="선택한 유형 특허가 이 연도까지 만료(또는 없음)인 후보만")
     with f4:
@@ -2101,16 +2120,17 @@ if PAGE == "sugg":
     res = res.sort_values("시장규모", ascending=False)
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
     res["CAGR(%)"] = res["CAGR"].round(1)
+    # (화면 칸 이름, 집계 칸 이름)
+    _PT_COLS = [("물질특허", "물질"), ("염·형태특허", "물질형태"),
+                ("물질(기타)특허", "물질기타"), ("용도특허", "용도")]
     if HAS_REG:
-        res["물질특허 만료"] = pd.to_datetime(res.get("특허만료_물질")).dt.date.astype("string")
-        res["용도특허 만료"] = pd.to_datetime(res.get("특허만료_용도")).dt.date.astype("string")
-    if HAS_REG:
-        res["물질특허 근거"] = res.get("근거_물질", pd.Series("", index=res.index)).fillna("")
-        res["용도특허 근거"] = res.get("근거_용도", pd.Series("", index=res.index)).fillna("")
+        for _lab, _k in _PT_COLS:
+            res[f"{_lab} 만료"] = pd.to_datetime(res.get(f"특허만료_{_k}")).dt.date.astype("string")
+            res[f"{_lab} 근거"] = res.get(f"근거_{_k}", pd.Series("", index=res.index)).fillna("")
     cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
             + ["시장규모(억)", "CAGR(%)"]
-            + (["물질특허 만료", "용도특허 만료"] if HAS_REG else []))
-    src_cols = ["물질특허 근거", "용도특허 근거"] if HAS_REG else []
+            + ([f"{_lab} 만료" for _lab, _ in _PT_COLS] if HAS_REG else []))
+    src_cols = [f"{_lab} 근거" for _lab, _ in _PT_COLS] if HAS_REG else []
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     show_src = st.checkbox("특허 근거 표시 (그 만료일이 어느 품목·유형의 특허에서 왔는지)",
                            value=False, key="sugg_src") if HAS_REG else False
@@ -2121,6 +2141,8 @@ if PAGE == "sugg":
     st.caption("가중치 점수 없이, 큰 시장·고성장·특허만료·ATC 조건을 직접 필터링합니다. · "
                "ATC는 매출자료 기준 · "
                "특허 만료일=존속 중인 등록특허 중 가장 늦은 날짜(소멸·무효 제외). "
+               "**식약처 등재 특허(제품특허)만** 봅니다. 물질특허는 성분 자체 특허이고, "
+               "염·수화물·이성체 특허는 ‘염·형태특허’로 따로 보여줍니다. "
                "**단일제 후보는 단일제 특허만** 반영하고, 복합제 후보만 복합제 특허를 포함합니다. "
                "**성분별은 오리지널 품목의 특허 기준** — 1순위 신약구분=‘신약’, 없으면 그 성분 최초 허가 품목"
                "(근거에 ‘ⓘ최초허가 기준’ 표시). 둘 다 못 찾으면 전체 기준으로 표시하고 ‘⚠오리지널 미확인’으로 알립니다 "
@@ -2785,8 +2807,8 @@ if PAGE == "ai":
         mat = use = pd.NaT
         if "PATENT_GB_CODE" in live.columns and not live.empty:
             gb = live["PATENT_GB_CODE"].astype(str)
-            mat = live.loc[gb.str.contains("물질", na=False), "_exp"].max()
-            use = live.loc[gb.str.contains("용도", na=False), "_exp"].max()
+            mat = live.loc[ss.substance_mask(gb), "_exp"].max()
+            use = live.loc[ss.gb_mask(gb, "용도"), "_exp"].max()
         pats = (", ".join(sub["PATENTEE"].dropna().astype(str).unique()[:5])
                 if "PATENTEE" in sub.columns else "")
         return n, len(live), mat, use, pats

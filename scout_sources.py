@@ -169,6 +169,27 @@ def has_listed_flag(pt):
     return bool(pt[PATENT_PAGE_COL].astype(str).str.contains("제품", na=False).any())
 
 
+# 특허 유형 칸에는 여러 유형이 한 칸에 붙어 있다(예: '물질물질(염)용도').
+# 물질 특허를 셋으로 나눈다.
+#   물질     : 성분 자체 ('물질' 뒤에 괄호가 없는 조각)
+#   물질형태 : 물질(염)·물질(수화물)·물질(이성체) 등 — 다른 염·형태로 피할 수 있다
+#   물질기타 : 물질(기타) — 항체 의약품 등에서는 실제 성분 특허일 수 있어 따로 둔다
+_GB_PURE = r"물질(?!\()"
+_GB_FORM = r"물질\((?!기타\))[^)]*\)"
+_GB_OTHER = r"물질\(기타\)"
+GB_KINDS = {"물질": _GB_PURE, "물질형태": _GB_FORM, "물질기타": _GB_OTHER, "용도": r"용도"}
+
+
+def gb_mask(sr, kind):
+    """유형 칸이 그 종류의 조각을 가졌나. kind: 물질 / 물질형태 / 물질기타 / 용도."""
+    return sr.astype(str).str.contains(GB_KINDS[kind], na=False, regex=True)
+
+
+def substance_mask(sr):
+    """'성분을 막는 물질특허'로 볼 것 — 물질 + 물질(기타). 염·수화물 등 형태 특허는 뺀다."""
+    return gb_mask(sr, "물질") | gb_mask(sr, "물질기타")
+
+
 def listed_patent_mask(pt):
     """식약처 등재 특허(제품특허)만 True.
     구분 칸이 없는 예전 자료면 전부 True — 화면이 예전과 똑같이 돈다."""
@@ -441,9 +462,9 @@ def patent_by_key(single_only=False, original_only=False, listed_only=True):
     reg = pt[active_patent_mask(pt["DOMESTIC_PATENT_STATUS"]) & pt["_exp"].notna()]
     g = reg.groupby("_key")
     out = pd.DataFrame({"특허만료_전체": g["_exp"].max(), "등록특허수": g.size()})
-    gb = reg["PATENT_GB_CODE"].astype(str)
-    out = out.join(_latest_with_src(reg[gb.str.contains("물질", na=False)], "물질"))
-    out = out.join(_latest_with_src(reg[gb.str.contains("용도", na=False)], "용도"))
+    gb = reg["PATENT_GB_CODE"]
+    for kind in ("물질", "물질형태", "물질기타", "용도"):
+        out = out.join(_latest_with_src(reg[gb_mask(gb, kind)], kind))
     return out.reset_index()
 
 def resolve_keys(q):
