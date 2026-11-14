@@ -1,0 +1,77 @@
+# 식약처 의약품안전나라의 DMF 공고 목록(공개 자료)을 매일 받아 'data' 가지에 저장한다.
+# 사이트 코드가 있는 main 가지는 건드리지 않는다 — 그래서 사이트가 다시 배포되지 않는다.
+# 매출 자료는 읽지도 적지도 않는다.
+name: fetch-dmf
+
+on:
+  schedule:
+    - cron: "0 20 * * *"   # 매일 한국시간 새벽 5시 (UTC 20시). GitHub 사정으로 조금 늦을 수 있다.
+  workflow_dispatch:
+    inputs:
+      save:
+        description: "1 이면 data 가지에 저장한다 (0 이면 받기만 해 보고 결과 파일만 남긴다)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-dmf
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 준비
+        run: python -m pip install --quiet requests==2.32.3 lxml==5.3.0
+
+      - name: DMF 목록 받기
+        env:
+          OUT: out/dmf_list.csv
+          META: out/dmf_meta.json
+        run: |
+          mkdir -p out
+          python .github/scripts/fetch_dmf.py
+
+      - name: 받은 파일 남기기 (Actions 화면에서 내려받기)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmf
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: data 가지에 저장
+        if: github.event_name == 'schedule' || inputs.save == '1'
+        run: |
+          git config user.name "dmf-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth=1 origin data
+            git worktree add databr FETCH_HEAD
+            cd databr && git checkout -B data
+          else
+            git worktree add --detach databr
+            cd databr && git checkout --orphan data && git rm -rqf .
+          fi
+          mkdir -p dmf
+          cp ../out/dmf_list.csv ../out/dmf_meta.json dmf/
+          git add dmf
+          # 받은 시각만 바뀐 날은 저장하지 않는다
+          if git diff --cached --quiet -- dmf/dmf_list.csv; then
+            echo "어제와 같다 — 저장 안 함"
+            exit 0
+          fi
+          git commit -qm "DMF 목록 $(date -u -d '+9 hours' +%Y-%m-%d)"
+          git push -q origin data
+          echo "저장함"

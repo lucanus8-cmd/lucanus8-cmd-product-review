@@ -14,7 +14,7 @@ on:
         required: false
         default: "0"
       what:
-        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기"
+        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기"
         required: false
         default: "item"
       urls:
@@ -39,12 +39,13 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
+        if: inputs.what != 'fetch'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
 
       - name: 품목 상세 읽기
-        if: inputs.what != 'dmf'
+        if: inputs.what == 'item' || inputs.what == ''
         env:
           ITEM_SEQ: ${{ inputs.item_seq }}
           DETAIL: ${{ inputs.detail }}
@@ -55,3 +56,22 @@ jobs:
         env:
           URLS: ${{ inputs.urls }}
         run: python .github/scripts/check_nedrug_dmf.py
+
+      - name: DMF 목록 전부 받아 보기 (저장은 안 함)
+        if: inputs.what == 'fetch'
+        env:
+          OUT: out/dmf_list.csv
+          META: out/dmf_meta.json
+        run: |
+          python -m pip install --quiet requests==2.32.3 lxml==5.3.0
+          mkdir -p out
+          python .github/scripts/fetch_dmf.py
+
+      - name: 받은 파일 남기기
+        if: always() && inputs.what == 'fetch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmf
+          path: out/
+          if-no-files-found: ignore
+          retention-days: 3
