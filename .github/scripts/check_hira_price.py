@@ -156,11 +156,27 @@ def main():
         pg = ctx.new_page()
         found = []
         if not os.environ.get("URLS"):
-            # 약제기준정보 메뉴 화면의 왼쪽 메뉴에서 '약제급여목록표' 게시판을 찾는다
-            for st in ("https://www.hira.or.kr/bbsDummy.do?pgmid=HIRAA030023010000",
-                       "https://www.hira.or.kr/main.do"):
-                found += [u for u in discover(pg, st) if u not in found]
-            found = [u for u in found if "HIRAA030023010000" not in u]
+            # '목록표' 메뉴 화면의 하위 메뉴를 모두 적고, 약제급여목록표 게시판을 고른다
+            pg.goto("https://www.hira.or.kr/bbsDummy.do?pgmid=HIRAA030019000000",
+                    wait_until="domcontentloaded", timeout=120_000)
+            time.sleep(6)
+            subs = []
+            for a in pg.query_selector_all("a"):
+                try:
+                    t = " ".join((a.inner_text() or "").split())
+                    h = a.get_attribute("href") or ""
+                except Exception:
+                    continue
+                if "pgmid=HIRAA0300" in h and t and (t, h) not in subs:
+                    subs.append((t, h))
+            print("\n----- 목록표 화면의 약제기준정보 메뉴")
+            for t, h in subs:
+                print(f"   {t[:50]} → {h[:120]}")
+            for t, h in subs:
+                if "약제급여목록" in t or "급여상한" in t:
+                    u = h if h.startswith("http") else "https://www.hira.or.kr" + h
+                    if u not in found:
+                        found.append(u)
         for u in (found[:4] or BOARDS):
             try:
                 board(pg, u)
