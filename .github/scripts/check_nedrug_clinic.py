@@ -80,14 +80,25 @@ def main():
             br.close()
             return 1
         hdr, allrows, page = [], [], 1
+        SUBMIT_JS = """
+        ([vals, s, e, pgno]) => {
+          const f = [...document.querySelectorAll('form')].find(x => x.querySelector("input[name='clinicStepCode']"));
+          if (!f) return 'noform';
+          f.querySelectorAll("input[name='clinicStepCode']").forEach(c => { c.checked = vals.includes(c.value); });
+          const set = (n, v) => { const el = f.querySelector(`[name='${n}']`); if (el) el.value = v; };
+          set('approvalDtStart', s); set('approvalDtEnd', e); set('page', String(pgno)); set('searchYn', 'true');
+          f.submit(); return f.getAttribute('action') + ' ' + (f.getAttribute('method') || 'get');
+        }"""
         while page <= 80:
-            q = [("page", page), ("searchYn", "true"), ("approvalDtStart", start.isoformat()),
-                 ("approvalDtEnd", end.isoformat())] + [("clinicStepCode", v) for v in want]
-            pg.goto(BASE + "/searchClinic?" + urlencode(q), wait_until="domcontentloaded", timeout=120_000)
+            if page == 1:
+                pg.goto(BASE + "/PPBAB13", wait_until="domcontentloaded", timeout=120_000)
+                time.sleep(3)
+            with pg.expect_navigation(timeout=120_000):
+                how = pg.evaluate(SUBMIT_JS, [want, start.isoformat(), end.isoformat(), page])
             time.sleep(2.5)
             if page == 1:
                 m = re.search(r"총\s*([\d,]+)\s*건", pg.inner_text("body"))
-                print(f"{start} ~ {end} · 단계 {STEP} · 화면 총 {m.group(1) if m else '?'}건")
+                print(f"{start} ~ {end} · 단계 {STEP} · 화면 총 {m.group(1) if m else '?'}건 · 제출 {how} → {pg.url[:120]}")
             h, r = rows_of(pg)
             if h:
                 hdr = h
