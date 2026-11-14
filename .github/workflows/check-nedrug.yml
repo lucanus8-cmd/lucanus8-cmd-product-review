@@ -14,7 +14,7 @@ on:
         required: false
         default: "0"
       what:
-        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기"
+        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기, clinic = 개발코드 생동 찾기"
         required: false
         default: "item"
       urls:
@@ -89,3 +89,11 @@ jobs:
         run: |
           python -m pip install --quiet pandas openpyxl xlrd
           python .github/scripts/check_hira_price.py
+
+      - name: 임상시험 승인 목록에서 개발코드 시험 찾기
+        if: inputs.what == 'clinic'
+        env:
+          STEP: 생동
+          MONTHS: "24"
+          FOCUS: ${{ inputs.words }}
+        run: python .github/scripts/check_nedrug_clinic.py
