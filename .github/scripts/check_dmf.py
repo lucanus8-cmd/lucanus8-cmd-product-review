@@ -128,6 +128,13 @@ def one(pg, q):
         return
     tab.click()
     settle(pg)
+    # DMF 자료는 처음 열 때 드라이브에서 받느라 늦게 뜬다 — 문구가 나올 때까지 기다린다
+    for _ in range(60):
+        if app(pg).evaluate(PANEL_JS):
+            break
+        if any(w in body_text(pg) for w in ("DMF 데이터 미연결", "동일성분 DMF 매칭 없음")):
+            break
+        time.sleep(5)
     first = app(pg).evaluate(PANEL_JS)
     if not first:
         # 화면 글을 그대로 적으면 안 된다 — 종합분석 화면 위쪽에 매출(유료 자료)
