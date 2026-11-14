@@ -119,13 +119,48 @@ def board(pg, url):
             print(f"   '{t}' 내려받기 실패: {str(e)[:160]}")
 
 
+KEYS = ("약제급여목록", "급여상한금액", "약제 급여 목록", "약가파일", "약제급여")
+
+
+def discover(pg, start):
+    """첫 화면·메뉴에서 약제급여목록 관련 링크를 모은다."""
+    print(f"\n----- 찾기: {start}")
+    try:
+        pg.goto(start, wait_until="domcontentloaded", timeout=120_000)
+        time.sleep(6)
+    except Exception as e:
+        print(f"   열기 실패: {str(e)[:120]}")
+        return []
+    print(f"   제목: {pg.title()}")
+    out = []
+    for a in pg.query_selector_all("a"):
+        try:
+            t = " ".join((a.inner_text() or a.get_attribute("title") or "").split())
+            h = a.get_attribute("href") or ""
+        except Exception:
+            continue
+        if any(k in t for k in KEYS):
+            if h.startswith("/"):
+                h = re.match(r"https?://[^/]+", start).group(0) + h
+            print(f"   {t[:60]} → {h[:160]}")
+            if h.startswith("http") and h not in out:
+                out.append(h)
+    return out
+
+
 def main():
     with sync_playwright() as p:
         br = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
         ctx = br.new_context(viewport={"width": 1400, "height": 2600}, locale="ko-KR",
                              accept_downloads=True)
         pg = ctx.new_page()
-        for u in BOARDS:
+        found = []
+        if not os.environ.get("URLS"):
+            for st in ("https://www.hira.or.kr/main.do",
+                       "https://www.hira.or.kr/rd/dissdic/sitemap.do",
+                       "https://www.data.go.kr/tcs/dss/selectDataSetList.do?keyword=%EC%95%BD%EC%A0%9C%EA%B8%89%EC%97%AC%EB%AA%A9%EB%A1%9D"):
+                found += [u for u in discover(pg, st) if u not in found]
+        for u in (found[:4] or BOARDS):
             try:
                 board(pg, u)
             except Exception as e:
