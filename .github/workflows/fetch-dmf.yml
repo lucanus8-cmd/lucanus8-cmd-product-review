@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: fetch-dmf
@@ -75,3 +76,13 @@ jobs:
           git commit -qm "DMF 목록 $(date -u -d '+9 hours' +%Y-%m-%d)"
           git push -q origin data
           echo "저장함"
+
+      # 공개 저장소는 60일 동안 활동이 없으면 예약이 멈출 수 있다 — 돌 때마다 다시 켠다
+      - name: 예약 계속 켜 두기
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -X PUT -o /dev/null -w "예약 다시 켜기: HTTP %{http_code}\n" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/fetch-dmf.yml/enable"
