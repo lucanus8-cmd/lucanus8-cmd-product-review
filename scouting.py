@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-14-a"
+BUILD = "2026-11-14-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1965,9 +1965,38 @@ if PAGE == "search":
                         return any(c and (c == sc or c in sn or (len(c) >= 3 and c in sc)) for c in cores)
                     same = dmf[dmf[ing_col].astype(str).apply(_dmf_hit)]
                     m = pd.concat([m, same]).drop_duplicates()
-                st.caption(f"동일성분 DMF {len(m):,}건 (전체 {len(dmf):,}건)"
-                           + (f" · 매칭 성분: {', '.join(sorted(cores)[:6])}" if cores else ""))
-                if m.empty:
+                _no_match = m.empty   # 거르기 전부터 동일성분이 하나도 없는지
+                _stc, _lkc = ss.dmf_status_col(dmf), ss.dmf_link_col(dmf)
+                _mtag = (f" · 매칭 성분: {', '.join(sorted(cores)[:6])}" if cores else "")
+                if _stc:
+                    # 식약처 최신 목록(매일 새벽 로봇 수집) — 상태·연계심사 정보가 있다
+                    _meta = ss.dmf_meta() or {}
+                    _dt = pd.to_datetime(m.get("DMF_PERMIT_DATE", pd.Series(dtype=str)), errors="coerce")
+                    _okm = m[_stc].astype(str).str.strip().eq("정상")
+                    _new = _okm & (_dt >= pd.Timestamp.today().normalize() - pd.Timedelta(days=90))
+                    _lnk = m[_lkc].astype(str).str.strip().ne("") if _lkc else pd.Series(False, index=m.index)
+                    st.caption(f"식약처 DMF 공고 기준"
+                               + (f" · {_meta.get('fetched_at')} 받음" if _meta.get("fetched_at") else "")
+                               + f" · 동일성분 DMF {len(m):,}건 (정상 {int(_okm.sum()):,} · 전체 {len(dmf):,}건)"
+                               + f" · 연계심사 문서 있음 {int(_lnk.sum()):,}건 · 최근 90일 새 등록 {int(_new.sum()):,}건"
+                               + _mtag)
+                    _c1, _c2 = st.columns(2)
+                    _inc_off = _c1.checkbox("취하·취소·폐업 포함", value=False, key="dmf_inc_off")
+                    _lnk_only = _c2.checkbox("연계심사만 보기", value=False, key="dmf_link_only")
+                    if not m.empty:
+                        m = m.assign(상태=m[_stc].astype(str).str.strip().where(~_new, "새 등록"),
+                                     연계심사=_lnk.map({True: "연계심사", False: ""}),
+                                     _dt=_dt)
+                        if not _inc_off:
+                            m = m[_okm.reindex(m.index, fill_value=False)]
+                        if _lnk_only:
+                            m = m[m["연계심사"] == "연계심사"]
+                        m = m.sort_values("_dt", ascending=False, na_position="last").drop(columns="_dt")
+                else:
+                    st.caption(f"동일성분 DMF {len(m):,}건 (전체 {len(dmf):,}건)" + _mtag)
+                if not _no_match and m.empty:
+                    st.info("조건에 맞는 DMF가 없습니다. '취하·취소·폐업 포함'을 켜거나 '연계심사만 보기'를 꺼 보세요.")
+                elif _no_match:
                     st.info("동일성분 DMF 매칭 없음")
                     # 진단: DMF 성분 컬럼과 실제 표기 예시(왜 매칭 안 되는지 확인용)
                     if ing_col:
@@ -1980,8 +2009,18 @@ if PAGE == "search":
                              "ENTP_NAME": "업체명(수입/제조)", "MNFCTR_NAME": "제조사", "MNFCTR_NAM": "제조사",
                              "MANUF_COUNTRY_CODE_NM": "제조국", "DMF_PERMIT_DATE": "등록일",
                              "DMF_PERMIT_NO": "DMF번호", "DMF_PERMIT_ID": "DMF번호"}
-                    prefer = [c for c in [ing_col, "ENTP_NAME"] if c and c in m.columns]
-                    ordered = prefer + [c for c in m.columns if c not in prefer]
+                    if _stc:
+                        label = dict(label, ENTP_NAME="신청인", MNFCTR_NAME="제조소",
+                                     DMF_PERMIT_DATE="최초등록일", DMF_PERMIT_NO="등록번호")
+                        prefer = [c for c in ["상태", "연계심사", ing_col, "ENTP_NAME", "MNFCTR_NAME",
+                                              "MANUF_COUNTRY_CODE_NM", "DMF_PERMIT_DATE", "최종변경일자",
+                                              "DMF_PERMIT_NO", "문서번호", "연계심사문서번호"]
+                                  if c and c in m.columns]
+                        rest = [c for c in m.columns if c not in prefer and c != _stc]
+                        ordered = prefer + rest
+                    else:
+                        prefer = [c for c in [ing_col, "ENTP_NAME"] if c and c in m.columns]
+                        ordered = prefer + [c for c in m.columns if c not in prefer]
                     show_df(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
                             height=320, file_name="재심사DMF.csv")
 
@@ -2732,6 +2771,10 @@ if PAGE == "ai":
             if ic and kor:
                 same = dmf[ss.ing_core_series(dmf[ic]).isin(kor)]
                 m = pd.concat([m, same]).drop_duplicates()
+            # 식약처 최신 목록이면 취하·취소·폐업된 DMF는 빼고 본다
+            _stc = ss.dmf_status_col(m) if hasattr(ss, "dmf_status_col") else None
+            if _stc:
+                m = m[m[_stc].astype(str).str.strip().eq("정상")]
             return m
         except Exception:
             return None
@@ -3138,7 +3181,7 @@ if PAGE == "status":
 
     # 구글시트에서 바로 읽는 항목(파일 캐시 없음)
     for name, fn, note in [("재심사(PMS)", ss.load_rejdge, "구글시트 '재심사' 탭 (실시간 조회)"),
-                           ("DMF", ss.load_dmf, "구글시트 DMF 탭 + 업로드 엑셀 (실시간 조회)")]:
+                           ("DMF", ss.load_dmf, "식약처 DMF 공고 목록 (매일 05시 로봇 수집 · 실패 시 구글시트+엑셀)")]:
         try:
             d = fn()
             ok = d is not None and not d.empty

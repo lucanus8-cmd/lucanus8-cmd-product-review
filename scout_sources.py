@@ -4,6 +4,7 @@
 염·수화물 표기 차이를 흡수한다. 조합제는 첫 성분 기준(근사)."""
 import ctypes
 import gc
+import io
 import re
 import time
 from pathlib import Path
@@ -722,9 +723,63 @@ def _load_dmf_xlsx():
     df = df[[c for c in df.columns if c and not c.startswith("Unnamed")]]
     return _norm_dmf_cols(df)
 
+# 식약처 의약품안전나라 DMF 공고 목록 — GitHub 로봇이 매일 새벽 5시에 받아
+# 이 저장소의 'data' 가지에 저장한다(.github/workflows/fetch-dmf.yml). 공개 자료다.
+DMF_CSV_URL = ("https://raw.githubusercontent.com/lucanus8-cmd/"
+               "lucanus8-cmd-product-review/data/dmf/dmf_list.csv")
+DMF_META_URL = DMF_CSV_URL.replace("dmf_list.csv", "dmf_meta.json")
+# 식약처 화면의 칸 이름 → 사이트가 쓰는 표준 이름. 나머지 칸은 한글 이름 그대로 둔다.
+_NEDRUG_DMF_COLS = {"성분명": "INGR_KOR_NAME", "신청인": "ENTP_NAME", "제조소명": "MNFCTR_NAME",
+                    "제조국가": "MANUF_COUNTRY_CODE_NM", "최초등록일자": "DMF_PERMIT_DATE",
+                    "등록번호": "DMF_PERMIT_NO"}
+DMF_STATUS_COL = "취소/취하구분"
+DMF_LINK_COL = "연계심사문서번호"
+
+
+def _fetch_url(url, timeout=25):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "product-review-app"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _load_dmf_nedrug():
+    """로봇이 받아 둔 식약처 DMF 목록(CSV). 9,000줄이 안 되면 못 믿는 것으로 보고 버린다."""
+    raw = _fetch_url(DMF_CSV_URL)
+    df = pd.read_csv(io.BytesIO(raw), dtype=str, encoding="utf-8-sig").fillna("")
+    if len(df) < 9000 or "성분명" not in df.columns:
+        return pd.DataFrame()
+    return df.rename(columns=_NEDRUG_DMF_COLS)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def dmf_meta():
+    """로봇이 받은 시각 등. 못 읽으면 None."""
+    try:
+        import json
+        return json.loads(_fetch_url(DMF_META_URL, timeout=10).decode("utf-8"))
+    except Exception:
+        return None
+
+
+def dmf_status_col(df):
+    return DMF_STATUS_COL if DMF_STATUS_COL in df.columns else None
+
+
+def dmf_link_col(df):
+    return DMF_LINK_COL if DMF_LINK_COL in df.columns else None
+
+
 @st.cache_data(ttl=6 * 3600, show_spinner="DMF 로딩 중…")
 def load_dmf():
-    """DMF = 구글시트(API 수집분) + 업로드 엑셀(전체 목록)을 합쳐서 반환. 실패분은 건너뜀."""
+    """DMF. 식약처 최신 목록(로봇 수집 CSV)을 먼저 쓰고, 못 읽으면
+    예전 방식(구글시트 API 수집분 + 업로드 엑셀)으로 돌아간다."""
+    try:
+        d = _load_dmf_nedrug()
+        if d is not None and not d.empty:
+            return d
+    except Exception:
+        pass
     frames = []
     for _fn in (_load_dmf_sheet, _load_dmf_xlsx):
         try:
