@@ -65,10 +65,11 @@ def handle_file(path):
         inspect_excel(path)
 
 
-def board(pg, url):
+def board(pg, url, opened=False):
     print(f"\n===== {url}")
-    pg.goto(url, wait_until="domcontentloaded", timeout=120_000)
-    time.sleep(6)
+    if not opened:
+        pg.goto(url, wait_until="domcontentloaded", timeout=120_000)
+        time.sleep(6)
     print(f"   제목: {pg.title()}")
     # 게시판 글 목록(표의 줄)
     rows = pg.query_selector_all("table tbody tr")
@@ -172,11 +173,16 @@ def main():
             print("\n----- 목록표 화면의 약제기준정보 메뉴")
             for t, h in subs:
                 print(f"   {t[:50]} → {h[:120]}")
-            for t, h in subs:
-                if "약제급여목록" in t or "급여상한" in t:
-                    u = h if h.startswith("http") else "https://www.hira.or.kr" + h
-                    if u not in found:
-                        found.append(u)
+            # 주소로 바로 열면 400 이 나는 게시판이 있어, 메뉴를 눌러 들어간다
+            link = pg.locator("a", has_text="약제급여목록표").first
+            if link.count():
+                link.click()
+                time.sleep(7)
+                board(pg, "메뉴 클릭 → 약제급여목록표 · " + pg.url, opened=True)
+            else:
+                print("   약제급여목록표 메뉴 링크가 없다")
+            br.close()
+            return 0
         for u in (found[:4] or BOARDS):
             try:
                 board(pg, u)
