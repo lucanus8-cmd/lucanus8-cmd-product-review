@@ -119,7 +119,7 @@ def board(pg, url):
             print(f"   '{t}' 내려받기 실패: {str(e)[:160]}")
 
 
-KEYS = ("약제급여목록", "급여상한금액", "약제 급여 목록", "약가파일", "약제급여")
+KEYS = ("약제급여목록", "급여상한금액", "약제 급여 목록", "약가파일", "목록표", "약제급여")
 
 
 def discover(pg, start):
@@ -156,10 +156,11 @@ def main():
         pg = ctx.new_page()
         found = []
         if not os.environ.get("URLS"):
-            for st in ("https://www.hira.or.kr/main.do",
-                       "https://www.hira.or.kr/rd/dissdic/sitemap.do",
-                       "https://www.data.go.kr/tcs/dss/selectDataSetList.do?keyword=%EC%95%BD%EC%A0%9C%EA%B8%89%EC%97%AC%EB%AA%A9%EB%A1%9D"):
+            # 약제기준정보 메뉴 화면의 왼쪽 메뉴에서 '약제급여목록표' 게시판을 찾는다
+            for st in ("https://www.hira.or.kr/bbsDummy.do?pgmid=HIRAA030023010000",
+                       "https://www.hira.or.kr/main.do"):
                 found += [u for u in discover(pg, st) if u not in found]
+            found = [u for u in found if "HIRAA030023010000" not in u]
         for u in (found[:4] or BOARDS):
             try:
                 board(pg, u)
