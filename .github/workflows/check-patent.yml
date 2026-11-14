@@ -10,7 +10,7 @@ on:
         required: true
         default: "미라베그론"
       what:
-        description: "search = 성분 하나 찾기 · types = 특허유형별 건수 · impact = 물질/형태 나눴을 때 영향"
+        description: "search = 성분 하나 찾기 · types = 특허유형별 건수 · impact = 물질/형태 나눴을 때 영향 · dmf = DMF 탭 읽기(쉼표로 여러 성분)"
         required: true
         default: "search"
 
@@ -43,6 +43,8 @@ jobs:
         run: |
           if [ "${{ inputs.what }}" = "types" ]; then
             python .github/scripts/check_patent_types.py
+          elif [ "${{ inputs.what }}" = "dmf" ]; then
+            python .github/scripts/check_dmf.py
           elif [ "${{ inputs.what }}" = "impact" ]; then
             python -m pip install --quiet pandas
             python .github/scripts/check_patent_impact.py
