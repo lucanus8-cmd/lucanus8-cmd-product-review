@@ -72,7 +72,12 @@ def parse(text):
         tds = tr.xpath("./td")
         if len(tds) < 5:
             continue
-        rows.append([cell_text(td) for td in tds])
+        r = [cell_text(td) for td in tds]
+        # 좁은 화면용으로 칸마다 앞에 칸 이름이 붙어 있다('성분명가도부트롤') — 떼어 낸다
+        for i, h in enumerate(hdr[:len(r)]):
+            if h and r[i].startswith(h):
+                r[i] = r[i][len(h):].strip()
+        rows.append(r)
     m = re.search(r"총\s*([\d,]+)\s*건", doc.text_content())
     total = int(m.group(1).replace(",", "")) if m else None
     return total, hdr, rows
