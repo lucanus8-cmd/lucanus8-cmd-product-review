@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-14-b"
+BUILD = "2026-11-15-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2024,12 +2024,224 @@ if PAGE == "search":
                     show_df(m[ordered].rename(columns={c: label.get(c, c) for c in ordered}),
                             height=320, file_name="재심사DMF.csv")
 
+# ══════════════════════════ 원료사 동향(DMF) — 제품 제안 탭의 두 번째 보기 ══════════════════════════
+@st.cache_data(ttl=6 * 3600, show_spinner="원료사 동향 계산 중…")
+def _dmf_prep():
+    import dmf_trend as _dt
+    try:
+        _ap = ss.load_approval()
+    except Exception:
+        _ap = None
+    return _dt.prepare_dmf(ss.load_dmf(), _ap)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _dmf_trend_cached(months, drop_orig):
+    import dmf_trend as _dt
+    return _dt.trend(_dmf_prep(), TODAY, months, drop_orig)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="임상 자료 정리 중…")
+def _dmf_clin_prep():
+    import dmf_trend as _dt
+    try:
+        return _dt.prepare_clinical(ss.load_clinical())
+    except Exception:
+        return pd.DataFrame()
+
+
+def _dmf_sales_patent(m, name, unit):
+    """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 성분 코어로 묶는다. 단일제만."""
+    import dmf_trend as _dt
+    if unit != "성분별" or m is None or m.empty or name not in m.columns:
+        return pd.DataFrame()
+    mm = m[ss.is_single_series(m[name].astype(str))].copy()
+    if mm.empty:
+        return pd.DataFrame()
+    mm["성분"] = _dt.core_of(mm[name].astype(str))
+    keep = ["성분", "시장규모", "CAGR"] + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타")
+                                         if c in mm.columns]
+    return (mm[keep].sort_values("시장규모", ascending=False)
+            .drop_duplicates("성분").set_index("성분"))
+
+
+def _dmf_view(m, name, unit):
+    import dmf_trend as _dt
+    st.markdown("#### 🧪 원료사 동향 — DMF가 몰리는 성분")
+    x = _dmf_prep()
+    if x is None or x.empty:
+        st.info("식약처 최신 DMF 목록을 아직 읽지 못했습니다. 잠시 뒤 다시 열어 주세요. "
+                "(목록은 매일 새벽 5시에 새로 받습니다)")
+        return
+    c1, c2, c3, c4, c5 = st.columns([1.7, 1.1, 0.9, 1.2, 1.5])
+    basis = c1.radio("기준", ["원료사 새 등록 증가", "추가 신청 증가"], horizontal=True, key="dmfv_basis")
+    months = 12 if c2.radio("기간", ["12개월", "6개월"], horizontal=True, key="dmfv_months") == "12개월" else 6
+    min_n = int(c3.number_input("최소 등록 수", value=3, min_value=1, step=1, key="dmfv_min"))
+    stage_sel = c4.selectbox("단계", ["전체", "원료 진입기", "개발 진행기", "출시 임박", "지나감"], key="dmfv_stage")
+    c5.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
+    drop_orig = c5.checkbox("오리지널사 본인 등록 빼기", value=True, key="dmfv_drop",
+                            help="그 성분 신약을 가진 회사(또는 다국적사 한국법인)가 낸 DMF는 "
+                                 "제네릭 원료 신호가 아니라서 뺍니다.")
+
+    t_all, n_orig = _dmf_trend_cached(months, drop_orig)
+    if t_all is None or t_all.empty:
+        st.info("계산할 DMF가 없습니다.")
+        return
+    if basis.startswith("원료사"):
+        t = t_all[(t_all["원료사_최근"] >= min_n) & (t_all["원료사_증감"] > 0)]
+        t = t.sort_values(["원료사_증감", "새제조소", "원료사_최근"], ascending=False)
+    else:
+        t = t_all[(t_all["추가_최근"] >= min_n) & (t_all["추가_증감"] > 0)]
+        t = t.sort_values(["추가_증감", "추가_최근"], ascending=False)
+    t = t.head(80).copy()
+
+    # 임상: 성분 이름이 적힌 최근 생동·1상, 코드명 의심
+    cx = _dmf_clin_prep()
+    has_clin = cx is not None and not cx.empty
+    named, sus, kw = [], [], []
+    for r in t.itertuples():
+        if not has_clin:
+            named.append(None); sus.append(None); kw.append(""); continue
+        terms, _n = _dt.ingredient_terms(cx, r.성분)
+        since = (r.첫등록_최근 if pd.notna(r.첫등록_최근) else TODAY - pd.DateOffset(months=months)) \
+            - pd.DateOffset(months=6)
+        named.append(_dt.named_recent(cx, r.성분, TODAY))
+        sus.append(len(_dt.suspects(cx, terms, since)) if terms else 0)
+        kw.append(", ".join(terms))
+    t["성분생동1상"] = named
+    t["코드명의심"] = sus
+    t["질환 핵심어"] = kw
+
+    # 매출·특허(성분별일 때만)
+    sp = _dmf_sales_patent(m, name, unit)
+    if not sp.empty:
+        t = t.join(sp, on="성분")
+        t["물질만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce")
+        if "특허만료_물질기타" in t.columns:
+            t["물질만료"] = t["물질만료"].fillna(pd.to_datetime(t["특허만료_물질기타"], errors="coerce"))
+    t = _dt.judge(t, TODAY)
+    if stage_sel != "전체":
+        t = t[t["단계"] == stage_sel]
+
+    _meta = ss.dmf_meta() or {}
+    _rec_tot = int(t_all["원료사_최근"].sum())
+    _prev_tot = int(t_all["원료사_그전"].sum())
+    st.caption("식약처 DMF 공고 기준"
+               + (f" · {_meta.get('fetched_at')} 받음" if _meta.get("fetched_at") else "")
+               + f" · 최근 {months}개월 원료사 새 등록 {_rec_tot:,}건 (그 전 {months}개월 {_prev_tot:,}건)"
+               + f" · 조건 맞는 성분 {len(t):,}개"
+               + (f" · 오리지널사 본인 등록 {n_orig}건 뺌" if drop_orig and n_orig else ""))
+    if t.empty:
+        st.info("조건에 맞는 성분이 없습니다. 최소 등록 수를 낮추거나 기간·기준을 바꿔 보세요.")
+        return
+
+    view = pd.DataFrame({
+        "성분": t["성분"],
+        f"원료사 {months}개월 (그 전)": [f"{a} ({b})" for a, b in zip(t["원료사_최근"], t["원료사_그전"])],
+        "새 제조소": t["새제조소"],
+        "추가 신청 (그 전)": [f"{a} ({b})" for a, b in zip(t["추가_최근"], t["추가_그전"])],
+        "성분 확인 생동·1상(24개월)": t["성분생동1상"],
+        "코드명 의심": t["코드명의심"],
+    })
+    if not sp.empty:
+        view["물질특허 만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce").dt.date.astype("string")
+        view["염·형태특허 만료"] = pd.to_datetime(t.get("특허만료_물질형태"), errors="coerce").dt.date.astype("string")
+        view["시장규모(억)"] = (pd.to_numeric(t.get("시장규모"), errors="coerce") / 1e8).round(1)
+        view["CAGR(%)"] = pd.to_numeric(t.get("CAGR"), errors="coerce").round(1)
+    view["단계"] = t["단계"]
+    view["질환 핵심어"] = t["질환 핵심어"]
+    st.dataframe(view, use_container_width=True, hide_index=True, height=min(460, 38 + 35 * len(view)))
+    st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"원료사동향_{months}개월.csv", key="dmfv_csv")
+    st.caption("원료사 수는 제조소 기준(신청인은 수입 상사가 많음) · 추가 신청 = 기존 원료에 신청인만 붙은 것"
+               "(등록번호 끝 (1),(A)) · 코드명 의심 = 같은 질환의 코드명 생동·1상 수(첫 원료사 등록 6개월 전부터)"
+               + ("" if not sp.empty else " · 매출·특허 칸은 분석 단위 ‘성분별’에서 채워집니다")
+               + (" · 임상 자료를 아직 못 읽어 임상 칸이 비어 있습니다" if not has_clin else ""))
+
+    # ── 성분 자세히 보기 ──
+    st.markdown("#### 🔎 성분 자세히 보기")
+    opts = t["성분"].tolist()
+    pick = st.selectbox("성분", opts, index=0, key=f"dmfv_pick_{abs(hash(tuple(opts))) % 10**8}")
+    row = t[t["성분"] == pick].iloc[0]
+    k = st.columns(5)
+    k[0].metric(f"원료사 ({months}개월)", f"{int(row['원료사_최근'])}", f"{int(row['원료사_증감']):+d}")
+    k[1].metric("새 제조소", f"{int(row['새제조소'])}")
+    k[2].metric("성분 확인 생동·1상", "—" if row["성분생동1상"] is None else f"{int(row['성분생동1상'])}")
+    k[3].metric("코드명 의심", "—" if row["코드명의심"] is None else f"{int(row['코드명의심'])}")
+    _exp = row.get("물질만료") if "물질만료" in row.index else None
+    k[4].metric("물질특허 만료", pd.Timestamp(_exp).date().isoformat() if _exp is not None and pd.notna(_exp) else "—")
+
+    g1, g2 = st.columns([1.25, 1])
+    since_q = (TODAY - pd.DateOffset(months=24)).to_period("Q").start_time
+    q = _dt.quarterly(x, pick, since_q)
+    qs = pd.period_range(since_q, TODAY, freq="Q").astype(str).tolist()
+    q = q.set_index("분기").reindex(qs, fill_value=0).reset_index().rename(columns={"index": "분기"})
+    fig = go.Figure()
+    fig.add_bar(x=q["분기"], y=q["원료사"], name="원료사 새 등록", marker_color="#2f6f8f")
+    fig.add_bar(x=q["분기"], y=q["추가"], name="추가 신청", marker_color="#8fbcd1")
+    if has_clin:
+        _cs = cx[(cx["성분"] == pick) & (cx["생동"] | cx["1상"]) & (cx["승인일"] >= since_q)]
+        if not _cs.empty:
+            _cq = _cs["승인일"].dt.to_period("Q").astype(str).value_counts()
+            fig.add_scatter(x=_cq.index, y=[0.3] * len(_cq), mode="markers+text", name="성분 확인 생동·1상",
+                            marker=dict(color="#7a5aa6", size=12, symbol="diamond"),
+                            text=[f"{v}건" for v in _cq.values], textposition="top center")
+    fig.update_layout(barmode="stack", height=320, margin=dict(l=10, r=10, t=30, b=10),
+                      legend=dict(orientation="h", y=1.12), yaxis_title="건수",
+                      xaxis=dict(type="category", categoryorder="array", categoryarray=qs))
+    g1.markdown("**흐름** — 분기별 원료사 DMF와 생동·1상")
+    g1.plotly_chart(fig, use_container_width=True, key="dmfv_chart")
+
+    _d = x[(x["성분"] == pick) & (x["등록일"] >= TODAY - pd.DateOffset(months=24))].sort_values("등록일", ascending=False)
+    g2.markdown("**원료사 DMF** (최근 24개월)")
+    if _d.empty:
+        g2.info("최근 24개월 DMF가 없습니다.")
+    else:
+        g2.dataframe(pd.DataFrame({
+            "최초등록일": _d["등록일"].dt.date.astype("string"),
+            "신청인": _d["신청인"], "제조소": _d["제조소"], "국가": _d["제조국"],
+            "구분": ["오리지널사" if o else ("추가 신청" if a else "원료사") for o, a in zip(_d["오리지널사"], _d["추가"])],
+            "상태": _d["상태"],
+            "연계심사": _d["연계심사문서번호"].str.strip().ne("").map({True: "연계심사", False: ""}),
+        }), use_container_width=True, hide_index=True, height=300)
+
+    st.markdown("##### 🧬 코드명 생동·1상 의심 목록")
+    if not has_clin:
+        st.info("임상 자료를 아직 읽지 못했습니다.")
+        return
+    terms, n_ev = _dt.ingredient_terms(cx, pick)
+    s1, s2 = st.columns([2.2, 1])
+    kw_txt = s1.text_input("질환 핵심어 (쉼표로 여러 개)", value=", ".join(terms), key=f"dmfv_kw_{pick}",
+                           help="이 성분 이름이 적힌 임상의 대상질환에서 자동으로 뽑습니다. 직접 고쳐도 됩니다.")
+    since = (row["첫등록_최근"] if pd.notna(row["첫등록_최근"]) else TODAY - pd.DateOffset(months=months)) \
+        - pd.DateOffset(months=6)
+    s2.markdown(f"<div style='padding-top:1.9rem'>기간: {pd.Timestamp(since).date()} ~ 오늘</div>",
+                unsafe_allow_html=True)
+    if n_ev == 0:
+        st.caption("이 성분 이름이 적힌 임상이 없어 핵심어를 자동으로 못 뽑았습니다. 직접 넣어 주세요.")
+    elif n_ev <= 2:
+        st.caption(f"근거 적음: 이 성분 이름이 적힌 임상 {n_ev}건에서 뽑았습니다. 대표 적응증과 다를 수 있어요.")
+    else:
+        st.caption(f"이 성분 이름이 적힌 임상 {n_ev}건의 대상질환에서 뽑았습니다.")
+    canon, raw = _dt.parse_terms(kw_txt)
+    sdf = _dt.suspects(cx, canon, since, raw=raw)
+    if sdf.empty:
+        st.info("이 기간에 질환이 겹치는 코드명 생동·1상이 없습니다.")
+        return
+    if sdf["개발사"].astype(str).str.strip().eq("").all():
+        sdf = sdf.drop(columns=["개발사"])
+    st.dataframe(sdf, use_container_width=True, hide_index=True, height=min(420, 38 + 35 * len(sdf)))
+    st.caption("같은 질환의 다른 성분일 수도 있어 확정이 아니라 의심으로만 보여 줍니다. "
+               "높음 = 핵심어가 둘 이상 겹치고 다른 질환이 없음 · 중간 = 하나 겹침 · 낮음 = 다른 질환도 함께 적힘.")
+
+
 # ══════════════════════════ 제품 제안 (필터 기반) ══════════════════════════
 if PAGE == "sugg":
-    st.subheader("🎯 제품 제안 — 조건 필터")
-    a, b = st.columns(2)
+    st.subheader("🎯 제품 제안")
+    a, b, c = st.columns([1, 1, 1.5])
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
+    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)"], horizontal=True, key="sugg_view")
     if not has_sales(src2):
         st.info(f"{src2} 매출 자료가 아직 준비되지 않았습니다 — 제품 제안은 매출 자료가 있어야 동작합니다.\n\n"
                 "아래 버튼을 누르면 지금 받아옵니다(처음엔 1~2분 걸릴 수 있습니다).")
@@ -2119,6 +2331,11 @@ if PAGE == "sugg":
         _amap = df.loc[_ok, [_keycol]].assign(_a=_av[_ok]).groupby(_keycol)["_a"].first()
         m["ATC"] = m[name].map(_amap).fillna("")
 
+    if sugg_view.startswith("🧪"):
+        _dmf_view(m, name, unit)
+        ss.release_memory()
+        st.stop()
+
     st.markdown("**필터 조건**")
     f1, f2, f3, f4 = st.columns(4)
     min_size = f1.number_input("① 최소 시장규모(억, 최신연도)", value=50, step=10, min_value=0)
@@ -2143,6 +2360,9 @@ if PAGE == "sugg":
         atc_sel = st.multiselect("④ ATC 계열", _atc_opts, default=[],
                                  help="비우면 전체. 선택하면 해당 계열만")
 
+    only_dmf_up = (st.checkbox("⑤ 원료사 DMF 등록이 늘어난 성분만 (최근 12개월이 그 전 12개월보다 많음)",
+                               value=False, key="sugg_dmf_up") if unit == "성분별" else False)
+
     res = m[(m["시장규모"] >= min_size * 1e8) & (m["CAGR"].fillna(-1e9) >= min_cagr)].copy()
     if HAS_REG and ptypes:
         def clear_by(row):
@@ -2159,6 +2379,24 @@ if PAGE == "sugg":
     res = res.sort_values("시장규모", ascending=False)
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
     res["CAGR(%)"] = res["CAGR"].round(1)
+    # 원료사 DMF(식약처 최신 목록). 단일제만 붙인다 — 복합제는 첫 성분 것이 붙어 헷갈린다.
+    _dmf_cols = []
+    if unit == "성분별":
+        try:
+            import dmf_trend as _dt
+            _tt, _ = _dmf_trend_cached(12, True)
+            if _tt is not None and not _tt.empty:
+                _mp = _tt.set_index("성분")
+                _cr = _dt.core_of(res[name].astype(str))
+                _one = ss.is_single_series(res[name].astype(str))
+                for _lab, _col in (("DMF 정상", "정상DMF"), ("원료사 12개월", "원료사_최근"),
+                                   ("원료사 그 전 12개월", "원료사_그전")):
+                    res[_lab] = _cr.map(_mp[_col]).fillna(0).where(_one).astype("Int64")
+                _dmf_cols = ["DMF 정상", "원료사 12개월", "원료사 그 전 12개월"]
+                if only_dmf_up:
+                    res = res[(res["원료사 12개월"] > res["원료사 그 전 12개월"]).fillna(False)]
+        except Exception:
+            _dmf_cols = []
     # (화면 칸 이름, 집계 칸 이름)
     _PT_COLS = [("물질특허", "물질"), ("염·형태특허", "물질형태"),
                 ("물질(기타)특허", "물질기타"), ("용도특허", "용도")]
@@ -2167,7 +2405,7 @@ if PAGE == "sugg":
             res[f"{_lab} 만료"] = pd.to_datetime(res.get(f"특허만료_{_k}")).dt.date.astype("string")
             res[f"{_lab} 근거"] = res.get(f"근거_{_k}", pd.Series("", index=res.index)).fillna("")
     cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
-            + ["시장규모(억)", "CAGR(%)"]
+            + ["시장규모(억)", "CAGR(%)"] + _dmf_cols
             + ([f"{_lab} 만료" for _lab, _ in _PT_COLS] if HAS_REG else []))
     src_cols = [f"{_lab} 근거" for _lab, _ in _PT_COLS] if HAS_REG else []
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
