@@ -1,0 +1,54 @@
+# 매일 오전 7시·저녁 7시(한국시간)에 사이트를 깨우고, 매출 자료가 없으면 불러와 둔다.
+# 사이트 코드는 바꾸지 않는다. 매출 숫자는 읽지도 적지도 않는다.
+name: wake-site
+
+on:
+  schedule:
+    - cron: "0 22 * * *"   # 한국시간 오전 7시 (UTC 22시). GitHub 사정으로 조금 늦을 수 있다.
+    - cron: "0 10 * * *"   # 한국시간 저녁 7시 (UTC 10시)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: wake-site
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.49.0-${{ runner.os }}
+
+      - name: 브라우저 준비
+        run: |
+          python -m pip install --quiet playwright==1.49.0
+          python -m playwright install --with-deps chromium
+
+      - name: 사이트 깨우고 매출 불러오기
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: python .github/scripts/wake_site.py
+
+      # 공개 저장소는 60일 동안 활동이 없으면 예약이 멈출 수 있다 — 돌 때마다 다시 켠다
+      - name: 예약 계속 켜 두기
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -X PUT -o /dev/null -w "예약 다시 켜기: HTTP %{http_code}\n" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/wake-site.yml/enable"
