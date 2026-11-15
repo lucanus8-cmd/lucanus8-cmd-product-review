@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-15-a"
+BUILD = "2026-11-15-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2050,8 +2050,9 @@ def _dmf_clin_prep():
         return pd.DataFrame()
 
 
-def _dmf_sales_patent(m, name, unit):
-    """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 성분 코어로 묶는다. 단일제만."""
+def _dmf_sales_patent(m, name, unit, yr=()):
+    """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 성분 코어로 묶는다. 단일제만.
+    yr 는 연도별 매출 칸 이름(예: ['2020년', …, '2024년'])."""
     import dmf_trend as _dt
     if unit != "성분별" or m is None or m.empty or name not in m.columns:
         return pd.DataFrame()
@@ -2059,13 +2060,13 @@ def _dmf_sales_patent(m, name, unit):
     if mm.empty:
         return pd.DataFrame()
     mm["성분"] = _dt.core_of(mm[name].astype(str))
-    keep = ["성분", "시장규모", "CAGR"] + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타")
-                                         if c in mm.columns]
+    keep = (["성분", "시장규모", "CAGR"] + [y for y in yr if y in mm.columns]
+            + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타") if c in mm.columns])
     return (mm[keep].sort_values("시장규모", ascending=False)
             .drop_duplicates("성분").set_index("성분"))
 
 
-def _dmf_view(m, name, unit):
+def _dmf_view(m, name, unit, yr=()):
     import dmf_trend as _dt
     st.markdown("#### 🧪 원료사 동향 — DMF가 몰리는 성분")
     x = _dmf_prep()
@@ -2075,7 +2076,8 @@ def _dmf_view(m, name, unit):
         return
     c1, c2, c3, c4, c5 = st.columns([1.7, 1.1, 0.9, 1.2, 1.5])
     basis = c1.radio("기준", ["원료사 새 등록 증가", "추가 신청 증가"], horizontal=True, key="dmfv_basis")
-    months = 12 if c2.radio("기간", ["12개월", "6개월"], horizontal=True, key="dmfv_months") == "12개월" else 6
+    months = int(c2.number_input("기간(개월)", value=12, min_value=1, max_value=60, step=1, key="dmfv_months_n",
+                                 help="최근 N개월과 그 바로 앞 N개월을 비교합니다."))
     min_n = int(c3.number_input("최소 등록 수", value=3, min_value=1, step=1, key="dmfv_min"))
     stage_sel = c4.selectbox("단계", ["전체", "원료 진입기", "개발 진행기", "출시 임박", "지나감"], key="dmfv_stage")
     c5.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
@@ -2113,7 +2115,7 @@ def _dmf_view(m, name, unit):
     t["질환 핵심어"] = kw
 
     # 매출·특허(성분별일 때만)
-    sp = _dmf_sales_patent(m, name, unit)
+    sp = _dmf_sales_patent(m, name, unit, yr)
     if not sp.empty:
         t = t.join(sp, on="성분")
         t["물질만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce")
@@ -2146,7 +2148,13 @@ def _dmf_view(m, name, unit):
     if not sp.empty:
         view["물질특허 만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce").dt.date.astype("string")
         view["염·형태특허 만료"] = pd.to_datetime(t.get("특허만료_물질형태"), errors="coerce").dt.date.astype("string")
-        view["시장규모(억)"] = (pd.to_numeric(t.get("시장규모"), errors="coerce") / 1e8).round(1)
+        _ys = [y for y in yr if y in t.columns]
+        _ylab = str(_ys[-1]).replace("년", "") if _ys else "최근"
+        view[f"매출(억, {_ylab})"] = (pd.to_numeric(t.get("시장규모"), errors="coerce") / 1e8).round(1)
+        if len(_ys) >= 2:
+            _a = pd.to_numeric(t[_ys[-1]], errors="coerce")
+            _b = pd.to_numeric(t[_ys[-2]], errors="coerce")
+            view["전년 대비(%)"] = ((_a / _b.where(_b > 0) - 1) * 100).round(1)
         view["CAGR(%)"] = pd.to_numeric(t.get("CAGR"), errors="coerce").round(1)
     view["단계"] = t["단계"]
     view["질환 핵심어"] = t["질환 핵심어"]
@@ -2163,16 +2171,25 @@ def _dmf_view(m, name, unit):
     opts = t["성분"].tolist()
     pick = st.selectbox("성분", opts, index=0, key=f"dmfv_pick_{abs(hash(tuple(opts))) % 10**8}")
     row = t[t["성분"] == pick].iloc[0]
-    k = st.columns(5)
+    k = st.columns(6)
     k[0].metric(f"원료사 ({months}개월)", f"{int(row['원료사_최근'])}", f"{int(row['원료사_증감']):+d}")
     k[1].metric("새 제조소", f"{int(row['새제조소'])}")
     k[2].metric("성분 확인 생동·1상", "—" if row["성분생동1상"] is None else f"{int(row['성분생동1상'])}")
     k[3].metric("코드명 의심", "—" if row["코드명의심"] is None else f"{int(row['코드명의심'])}")
     _exp = row.get("물질만료") if "물질만료" in row.index else None
     k[4].metric("물질특허 만료", pd.Timestamp(_exp).date().isoformat() if _exp is not None and pd.notna(_exp) else "—")
+    _ys = [y for y in yr if y in row.index]
+    _sv = pd.to_numeric(pd.Series([row[y] for y in _ys], index=_ys), errors="coerce") if _ys else pd.Series(dtype=float)
+    if len(_sv) and pd.notna(_sv.iloc[-1]):
+        _d1 = (f"{(_sv.iloc[-1] / _sv.iloc[-2] - 1) * 100:+.1f}% 전년 대비"
+               if len(_sv) >= 2 and pd.notna(_sv.iloc[-2]) and _sv.iloc[-2] > 0 else None)
+        k[5].metric(f"매출(억, {str(_ys[-1]).replace('년', '')})", f"{_sv.iloc[-1] / 1e8:,.1f}", _d1)
+    else:
+        k[5].metric("매출(억)", "—")
 
     g1, g2 = st.columns([1.25, 1])
-    since_q = (TODAY - pd.DateOffset(months=24)).to_period("Q").start_time
+    _span = max(24, 2 * months)          # 그래프·DMF 목록은 비교 구간 전체(최소 24개월)를 보여 준다
+    since_q = (TODAY - pd.DateOffset(months=_span)).to_period("Q").start_time
     q = _dt.quarterly(x, pick, since_q)
     qs = pd.period_range(since_q, TODAY, freq="Q").astype(str).tolist()
     q = q.set_index("분기").reindex(qs, fill_value=0).reset_index().rename(columns={"index": "분기"})
@@ -2191,11 +2208,20 @@ def _dmf_view(m, name, unit):
                       xaxis=dict(type="category", categoryorder="array", categoryarray=qs))
     g1.markdown("**흐름** — 분기별 원료사 DMF와 생동·1상")
     g1.plotly_chart(fig, use_container_width=True, key="dmfv_chart")
+    if len(_sv) and _sv.notna().any():
+        _sf = go.Figure(go.Bar(x=[str(y).replace("년", "") for y in _sv.index], y=(_sv / 1e8).round(1),
+                               marker_color="#3f7f4f", text=(_sv / 1e8).round(1), textposition="outside"))
+        _sf.update_layout(height=230, margin=dict(l=10, r=10, t=30, b=10), yaxis_title="억",
+                          xaxis=dict(type="category"))
+        g1.markdown("**연도별 매출** (단일제, 선택한 매출 자료원)")
+        g1.plotly_chart(_sf, use_container_width=True, key="dmfv_sales")
+    else:
+        g1.caption("이 성분의 단일제 매출이 매출 자료에 없습니다.")
 
-    _d = x[(x["성분"] == pick) & (x["등록일"] >= TODAY - pd.DateOffset(months=24))].sort_values("등록일", ascending=False)
-    g2.markdown("**원료사 DMF** (최근 24개월)")
+    _d = x[(x["성분"] == pick) & (x["등록일"] >= TODAY - pd.DateOffset(months=_span))].sort_values("등록일", ascending=False)
+    g2.markdown(f"**원료사 DMF** (최근 {_span}개월)")
     if _d.empty:
-        g2.info("최근 24개월 DMF가 없습니다.")
+        g2.info(f"최근 {_span}개월 DMF가 없습니다.")
     else:
         g2.dataframe(pd.DataFrame({
             "최초등록일": _d["등록일"].dt.date.astype("string"),
@@ -2242,6 +2268,9 @@ if PAGE == "sugg":
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
     sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)"], horizontal=True, key="sugg_view")
+    if sugg_view.startswith("🧪") and unit != "성분별":
+        st.caption("원료사 동향은 성분 단위로 봅니다 — 분석 단위와 상관없이 성분별 매출을 씁니다.")
+        unit = "성분별"
     if not has_sales(src2):
         st.info(f"{src2} 매출 자료가 아직 준비되지 않았습니다 — 제품 제안은 매출 자료가 있어야 동작합니다.\n\n"
                 "아래 버튼을 누르면 지금 받아옵니다(처음엔 1~2분 걸릴 수 있습니다).")
@@ -2332,7 +2361,7 @@ if PAGE == "sugg":
         m["ATC"] = m[name].map(_amap).fillna("")
 
     if sugg_view.startswith("🧪"):
-        _dmf_view(m, name, unit)
+        _dmf_view(m, name, unit, yr)
         ss.release_memory()
         st.stop()
 

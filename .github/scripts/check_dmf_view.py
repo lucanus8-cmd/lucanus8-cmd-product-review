@@ -15,7 +15,7 @@ URL = (os.environ.get("APP_URL") or "").rstrip("/")
 PW = os.environ.get("APP_PASSWORD") or ""
 PICK = (os.environ.get("QUERY") or "").strip()
 APP_SEL = ("[data-testid='stAppViewContainer']", "[data-testid='stApp']", "input[type='password']")
-SALES_WORDS = ("시장규모", "CAGR", "매출")
+SALES_WORDS = ("시장규모", "CAGR", "매출", "전년", "억")
 
 GRIDS_JS = """
 () => [...document.querySelectorAll("[data-testid='stDataFrame']")].map(d => ({
