@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-15-b"
+BUILD = "2026-11-15-c"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2051,19 +2051,43 @@ def _dmf_clin_prep():
 
 
 def _dmf_sales_patent(m, name, unit, yr=()):
-    """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 성분 코어로 묶는다. 단일제만.
-    yr 는 연도별 매출 칸 이름(예: ['2020년', …, '2024년'])."""
-    import dmf_trend as _dt
-    if unit != "성분별" or m is None or m.empty or name not in m.columns:
+    """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 영문 성분키(_key)로 묶는다. 단일제만.
+    매출 자료의 성분명은 표기가 DMF(한글)와 달라 이름으로는 안 붙는다. 제품 제안이 특허를
+    붙일 때 쓰는 영문 성분키로 잇는다. yr 는 연도별 매출 칸 이름(예: ['2020년', …])."""
+    if unit != "성분별" or m is None or m.empty or name not in m.columns or "_key" not in m.columns:
         return pd.DataFrame()
-    mm = m[ss.is_single_series(m[name].astype(str))].copy()
+    mm = m[ss.is_single_series(m[name].astype(str)) & (m["_key"].astype(str).str.len() > 0)].copy()
     if mm.empty:
         return pd.DataFrame()
-    mm["성분"] = _dt.core_of(mm[name].astype(str))
-    keep = (["성분", "시장규모", "CAGR"] + [y for y in yr if y in mm.columns]
+    keep = (["_key", "시장규모", "CAGR"] + [y for y in yr if y in mm.columns]
             + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타") if c in mm.columns])
     return (mm[keep].sort_values("시장규모", ascending=False)
-            .drop_duplicates("성분").set_index("성분"))
+            .drop_duplicates("_key").set_index("_key"))
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _dmf_key_map():
+    """DMF 성분 코어(한글) → 영문 성분키 표. 허가·특허 자료로 만든 대응표를 쓴다. 한 번 만들어 둔다."""
+    try:
+        c2k, _ = _kor2engkey()
+    except Exception:
+        c2k = {}
+    x = _dmf_prep()
+    cores = sorted(set(x["성분"])) if x is not None and not x.empty else []
+    items = [(kk, v) for kk, v in c2k.items() if len(kk) >= 3]
+    out = {}
+    for c in cores:
+        k = c2k.get(c) or c2k.get(ss.ing_core(c))
+        if not k and len(c) >= 3:            # '데스벤라팍신' ↔ '데스벤라팍신벤조산' 처럼 염 이름 차이
+            k = next((v for kk, v in items if kk.startswith(c) or c.startswith(kk)), "")
+        if k:
+            out[c] = k
+    return out
+
+
+def _dmf_keys(cores):
+    mp = _dmf_key_map()
+    return [mp.get(str(c or ""), "") for c in cores]
 
 
 def _dmf_view(m, name, unit, yr=()):
@@ -2117,7 +2141,8 @@ def _dmf_view(m, name, unit, yr=()):
     # 매출·특허(성분별일 때만)
     sp = _dmf_sales_patent(m, name, unit, yr)
     if not sp.empty:
-        t = t.join(sp, on="성분")
+        t["_key"] = _dmf_keys(t["성분"])
+        t = t.join(sp, on="_key")
         t["물질만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce")
         if "특허만료_물질기타" in t.columns:
             t["물질만료"] = t["물질만료"].fillna(pd.to_datetime(t["특허만료_물질기타"], errors="coerce"))
@@ -2146,8 +2171,10 @@ def _dmf_view(m, name, unit, yr=()):
         "코드명 의심": t["코드명의심"],
     })
     if not sp.empty:
-        view["물질특허 만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce").dt.date.astype("string")
-        view["염·형태특허 만료"] = pd.to_datetime(t.get("특허만료_물질형태"), errors="coerce").dt.date.astype("string")
+        _dstr = lambda c: (pd.to_datetime(t[c], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+                           if c in t.columns else "")
+        view["물질특허 만료"] = _dstr("특허만료_물질")
+        view["염·형태특허 만료"] = _dstr("특허만료_물질형태")
         _ys = [y for y in yr if y in t.columns]
         _ylab = str(_ys[-1]).replace("년", "") if _ys else "최근"
         view[f"매출(억, {_ylab})"] = (pd.to_numeric(t.get("시장규모"), errors="coerce") / 1e8).round(1)
@@ -2415,8 +2442,10 @@ if PAGE == "sugg":
             import dmf_trend as _dt
             _tt, _ = _dmf_trend_cached(12, True)
             if _tt is not None and not _tt.empty:
-                _mp = _tt.set_index("성분")
-                _cr = _dt.core_of(res[name].astype(str))
+                _tk = _tt.assign(_key=_dmf_keys(_tt["성분"]))
+                _tk = _tk[_tk["_key"].str.len() > 0]
+                _mp = _tk.groupby("_key")[["정상DMF", "원료사_최근", "원료사_그전"]].sum()
+                _cr = res["_key"].astype(str) if "_key" in res.columns else _dt.core_of(res[name].astype(str))
                 _one = ss.is_single_series(res[name].astype(str))
                 for _lab, _col in (("DMF 정상", "정상DMF"), ("원료사 12개월", "원료사_최근"),
                                    ("원료사 그 전 12개월", "원료사_그전")):
