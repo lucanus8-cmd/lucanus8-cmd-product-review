@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-15-c"
+BUILD = "2026-11-16-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2050,6 +2050,48 @@ def _dmf_clin_prep():
         return pd.DataFrame()
 
 
+def _atc_levels(df, cfg):
+    """매출 자료의 ATC 단계 칸 목록. IQVIA: 'ATC 1(한글)'~'ATC 4(한글)'. 없으면 설정의 atc1 하나."""
+    lv = sorted([c for c in df.columns if re.match(r"^ATC\s*\d", str(c))],
+                key=lambda c: int(re.search(r"\d", str(c)).group()))
+    if not lv and cfg.get("atc1") and cfg["atc1"] in df.columns:
+        lv = [cfg["atc1"]]
+    return lv
+
+
+@st.cache_data(show_spinner=False)
+def _atc_maps(src, keycol):
+    """성분(또는 제품) → ATC 단계별 값. 첫 번째로 비어 있지 않은 값을 쓴다."""
+    df, _, cfg = get(src)
+    lv = _atc_levels(df, cfg)
+    if not lv or keycol not in df.columns:
+        return [], pd.DataFrame()
+    out = {}
+    for c in lv:
+        v = df[c].astype(str).str.strip()
+        ok = v.str.len().gt(0) & ~v.str.lower().isin(["nan", "none"])
+        out[c] = df.loc[ok, [keycol]].assign(_a=v[ok]).groupby(keycol)["_a"].first()
+    return lv, pd.DataFrame(out)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _dmf_patents():
+    """영문 성분키 → 식약처 등재 특허 만료일(물질·염형태·물질기타). 단일제 품목 특허만.
+    제품 제안 '성분별'과 같은 기준: 오리지널(신약) 품목이 있으면 그 특허, 없으면 전체."""
+    if not HAS_REG:
+        return pd.DataFrame()
+    try:
+        base = ss.patent_by_key(single_only=True)
+        orig = ss.patent_by_key(single_only=True, original_only=True)
+        _, _, basis = ss.original_items()
+    except Exception:
+        return pd.DataFrame()
+    both = pd.concat([orig[orig["_key"].isin(basis)], base[~base["_key"].isin(basis)]], ignore_index=True)
+    both = both[both["_key"].astype(str).str.len() > 0].drop_duplicates("_key")
+    keep = ["_key"] + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타") if c in both.columns]
+    return both[keep].set_index("_key")
+
+
 def _dmf_sales_patent(m, name, unit, yr=()):
     """제품 제안에서 이미 계산한 성분별 매출·특허(m)를 영문 성분키(_key)로 묶는다. 단일제만.
     매출 자료의 성분명은 표기가 DMF(한글)와 달라 이름으로는 안 붙는다. 제품 제안이 특허를
@@ -2059,8 +2101,7 @@ def _dmf_sales_patent(m, name, unit, yr=()):
     mm = m[ss.is_single_series(m[name].astype(str)) & (m["_key"].astype(str).str.len() > 0)].copy()
     if mm.empty:
         return pd.DataFrame()
-    keep = (["_key", "시장규모", "CAGR"] + [y for y in yr if y in mm.columns]
-            + [c for c in ("특허만료_물질", "특허만료_물질형태", "특허만료_물질기타") if c in mm.columns])
+    keep = ["_key", "시장규모", "CAGR"] + [y for y in yr if y in mm.columns]
     return (mm[keep].sort_values("시장규모", ascending=False)
             .drop_duplicates("_key").set_index("_key"))
 
@@ -2098,12 +2139,11 @@ def _dmf_view(m, name, unit, yr=()):
         st.info("식약처 최신 DMF 목록을 아직 읽지 못했습니다. 잠시 뒤 다시 열어 주세요. "
                 "(목록은 매일 새벽 5시에 새로 받습니다)")
         return
-    c1, c2, c3, c4, c5 = st.columns([1.7, 1.1, 0.9, 1.2, 1.5])
+    c1, c2, c3, c5 = st.columns([1.7, 1.1, 0.9, 1.6])
     basis = c1.radio("기준", ["원료사 새 등록 증가", "추가 신청 증가"], horizontal=True, key="dmfv_basis")
     months = int(c2.number_input("기간(개월)", value=12, min_value=1, max_value=60, step=1, key="dmfv_months_n",
                                  help="최근 N개월과 그 바로 앞 N개월을 비교합니다."))
     min_n = int(c3.number_input("최소 등록 수", value=3, min_value=1, step=1, key="dmfv_min"))
-    stage_sel = c4.selectbox("단계", ["전체", "원료 진입기", "개발 진행기", "출시 임박", "지나감"], key="dmfv_stage")
     c5.markdown("<div style='height:1.9rem'></div>", unsafe_allow_html=True)
     drop_orig = c5.checkbox("오리지널사 본인 등록 빼기", value=True, key="dmfv_drop",
                             help="그 성분 신약을 가진 회사(또는 다국적사 한국법인)가 낸 DMF는 "
@@ -2140,15 +2180,15 @@ def _dmf_view(m, name, unit, yr=()):
 
     # 매출·특허(성분별일 때만)
     sp = _dmf_sales_patent(m, name, unit, yr)
+    pt = _dmf_patents()
+    t["_key"] = _dmf_keys(t["성분"])
     if not sp.empty:
-        t["_key"] = _dmf_keys(t["성분"])
         t = t.join(sp, on="_key")
+    if not pt.empty:
+        t = t.join(pt, on="_key")
         t["물질만료"] = pd.to_datetime(t.get("특허만료_물질"), errors="coerce")
         if "특허만료_물질기타" in t.columns:
             t["물질만료"] = t["물질만료"].fillna(pd.to_datetime(t["특허만료_물질기타"], errors="coerce"))
-    t = _dt.judge(t, TODAY)
-    if stage_sel != "전체":
-        t = t[t["단계"] == stage_sel]
 
     _meta = ss.dmf_meta() or {}
     _rec_tot = int(t_all["원료사_최근"].sum())
@@ -2170,11 +2210,17 @@ def _dmf_view(m, name, unit, yr=()):
         "성분 확인 생동·1상(24개월)": t["성분생동1상"],
         "코드명 의심": t["코드명의심"],
     })
-    if not sp.empty:
-        _dstr = lambda c: (pd.to_datetime(t[c], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
-                           if c in t.columns else "")
+    _nokey = t["_key"].astype(str).str.len() == 0
+
+    def _dstr(c):
+        d = (pd.to_datetime(t[c], errors="coerce").dt.strftime("%Y-%m-%d")
+             if c in t.columns else pd.Series(pd.NA, index=t.index, dtype="object"))
+        d = d.astype("object").where(d.notna(), "등재특허 없음")
+        return d.where(~_nokey, "성분키 못 찾음")
+    if not pt.empty:
         view["물질특허 만료"] = _dstr("특허만료_물질")
         view["염·형태특허 만료"] = _dstr("특허만료_물질형태")
+    if not sp.empty:
         _ys = [y for y in yr if y in t.columns]
         _ylab = str(_ys[-1]).replace("년", "") if _ys else "최근"
         view[f"매출(억, {_ylab})"] = (pd.to_numeric(t.get("시장규모"), errors="coerce") / 1e8).round(1)
@@ -2183,7 +2229,6 @@ def _dmf_view(m, name, unit, yr=()):
             _b = pd.to_numeric(t[_ys[-2]], errors="coerce")
             view["전년 대비(%)"] = ((_a / _b.where(_b > 0) - 1) * 100).round(1)
         view["CAGR(%)"] = pd.to_numeric(t.get("CAGR"), errors="coerce").round(1)
-    view["단계"] = t["단계"]
     view["질환 핵심어"] = t["질환 핵심어"]
     st.dataframe(view, use_container_width=True, hide_index=True, height=min(460, 38 + 35 * len(view)))
     st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8-sig"),
@@ -2378,14 +2423,13 @@ if PAGE == "sugg":
             _parts.append(_sub.merge(_pbk, on="_key", how="left"))
         m = pd.concat(_parts, ignore_index=True) if _parts else m.drop(columns=["_solo"])
 
-    # ATC(매출자료 기준)
+    # ATC(매출자료 기준) — 단계별(IQVIA는 1~4단계)
     _keycol = cfg["ing"] if unit == "성분별" else cfg["prod"]
-    _atc = cfg.get("atc1")
-    if _atc and _atc in df.columns:
-        _av = df[_atc].astype(str).str.strip()
-        _ok = _av.str.len().gt(0) & ~_av.str.lower().eq("nan")
-        _amap = df.loc[_ok, [_keycol]].assign(_a=_av[_ok]).groupby(_keycol)["_a"].first()
-        m["ATC"] = m[name].map(_amap).fillna("")
+    _atc_lv, _atc_tab = _atc_maps(src2, _keycol)
+    for _c in _atc_lv:
+        m[_c] = m[name].map(_atc_tab[_c]).fillna("") if _c in _atc_tab.columns else ""
+    if _atc_lv:
+        m["ATC"] = m[_atc_lv[0]]
 
     if sugg_view.startswith("🧪"):
         _dmf_view(m, name, unit, yr)
@@ -2411,10 +2455,22 @@ if PAGE == "sugg":
         sel_year = st.selectbox("이 연도까지 특허 만료", list(range(cy, cy + 16)), index=5,
                                 help="선택한 유형 특허가 이 연도까지 만료(또는 없음)인 후보만")
     with f4:
-        _atc_opts = sorted({str(x).strip() for x in m.get("ATC", pd.Series(dtype=str))
-                            if str(x).strip() and str(x).strip().lower() != "nan"})
-        atc_sel = st.multiselect("④ ATC 계열", _atc_opts, default=[],
-                                 help="비우면 전체. 선택하면 해당 계열만")
+        st.markdown("④ ATC 계열")
+        st.caption("아래에서 1단계부터 차례로 좁힙니다. 비우면 전체.")
+    # ④ ATC: 단계마다 고르기 칸. 위 단계에서 고른 것 안에서만 다음 단계 선택지가 나온다.
+    atc_pick = {}
+    if _atc_lv:
+        _ac = st.columns(len(_atc_lv))
+        _pool = m
+        for _i, _c in enumerate(_atc_lv):
+            _opts = sorted({str(x).strip() for x in _pool[_c] if str(x).strip()})
+            _lab = re.sub(r"\(한글\)", "", str(_c)).strip() if len(_atc_lv) > 1 else "ATC"
+            _sel = _ac[_i].multiselect(_lab, _opts, default=[], key=f"sugg_atc_{_i}_{abs(hash(tuple(_opts))) % 10**8}",
+                                       help="비우면 전체" if _i == 0 else "위 단계에서 고른 것 안의 항목만 나옵니다")
+            _sel = [x for x in _sel if x in _opts]
+            if _sel:
+                atc_pick[_c] = _sel
+                _pool = _pool[_pool[_c].astype(str).str.strip().isin(_sel)]
 
     only_dmf_up = (st.checkbox("⑤ 원료사 DMF 등록이 늘어난 성분만 (최근 12개월이 그 전 12개월보다 많음)",
                                value=False, key="sugg_dmf_up") if unit == "성분별" else False)
@@ -2429,8 +2485,9 @@ if PAGE == "sugg":
             return True
         res = res[res.apply(clear_by, axis=1)]
 
-    if atc_sel and "ATC" in res.columns:
-        res = res[res["ATC"].astype(str).str.strip().isin(atc_sel)]
+    for _c, _sel in atc_pick.items():
+        if _c in res.columns:
+            res = res[res[_c].astype(str).str.strip().isin(_sel)]
 
     res = res.sort_values("시장규모", ascending=False)
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
@@ -2462,7 +2519,10 @@ if PAGE == "sugg":
         for _lab, _k in _PT_COLS:
             res[f"{_lab} 만료"] = pd.to_datetime(res.get(f"특허만료_{_k}")).dt.date.astype("string")
             res[f"{_lab} 근거"] = res.get(f"근거_{_k}", pd.Series("", index=res.index)).fillna("")
-    cols = ([name] + (["ATC"] if "ATC" in res.columns else [])
+    _atc_last = _atc_lv[-1] if len(_atc_lv) > 1 else None
+    if _atc_last and _atc_last in res.columns:
+        res["ATC 상세"] = res[_atc_last]
+    cols = ([name] + (["ATC"] if "ATC" in res.columns else []) + (["ATC 상세"] if "ATC 상세" in res.columns else [])
             + ["시장규모(억)", "CAGR(%)"] + _dmf_cols
             + ([f"{_lab} 만료" for _lab, _ in _PT_COLS] if HAS_REG else []))
     src_cols = [f"{_lab} 근거" for _lab, _ in _PT_COLS] if HAS_REG else []
