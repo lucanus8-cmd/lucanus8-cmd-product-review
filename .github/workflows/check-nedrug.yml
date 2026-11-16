@@ -111,6 +111,7 @@ jobs:
         if: inputs.what == 'ctgov'
         env:
           DRUGS: ${{ inputs.words }}
+          OPTS: ${{ inputs.urls }}
         run: |
           python -m pip install --quiet requests==2.32.3
           python .github/scripts/check_ctgov.py

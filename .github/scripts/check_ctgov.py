@@ -16,12 +16,23 @@ import time
 import requests
 
 API = "https://clinicaltrials.gov/api/v2/studies"
+# 워크플로 입력 하나로 여러 설정을 받는다: "COND=...|OUT=...|WEEK=12|PHASES=3,4|LABEL=..."
+for kv in (os.environ.get("OPTS") or "").split("|"):
+    if "=" in kv:
+        k, v = kv.split("=", 1)
+        os.environ[k.strip()] = v.strip()
 DRUGS = [d.strip() for d in (os.environ.get("DRUGS") or "empagliflozin:10,dapagliflozin:10").split(",") if d.strip()]
-COND = os.environ.get("COND") or "type 2 diabetes"
+COND = os.environ.get("COND", "type 2 diabetes")
 WEEK = os.environ.get("WEEK") or "24"
+OUT = os.environ.get("OUT") or r"hba1c|a1c|glycosylated h|glycated h"   # 평가변수 이름(정규식)
+EXCL = os.environ.get("EXCL") or "fasting"                                # 이름에 있으면 뺌
+PHASES = ["PHASE" + x.strip() for x in (os.environ.get("PHASES") or "3").split(",")]
+LABEL = os.environ.get("LABEL") or "HbA1c 변화(%p)"
 OTHER = ("linagliptin", "sitagliptin", "saxagliptin", "metformin", "glimepiride", "glipizide",
          "pioglitazone", "insulin", "exenatide", "dapagliflozin", "empagliflozin", "canagliflozin",
-         "ertugliflozin", "liraglutide", "semaglutide")
+         "ertugliflozin", "liraglutide", "semaglutide", "ezetimibe", "bempedoic", "atorvastatin",
+         "simvastatin", "rosuvastatin", "pravastatin", "pitavastatin", "fluvastatin", "lovastatin",
+         "fenofibrate", "evolocumab", "alirocumab", "inclisiran", "niacin", "colesevelam")
 Z = 1.959964
 
 
@@ -31,27 +42,27 @@ def get(params):
     return r, time.time() - t
 
 
+FIELDS = ("protocolSection.identificationModule,protocolSection.designModule,"
+          "protocolSection.conditionsModule,resultsSection.outcomeMeasuresModule")
+
+
 def studies(drug):
-    base = {"query.intr": drug, "query.cond": COND, "pageSize": 100, "format": "json"}
-    out, tok, used_agg = [], None, True
-    for _ in range(10):
-        p = dict(base, aggFilters="phase:3,results:with") if used_agg else dict(base)
+    base = {"query.intr": drug, "pageSize": 100, "format": "json", "aggFilters": "results:with", "fields": FIELDS}
+    if COND:
+        base["query.cond"] = COND
+    out, tok = [], None
+    for _ in range(20):
+        p = dict(base)
         if tok:
             p["pageToken"] = tok
         r, _ = get(p)
-        if r.status_code == 400 and used_agg and not out:
-            used_agg = False
-            continue
         r.raise_for_status()
         j = r.json()
         out += j.get("studies", [])
         tok = j.get("nextPageToken")
         if not tok:
             break
-    if not used_agg:
-        out = [s for s in out if s.get("hasResults")
-               and "PHASE3" in (s["protocolSection"].get("designModule", {}).get("phases") or [])]
-    return out
+    return [s for s in out if set(s["protocolSection"].get("designModule", {}).get("phases") or []) & set(PHASES)]
 
 
 def fnum(x):
@@ -82,8 +93,8 @@ def pick_groups(groups, drug, dose):
 
 def is_a1c(o):
     t = (o.get("title", "") + " " + o.get("description", "")).lower()
-    return (("hba1c" in t or "a1c" in t or "glycosylated h" in t or "glycated h" in t)
-            and "change" in t and "fasting" not in o.get("title", "").lower())
+    return (re.search(OUT, t) is not None and "change" in t
+            and not re.search(EXCL, o.get("title", "").lower()))
 
 
 def week_ok(o):
@@ -146,10 +157,10 @@ def extract(s, drug, dose):
     outs = rs.get("outcomeMeasuresModule", {}).get("outcomeMeasures", [])
     prim = [o for o in outs if o.get("type") == "PRIMARY" and is_a1c(o)]
     if not prim:
-        return nct, title, "1차 평가변수에 HbA1c 변화 없음"
+        return nct, title, "1차 평가변수에 해당 지표 변화 없음"
     prim = [o for o in prim if week_ok(o)]
     if not prim:
-        return nct, title, f"HbA1c 1차 평가가 {WEEK}주가 아님"
+        return nct, title, f"1차 평가가 {WEEK}주가 아님"
     prim = [o for o in prim if unit_ok(o)]
     if not prim:
         return nct, title, "단위가 % 가 아님"
@@ -174,6 +185,49 @@ def extract(s, drug, dose):
         return dict(nct=nct, title=title, md=md, se=se, n1=n1, n2=n2, src=src,
                     arms=f"{gd['title'][:45]} vs {gp['title'][:35]}")
     return nct, title, f"{dose}mg 군과 위약 군을 못 찾음(다른 약 병용 비교 등)"
+
+
+def alone(groups, drug, dose):
+    """그 약 단독군(같은 바탕 치료는 허용): (군, 그 군의 다른 약 이름들)"""
+    for g in groups:
+        t = g["title"].lower()
+        if drug in t and not t.startswith("placebo") and re.search(rf"(?<![\d.]){dose}\s*mg", t):
+            return g, words_in(t) - {drug}
+    return None, None
+
+
+def direct(ss, a, da, b, db):
+    rows, seen = [], set()
+    for s in ss:
+        ps = s["protocolSection"]
+        nct = ps["identificationModule"]["nctId"]
+        if nct in seen:
+            continue
+        seen.add(nct)
+        for o in s.get("resultsSection", {}).get("outcomeMeasuresModule", {}).get("outcomeMeasures", []):
+            if o.get("type") != "PRIMARY" or not is_a1c(o) or not week_ok(o) or not unit_ok(o):
+                continue
+            ga, xa = alone(o.get("groups", []), a, da)
+            gb, xb = alone(o.get("groups", []), b, db)
+            if not ga or not gb or ga["id"] == gb["id"] or (xa - {b}) != (xb - {a}) or b in xa or a in xb:
+                continue
+            arm = arm_md(o, ga["id"], gb["id"])
+            an = analysis_md(o, ga["id"], gb["id"])
+            if an:
+                md, se = an
+                if arm and arm[0] * md < 0 and abs(arm[0]) > 0.5:
+                    md = -md
+                src = "임상 통계분석"
+            elif arm:
+                md, se = arm[0], arm[1]
+                src = "군별 평균·산포"
+            else:
+                continue
+            rows.append(dict(nct=nct, title=ps["identificationModule"].get("briefTitle", ""), md=md, se=se,
+                             src=src, arms=f"{ga['title'][:45]} vs {gb['title'][:45]}",
+                             n1=arm[2] if arm else None, n2=arm[3] if arm else None))
+            break
+    return rows
 
 
 def pool(rows):
@@ -203,13 +257,15 @@ def main():
     if not r.ok:
         print(r.text[:300])
         return 1
-    res = {}
+    res, allss, names = {}, [], []
     for d in DRUGS:
         drug, dose = (d.split(":") + ["10"])[:2]
         drug = drug.lower()
         t0 = time.time()
         ss = studies(drug)
-        print(f"\n===== {drug} {dose}mg vs 위약 · 2형 당뇨 3상 결과 있는 임상 {len(ss)}개 ({time.time() - t0:.1f}초)")
+        allss += ss
+        names.append((drug, dose))
+        print(f"\n===== {drug} {dose}mg vs 위약 · {COND or '질환 제한 없음'} · {'/'.join(PHASES)} · 결과 있는 임상 {len(ss)}개 ({time.time() - t0:.1f}초)")
         ok, why = [], {}
         for s in ss:
             e = extract(s, drug, dose)
@@ -227,7 +283,7 @@ def main():
             n = f"{e['n1']}/{e['n2']}" if e["n1"] else "-"
             print(f"   {e['nct']} · 인원 {n:>9} · 차이 {ci(e['md'], e['se'])} · 가중치 {w:4.1f}% · {e['src']}"
                   f"\n      {e['title'][:90]}\n      ({e['arms']})")
-        print(f"   ▶ 랜덤효과 합친 차이(%p): {ci(p['md'], p['se'])} · 임상 {p['k']}개 · "
+        print(f"   ▶ 랜덤효과 합친 차이({LABEL}): {ci(p['md'], p['se'])} · 임상 {p['k']}개 · "
               f"I² {p['i2']:.0f}% · τ² {p['tau2']:.4f} · 고정효과 {ci(p['fe'], p['fe_se'])}")
         res[drug] = p
     if len(res) == 2:
@@ -235,7 +291,18 @@ def main():
         md, se = pa["md"] - pb["md"], math.sqrt(pa["se"] ** 2 + pb["se"] ** 2)
         pv = math.erfc(abs(md / se) / math.sqrt(2))
         print(f"\n===== 간접 비교 (위약 공통, Bucher): {a} − {b}")
-        print(f"   HbA1c 변화 차이 {ci(md, se)} %p · p={pv:.2f}  (음수면 {a} 쪽이 더 낮춤)")
+        print(f"   {LABEL} 차이 {ci(md, se)} · p={pv:.2f}  (음수면 {a} 쪽이 더 낮춤)")
+    if len(names) == 2:
+        (a, da), (b, db) = names
+        rows = direct(allss, a, da, b, db)
+        print(f"\n===== 직접 비교: 같은 임상 안에 {a} {da}mg 단독군과 {b} {db}mg 단독군이 다 있는 임상 {len(rows)}개")
+        for e in rows:
+            n = f"{e['n1']}/{e['n2']}" if e["n1"] else "-"
+            print(f"   {e['nct']} · 인원 {n} · {a} − {b} {ci(e['md'], e['se'])} · {e['src']}"
+                  f"\n      {e['title'][:90]}\n      ({e['arms']})")
+        if rows:
+            p = pool(rows)
+            print(f"   ▶ 직접 비교 합친 차이: {ci(p['md'], p['se'])} · 임상 {p['k']}개 · I² {p['i2']:.0f}%")
     return 0
 
 
