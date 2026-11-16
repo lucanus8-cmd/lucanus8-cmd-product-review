@@ -47,7 +47,7 @@ FIELDS = ("protocolSection.identificationModule,protocolSection.designModule,"
 
 
 def studies(drug):
-    base = {"query.intr": drug, "pageSize": 100, "format": "json", "aggFilters": "results:with", "fields": FIELDS}
+    base = {"query.intr": names(drug)[0], "pageSize": 100, "format": "json", "aggFilters": "results:with", "fields": FIELDS}
     if COND:
         base["query.cond"] = COND
     out, tok = [], None
@@ -72,9 +72,23 @@ def fnum(x):
         return None
 
 
-def words_in(t):
+def names(drug):
+    return [x.strip() for x in drug.split("|") if x.strip()]
+
+
+def has(t, drug):
     t = t.lower()
-    return {w for w in OTHER if w in t}
+    return any(n in t for n in names(drug))
+
+
+def same(w, drug):
+    return any(w in n or n in w for n in names(drug))
+
+
+def words_in(t, drug=""):
+    """군 이름에 든 다른 약 이름들 (그 약 자신과 다른 이름은 뺌)."""
+    t = t.lower()
+    return {w for w in OTHER if w in t and not (drug and same(w, drug))}
 
 
 def dose_ok(title, dose):
@@ -84,14 +98,14 @@ def dose_ok(title, dose):
 
 
 def pick_groups(groups, drug, dose):
-    dg = [g for g in groups if drug in g["title"].lower() and not g["title"].lower().startswith("placebo")
+    dg = [g for g in groups if has(g["title"], drug) and not g["title"].lower().startswith("placebo")
           and dose_ok(g["title"], dose)]
-    pg = [g for g in groups if "placebo" in g["title"].lower() and drug not in g["title"].lower()]
+    pg = [g for g in groups if "placebo" in g["title"].lower() and not has(g["title"], drug)]
     if not pg:
         pg = [g for g in groups if g["title"].lower().startswith("placebo")]
     for d in dg:
         for p in pg:
-            extra = words_in(d["title"]) - words_in(p["title"]) - {drug}
+            extra = words_in(d["title"], drug) - words_in(p["title"], drug)
             if not extra:
                 return d, p
     return None, None
@@ -194,12 +208,15 @@ def extract(s, drug, dose):
     return nct, title, f"{dose}mg 군과 위약 군을 못 찾음(다른 약 병용 비교 등)", gt
 
 
-def alone(groups, drug, dose):
-    """그 약 단독군(같은 바탕 치료는 허용): (군, 그 군의 다른 약 이름들)"""
+def alone(groups, drug, dose, avoid=""):
+    """그 약 단독군(같은 바탕 치료는 허용, avoid 약이 섞인 군은 뺌): (군, 그 군의 다른 약 이름들)"""
     for g in groups:
         t = g["title"].lower()
-        if drug in t and not t.startswith("placebo") and dose_ok(t, dose):
-            return g, words_in(t) - {drug}
+        if has(t, drug) and not t.startswith("placebo") and dose_ok(t, dose):
+            w = words_in(t, drug)
+            if avoid and any(same(x, avoid) for x in w):
+                continue
+            return g, w
     return None, None
 
 
@@ -214,9 +231,10 @@ def direct(ss, a, da, b, db):
         for o in s.get("resultsSection", {}).get("outcomeMeasuresModule", {}).get("outcomeMeasures", []):
             if o.get("type") != "PRIMARY" or not is_a1c(o) or not week_ok(o) or not unit_ok(o):
                 continue
-            ga, xa = alone(o.get("groups", []), a, da)
-            gb, xb = alone(o.get("groups", []), b, db)
-            if not ga or not gb or ga["id"] == gb["id"] or (xa - {b}) != (xb - {a}) or b in xa or a in xb:
+            ga, xa = alone(o.get("groups", []), a, da, b)
+            gb, xb = alone(o.get("groups", []), b, db, a)
+            if not ga or not gb or ga["id"] == gb["id"] or {w for w in xa if not same(w, b)} != {w for w in xb if not same(w, a)} \
+                    or any(same(w, b) for w in xa) or any(same(w, a) for w in xb):
                 continue
             arm = arm_md(o, ga["id"], gb["id"])
             an = analysis_md(o, ga["id"], gb["id"])
