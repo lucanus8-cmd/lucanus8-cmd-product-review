@@ -431,6 +431,30 @@ def regroup(kind, info, g1, g2):
 
 
 # ── 전체 ─────────────────────────────────────────────────────────────
+def comparators_of(study, names, dose, kind, out_kw, week):
+    """이 임상에서 그 성분 군과 맞붙은 비교약 이름들 (위약은 '위약')."""
+    cands, _ = candidates(study, kind, out_kw, week)
+    if not cands:
+        return set()
+    groups = cands[0][0].get("groups") or []
+    if not find_arm(groups, names, dose):
+        return set()
+    out = set()
+    for g in groups:
+        t = g.get("title", "")
+        if _has(t, names):
+            continue
+        if _PLACEBO_RE.search(t) and not drug_words(t):
+            out.add("위약")
+            continue
+        ws = drug_words(t)
+        if len(ws) == 1:                 # 다른 약이 하나뿐인 군만 (병용군은 비교약으로 안 셈)
+            out |= ws
+        elif _PLACEBO_RE.search(t):
+            out.add("위약")
+    return out
+
+
 def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond="", comp=""):
     """두 성분 → 입력표 초안.
 
@@ -441,6 +465,7 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
     a, a_dose = parse_drug(a_text)
     b, b_dose = parse_drug(b_text)
     rows, infos, skipped, found, capped = [], {}, {}, {}, False
+    comp_count = {"A": Counter(), "B": Counter()}
     studies = {}
     for key, drug, dose, other in (("A", a, a_dose, b), ("B", b, b_dose, a)):
         ss, cut = fetch(drug, phases, out_kw, cond)
@@ -451,6 +476,8 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
             nct = s.get("protocolSection", {}).get("identificationModule", {}).get("nctId")
             studies.setdefault(nct, s)
             names = aliases(s, drug)
+            for c in comparators_of(s, names, dose, kind, out_kw, week):
+                comp_count[key][c] += 1
             other_names = aliases(s, other)
             comp_names = (aliases(s, comp.lower().strip()) if comp.strip() else None)
             row, info = side_rows(s, f"{key} vs 위약", names, dose, kind, out_kw, week, other_names, comp_names)
@@ -469,7 +496,10 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
             rows.append(row)
             infos[f"{nct}|A vs B (직접)"] = info
     _mark(rows, kind)
-    return {"rows": rows, "infos": infos, "skipped": {k: dict(v) for k, v in skipped.items()},
+    both = {c: (comp_count["A"][c], comp_count["B"][c]) for c in set(comp_count["A"]) | set(comp_count["B"])
+            if not _same(c, {a, b})}
+    return {"comparators": dict(sorted(both.items(), key=lambda x: (-min(x[1]), -sum(x[1])))),
+            "rows": rows, "infos": infos, "skipped": {k: dict(v) for k, v in skipped.items()},
             "found": found, "capped": capped, "sec": time.time() - t0, "a": a, "b": b}
 
 
