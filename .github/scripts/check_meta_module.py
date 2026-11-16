@@ -50,7 +50,7 @@ def run(a, b, kind, out, week, phases, measure, cond, comp=""):
         pubs = {}
         print("PubMed 실패:", str(e)[:150])
     pooled = {}
-    for side in ("A vs 위약", "B vs 위약", "A vs B (직접)"):
+    for side in (ctgov.SIDE_A, ctgov.SIDE_B, ctgov.SIDE_D):
         rs = [r for r in res["rows"] if r["비교"] == side]
         print(f"\n== {side}: {len(rs)}줄")
         y, v = [], []
@@ -68,8 +68,8 @@ def run(a, b, kind, out, week, phases, measure, cond, comp=""):
             p = mc.pool(y, v)
             pooled[side] = p
             print(f"  ▶ 합친 값(랜덤): {mc.fmt_ci(measure, p['re'], p['re_se'])} · 임상 {p['k']} · I² {p['i2']:.0f}%")
-    if "A vs 위약" in pooled and "B vs 위약" in pooled:
-        pa, pb = pooled["A vs 위약"], pooled["B vs 위약"]
+    if ctgov.SIDE_A in pooled and ctgov.SIDE_B in pooled:
+        pa, pb = pooled[ctgov.SIDE_A], pooled[ctgov.SIDE_B]
         d, se, pv = mc.bucher(pa["re"], pa["re_se"], pb["re"], pb["re_se"])
         print(f"\n▶ 간접 비교 A−B: {mc.fmt_ci(measure, d, se)} · p={pv:.2f}")
         print("  " + mc.verdict(measure, d, se, True, a, b, out))

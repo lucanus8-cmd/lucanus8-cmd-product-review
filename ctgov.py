@@ -27,6 +27,9 @@ FIELDS = ",".join([
     "resultsSection.outcomeMeasuresModule",
 ])
 MAX_PAGES = 5            # 성분 하나당 최대 500개 임상
+SIDE_A, SIDE_B, SIDE_D = "A vs 비교군", "B vs 비교군", "A vs B (직접)"
+PLACEBO = "위약"
+MAX_COMPS = 6            # 비교약 목록은 임상이 많은 순으로 최대 6개까지 표를 만들어 둔다
 PHASE_CODE = {"1상": "PHASE1", "2상": "PHASE2", "3상": "PHASE3", "4상": "PHASE4"}
 Z = 1.959963984540054
 TOP_JOURNALS = ("N Engl J Med", "Lancet", "JAMA", "BMJ")
@@ -301,6 +304,12 @@ def fill(kind, o, g1, g2):
     return row
 
 
+def dose_of(title):
+    """군 이름에서 용량 글자 (예: '2 mg'). 없으면 ''."""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(mg|mcg|µg|μg|g|iu|unit)s?\b", (title or "").lower())
+    return f"{m.group(1)} {m.group(2)}" if m else ""
+
+
 def _has_numbers(kind, row):
     if kind == "연속형":
         return (None not in (row.get("d"), row.get("lo"), row.get("hi"))
@@ -358,6 +367,7 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_n
             "unit": o.get("unitOfMeasure", ""), "groups": [(g.get("id"), g.get("title", "")) for g in groups],
             "o": _slim(o)}
     row = {"합침": True, "비교": label, "임상번호": nct, "제목": title, "시험군": "", "대조군": "",
+           "시험군 용량": "", "대조군 용량": "",
            "소그룹": sub, "_flags": list(flags), "_unit": info["unit"], "_g1": "", "_g2": ""}
     if not primary:
         row["_flags"].append("2차 평가변수")
@@ -375,7 +385,10 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_n
     if len({g.get("id") for g, _ in pairs}) > 1:
         row["_flags"].append("용량·군 여러 개(첫 군)")
     g1, g2 = pairs[0]
-    row.update(시험군=g1.get("title", ""), 대조군=g2.get("title", ""), _g1=g1.get("id"), _g2=g2.get("id"))
+    row.update(시험군=g1.get("title", ""), 대조군=g2.get("title", ""), _g1=g1.get("id"), _g2=g2.get("id"),
+               **{"시험군 용량": dose_of(g1.get("title", "")), "대조군 용량": dose_of(g2.get("title", ""))})
+    if comp_names and not (row["시험군 용량"] and row["대조군 용량"]):
+        row["_flags"].append("용량 미표기")
     row.update(fill(kind, o, g1.get("id"), g2.get("id")))
     if row.pop("_pct", False):
         row["_flags"].append("비율로 건수 계산")
@@ -400,8 +413,9 @@ def direct_row(study, a_names, a_dose, b_names, b_dose, kind, out_kw, week):
         if not pairs:
             continue
         ga, gb = [pairs[0][0]], [pairs[0][1]]
-        row = {"합침": True, "비교": "A vs B (직접)", "임상번호": nct, "제목": title,
+        row = {"합침": True, "비교": SIDE_D, "임상번호": nct, "제목": title,
                "시험군": ga[0].get("title", ""), "대조군": gb[0].get("title", ""), "소그룹": sub,
+               "시험군 용량": dose_of(ga[0].get("title", "")), "대조군 용량": dose_of(gb[0].get("title", "")),
                "_flags": list(flags) + ([] if primary else ["2차 평가변수"]), "_unit": o.get("unitOfMeasure", ""),
                "_g1": ga[0].get("id"), "_g2": gb[0].get("id"), "_bg": []}
         row.update(fill(kind, o, ga[0].get("id"), gb[0].get("id")))
@@ -453,52 +467,87 @@ def comparators_of(study, names, dose, kind, out_kw, week):
     return out
 
 
-def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond="", comp=""):
-    """두 성분 → 입력표 초안.
+def search_all(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond=""):
+    """두 성분 임상을 한 번 받아서, 공통 비교약 목록과 비교약마다의 입력표를 만든다.
 
-    돌려주는 것: rows(행 목록), infos(임상번호|비교 → 군 정보), skipped(성분별 빠진 이유 개수),
-    found(성분별 받은 임상 수), capped(500개에서 끊겼는지), sec(걸린 시간)
+    돌려주는 것:
+      comparators: [(이름, A 임상 수, B 임상 수, 쓸 수 있나)] — 쓸 수 있는 것(양쪽 다 있음)부터, 임상 많은 순
+      default: 기본으로 고를 비교약 (양쪽 다 있는 것 중 임상이 가장 많은 것, 같으면 위약)
+      by: {비교약: {rows, infos, skipped}} — 같은 임상 안 직접 비교 줄은 모든 비교약 표에 같이 들어감
+      found, capped, sec, a, b
     """
     t0 = time.time()
     a, a_dose = parse_drug(a_text)
     b, b_dose = parse_drug(b_text)
-    rows, infos, skipped, found, capped = [], {}, {}, {}, False
+    side_studies, found, capped = {}, {}, False
     comp_count = {"A": Counter(), "B": Counter()}
     studies = {}
-    for key, drug, dose, other in (("A", a, a_dose, b), ("B", b, b_dose, a)):
+    for key, drug, dose in (("A", a, a_dose), ("B", b, b_dose)):
         ss, cut = fetch(drug, phases, out_kw, cond)
         capped = capped or cut
         found[key] = len(ss)
-        skipped[key] = Counter()
+        side_studies[key] = ss
         for s in ss:
             nct = s.get("protocolSection", {}).get("identificationModule", {}).get("nctId")
             studies.setdefault(nct, s)
-            names = aliases(s, drug)
-            for c in comparators_of(s, names, dose, kind, out_kw, week):
-                comp_count[key][c] += 1
-            other_names = aliases(s, other)
-            comp_names = (aliases(s, comp.lower().strip()) if comp.strip() else None)
-            row, info = side_rows(s, f"{key} vs 위약", names, dose, kind, out_kw, week, other_names, comp_names)
-            if row is None:
-                skipped[key][info] += 1
-                continue
-            if "군 못 찾음" in row["_flags"] and not _has(" ".join(t for _, t in info["groups"]), names):
-                skipped[key]["그 성분 군이 없음"] += 1
-                continue
-            rows.append(row)
-            infos[f"{row['임상번호']}|{row['비교']}"] = info
-    # 같은 임상 안 직접 비교
+            for c in comparators_of(s, aliases(s, drug), dose, kind, out_kw, week):
+                if not _same(c, {a, b}):
+                    comp_count[key][c] += 1
+    names = set(comp_count["A"]) | set(comp_count["B"]) | {PLACEBO}
+    comps = [(c, comp_count["A"][c], comp_count["B"][c]) for c in names]
+    comps = [(c, na, nb, bool(na and nb)) for c, na, nb in comps]
+    comps.sort(key=lambda x: (not x[3], -min(x[1], x[2]), x[0] != PLACEBO, -(x[1] + x[2]), x[0]))
+    usable = [c for c, _, _, ok in comps if ok]
+    default = usable[0] if usable else PLACEBO
+
+    direct, dinfos = [], {}
     for nct, s in studies.items():
         row, info = direct_row(s, aliases(s, a), a_dose, aliases(s, b), b_dose, kind, out_kw, week)
         if row:
-            rows.append(row)
-            infos[f"{nct}|A vs B (직접)"] = info
-    _mark(rows, kind)
-    both = {c: (comp_count["A"][c], comp_count["B"][c]) for c in set(comp_count["A"]) | set(comp_count["B"])
-            if not _same(c, {a, b})}
-    return {"comparators": dict(sorted(both.items(), key=lambda x: (-min(x[1]), -sum(x[1])))),
-            "rows": rows, "infos": infos, "skipped": {k: dict(v) for k, v in skipped.items()},
-            "found": found, "capped": capped, "sec": time.time() - t0, "a": a, "b": b}
+            direct.append(row)
+            dinfos[f"{nct}|{SIDE_D}"] = info
+
+    by = {}
+    for c in ([PLACEBO] if PLACEBO not in usable else []) + usable[:MAX_COMPS]:
+        rows, infos, skipped = [], {}, {}
+        for key, drug, dose, other, label in (("A", a, a_dose, b, SIDE_A), ("B", b, b_dose, a, SIDE_B)):
+            skipped[key] = Counter()
+            for s in side_studies[key]:
+                nm = aliases(s, drug)
+                comp_names = None if c == PLACEBO else aliases(s, c)
+                row, info = side_rows(s, label, nm, dose, kind, out_kw, week, aliases(s, other), comp_names)
+                if row is None:
+                    skipped[key][info] += 1
+                    continue
+                if "군 못 찾음" in row["_flags"]:
+                    titles = [t for _, t in info["groups"]]
+                    if not _has(" ".join(titles), nm):
+                        skipped[key]["그 성분 군이 없음"] += 1
+                        continue
+                    has_comp = (any(_PLACEBO_RE.search(t) for t in titles) if c == PLACEBO
+                                else any(_has(t, comp_names) and not _has(t, nm) for t in titles))
+                    if not has_comp:
+                        skipped[key][f"{c} 군이 없음"] += 1
+                        continue
+                rows.append(row)
+                infos[f"{row['임상번호']}|{row['비교']}"] = info
+        rows += [dict(r, _flags=list(r["_flags"])) for r in direct]
+        infos.update(dinfos)
+        _mark(rows, kind)
+        by[c] = {"rows": rows, "infos": infos, "skipped": {k: dict(v) for k, v in skipped.items()}}
+    return {"comparators": comps, "default": default, "by": by, "found": found, "capped": capped,
+            "sec": time.time() - t0, "a": a, "b": b}
+
+
+def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond="", comp=""):
+    """비교약 하나만 골라 쓰는 예전 모양 (시험 로봇용). comp 를 비우면 기본 비교약."""
+    res = search_all(a_text, b_text, kind, out_kw, week, phases, fetch, cond)
+    c = (comp or "").strip().lower() or res["default"]
+    if c not in res["by"]:
+        c = res["default"]
+    out = dict(res["by"][c])
+    out.update({k: res[k] for k in ("comparators", "default", "found", "capped", "sec", "a", "b")}, comp=c)
+    return out
 
 
 def _mark(rows, kind):
@@ -506,12 +555,12 @@ def _mark(rows, kind):
     sides = {}
     for r in rows:
         sides.setdefault(r["비교"], []).append(r)
-    a_ncts = {r["임상번호"] for r in sides.get("A vs 위약", [])}
-    b_ncts = {r["임상번호"] for r in sides.get("B vs 위약", [])}
+    a_ncts = {r["임상번호"] for r in sides.get(SIDE_A, [])}
+    b_ncts = {r["임상번호"] for r in sides.get(SIDE_B, [])}
     for r in rows:
-        if r["비교"] == "A vs 위약" and r["임상번호"] in b_ncts:
+        if r["비교"] == SIDE_A and r["임상번호"] in b_ncts:
             r["_flags"].append("B에도 쓰임")
-        if r["비교"] == "B vs 위약" and r["임상번호"] in a_ncts:
+        if r["비교"] == SIDE_B and r["임상번호"] in a_ncts:
             r["_flags"].append("A에도 쓰임")
     for side, rs in sides.items():
         ok = [r for r in rs if r["합침"]]

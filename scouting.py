@@ -170,7 +170,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-16-c"
+BUILD = "2026-11-16-d"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1139,8 +1139,9 @@ def _cost_page():
 # 임상 분석 탭 → 📐 간이 메타분석. 계산은 meta_calc, 자료 받기는 ctgov (둘 다 별도 파일).
 # [임상 찾기]를 누를 때만 ClinicalTrials.gov·PubMed 에 접속하고, 결과는 작은 표로 줄여
 # 몇 시간 저장한다(최근 20개). 위젯 key 는 모두 ma_ 로 시작한다.
-_MA_SIDES = ["A vs 위약", "B vs 위약", "A vs B (직접)"]
-_MA_TEXT = ["비교", "임상번호", "제목", "시험군", "대조군"]
+_MA_SIDES = [ctgov.SIDE_A, ctgov.SIDE_B, ctgov.SIDE_D]
+_MA_OLD_SIDES = {"A vs 위약": ctgov.SIDE_A, "B vs 위약": ctgov.SIDE_B}   # 예전 CSV 호환
+_MA_TEXT = ["비교", "임상번호", "제목", "시험군", "대조군", "시험군 용량", "대조군 용량"]
 _MA_TAIL = ["점검", "논문", "링크", "소그룹"]
 _MA_NUM = {
     "연속형": [("시험군 인원", "n1"), ("시험군 평균", "m1"), ("시험군 SD", "sd1"),
@@ -1153,7 +1154,7 @@ _MA_NUM = {
 
 @st.cache_data(ttl=6 * 3600, max_entries=20, show_spinner=False)
 def _ma_search(a, b, kind, out_kw, week, phases, cond):
-    res = ctgov.search(a, b, kind, out_kw, week, phases, fetch=ctgov.fetch_studies, cond=cond)
+    res = ctgov.search_all(a, b, kind, out_kw, week, phases, fetch=ctgov.fetch_studies, cond=cond)
     res["at"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600))
     return res
 
@@ -1189,10 +1190,10 @@ def _ma_frame(kind, rows=()):
     return df
 
 
-def _ma_rows_from_search(res, kind, pubs):
+def _ma_rows_from_search(cur, kind, pubs):
     out = []
     keymap = dict(_MA_NUM[kind])
-    for r in res["rows"]:
+    for r in cur["rows"]:
         row = {k: r.get(k, "") for k in ["합침"] + _MA_TEXT + ["점검", "소그룹"]}
         for col, k in keymap.items():
             row[col] = r.get(k)
@@ -1273,7 +1274,7 @@ def _ma_forest(items, measure):
 
 
 def _meta_page():
-    st.markdown("**📐 간이 메타분석** · 두 성분의 위약 대조 임상을 합쳐 효과를 비교합니다 "
+    st.markdown("**📐 간이 메타분석** · 두 성분을 같은 비교약(위약 등)과 비교한 임상을 합쳐 효과를 비교합니다 "
                 "(제품 검토 참고용 · 허가·논문 제출용이 아닙니다)")
 
     c = st.columns([1, 1, 1.3, 1.3])
@@ -1325,29 +1326,61 @@ def _meta_page():
                 pubs = {}
                 try:
                     with st.spinner("PubMed에서 논문을 잇는 중…"):
-                        pubs = _ma_pubs(tuple(sorted({r["임상번호"] for r in res["rows"]})))
+                        pubs = _ma_pubs(tuple(sorted({r["임상번호"] for v in res["by"].values() for r in v["rows"]})))
                 except Exception:
                     st.caption("PubMed 논문 연결은 이번에 하지 못했습니다 (링크는 그대로 씁니다).")
-                _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(res, kind, pubs)))
                 st.session_state[f"ma_res_{kind}"] = res
+                st.session_state[f"ma_pubs_{kind}"] = pubs
+                st.session_state[f"ma_comp_{kind}"] = res["default"]
+                st.session_state[f"ma_compcur_{kind}"] = res["default"]
+                _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(res["by"][res["default"]], kind, pubs)))
 
     res = st.session_state.get(f"ma_res_{kind}")
+    if res and "by" not in res:          # 예전 모양으로 저장된 결과는 버린다
+        res = None
+        st.session_state.pop(f"ma_res_{kind}", None)
+    comp = ctgov.PLACEBO
+    cur = None
     if res:
-        nside = Counter(r["비교"] for r in res["rows"])
+        usable = [c for c, na, nb, ok in res["comparators"] if ok and c in res["by"]]
+        cnt = {c: (na, nb) for c, na, nb, ok in res["comparators"]}
+        if usable:
+            if st.session_state.get(f"ma_comp_{kind}") not in usable:
+                st.session_state[f"ma_comp_{kind}"] = res["default"] if res["default"] in usable else usable[0]
+            comp = st.radio(
+                "공통 비교약 (두 성분 임상에 모두 나오는 비교약 · 괄호는 A·B 임상 수)", usable, horizontal=True,
+                key=f"ma_comp_{kind}",
+                format_func=lambda c: f"{c} ({res['a']} {cnt[c][0]} · {res['b']} {cnt[c][1]})")
+        else:
+            st.warning("두 성분 임상에 공통으로 쓰인 비교약이 없습니다. 같은 임상 안 직접 비교가 있으면 그것만 계산되고, "
+                       "없으면 PubMed 등에서 찾아 표에 직접 넣어 주세요.")
+        others = [f"{c} ({res['a']} {na} · {res['b']} {nb})" for c, na, nb, ok in res["comparators"]
+                  if not ok and (na or nb)]
+        if others:
+            st.caption("한쪽에만 있는 비교약 (고를 수 없음): " + " · ".join(others[:8]))
+        if comp != st.session_state.get(f"ma_compcur_{kind}"):     # 비교약을 바꿨다 → 표를 새로 만든다
+            st.session_state[f"ma_compcur_{kind}"] = comp
+            _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(
+                res["by"][comp], kind, st.session_state.get(f"ma_pubs_{kind}") or {})))
+        cur = res["by"].get(comp) or res["by"].get(ctgov.PLACEBO)
+        nside = Counter(r["비교"] for r in cur["rows"])
         st.caption(f"ClinicalTrials.gov {res['at']} 받음 ({res['sec']:.1f}초) · {res['a']} 결과 있는 임상 "
-                   f"{res['found']['A']}개 중 {nside.get('A vs 위약', 0)}줄, {res['b']} {res['found']['B']}개 중 "
-                   f"{nside.get('B vs 위약', 0)}줄 · 같은 임상 안 직접 비교 {nside.get('A vs B (직접)', 0)}줄"
+                   f"{res['found']['A']}개 중 {nside.get(ctgov.SIDE_A, 0)}줄, {res['b']} {res['found']['B']}개 중 "
+                   f"{nside.get(ctgov.SIDE_B, 0)}줄 · 같은 임상 안 직접 비교 {nside.get(ctgov.SIDE_D, 0)}줄"
                    + (" · 임상이 많아 성분당 500개까지만 봤습니다" if res.get("capped") else "")
-                   + " · 체크를 바꾸면 아래 결과가 다시 계산됩니다")
+                   + " · 체크를 바꾸면 결과가 다시 계산되고, 비교약을 바꾸면 표가 새로 만들어집니다(고친 내용은 사라짐)")
+    comp_disp = comp
 
     # ── ② 입력표 ──────────────────────────────────────────────
     st.markdown(f"##### ② 합칠 임상 확인 <span style='font-weight:400;color:#808495;font-size:13.5px'>"
-                f"— A = {a_name} · B = {b_name} · 표 안에서 체크·숫자를 바로 고칠 수 있습니다</span>",
+                f"— A = {a_name} · B = {b_name} · 비교군 = {comp_disp} · 표 안에서 체크·숫자를 바로 고칠 수 있습니다</span>",
                 unsafe_allow_html=True)
     base = st.session_state[bkey]
     cfg = {
         "합침": st.column_config.CheckboxColumn("합침", default=True, width="small"),
-        "비교": st.column_config.SelectboxColumn("비교", options=_MA_SIDES, default="A vs 위약", required=True),
+        "비교": st.column_config.SelectboxColumn("비교", options=_MA_SIDES, default=ctgov.SIDE_A, required=True),
+        "시험군 용량": st.column_config.TextColumn("시험군 용량", help="군 이름에서 읽은 용량 (고칠 수 있음)"),
+        "대조군 용량": st.column_config.TextColumn("대조군 용량", help="군 이름에서 읽은 용량 (고칠 수 있음)"),
         "임상번호": st.column_config.TextColumn("임상번호"),
         "제목": st.column_config.TextColumn("제목", width="medium"),
         "점검": st.column_config.TextColumn("점검", disabled=True),
@@ -1360,7 +1393,7 @@ def _meta_page():
     edited = st.data_editor(base, key=f"ma_ed_{kind}_{st.session_state.get(f'ma_ver_{kind}', 0)}",
                             column_config=cfg, num_rows="dynamic", hide_index=True, use_container_width=True)
 
-    b1, b2, b3 = st.columns([1, 1, 2])
+    b1, b2, b3 = st.columns([1, 1, 1])
     b1.download_button("📥 입력표 CSV 내려받기",
                        data=edited.assign(_종류=kind, _A=a_name, _B=b_name).to_csv(index=False).encode("utf-8-sig"),
                        file_name="meta_input.csv", mime="text/csv", key="ma_dl_in", use_container_width=True)
@@ -1375,21 +1408,29 @@ def _meta_page():
                 st.error(f"이 CSV에는 '{kind}' 입력표 칸이 없습니다: {', '.join(miss)}")
             else:
                 rows = u.where(pd.notna(u), None).to_dict("records")
+                for r_ in rows:
+                    r_["비교"] = _MA_OLD_SIDES.get(r_.get("비교"), r_.get("비교"))
                 _ma_set_base(kind, _ma_frame(kind, rows))
                 st.rerun()
         except Exception as e:
             st.error(f"CSV를 읽지 못했습니다 ({type(e).__name__}).")
+    if b3.button("🧩 용량 짝으로 소그룹 나누기", key="ma_dosegrp", use_container_width=True,
+                 help="소그룹 칸을 '시험군 용량 vs 대조군 용량'으로 채웁니다. 결과 아래 '소그룹 비교'에서 따로 합친 값을 봅니다."):
+        df = edited.copy()
+        df["소그룹"] = [f"{(a_ or '?')} vs {(b_ or '?')}" for a_, b_ in zip(df["시험군 용량"], df["대조군 용량"])]
+        _ma_set_base(kind, _ma_frame(kind, df.to_dict("records")))
+        st.rerun()
 
-    if res and any((res.get("skipped") or {}).values()):
+    if cur and any((cur.get("skipped") or {}).values()):
         with st.expander("빠진 임상 보기 (사유별)"):
             for k, nm in (("A", res["a"]), ("B", res["b"])):
-                sk = res["skipped"].get(k) or {}
+                sk = cur["skipped"].get(k) or {}
                 if sk:
                     st.markdown(f"**{nm}** — " + " · ".join(f"{w} {n}개" for w, n in
                                                            sorted(sk.items(), key=lambda x: -x[1])))
-            st.caption("1차·2차 평가변수 중 지표 이름·시점·종류가 맞는 것이 없거나, 그 성분 군이 없는 임상입니다.")
+            st.caption("1차·2차 평가변수 중 지표 이름·시점·종류가 맞는 것이 없거나, 그 성분 군 또는 고른 비교약 군이 없는 임상입니다.")
 
-    infos = (res or {}).get("infos") or {}
+    infos = (cur or {}).get("infos") or {}
     if infos:
         with st.expander("군 바꾸기 (ClinicalTrials.gov에서 불러온 임상)"):
             keys = [f"{r['임상번호']}|{r['비교']}" for r in edited.to_dict("records")
@@ -1416,6 +1457,8 @@ def _meta_page():
                             df.loc[hit, col] = new.get(k)
                         df.loc[hit, "시험군"] = gname.get(g1, g1)
                         df.loc[hit, "대조군"] = gname.get(g2, g2)
+                        df.loc[hit, "시험군 용량"] = ctgov.dose_of(gname.get(g1, ""))
+                        df.loc[hit, "대조군 용량"] = ctgov.dose_of(gname.get(g2, ""))
                         df.loc[hit, "합침"] = True
                         _ma_set_base(kind, _ma_frame(kind, df.to_dict("records")))
                         st.rerun()
@@ -1447,8 +1490,8 @@ def _meta_page():
                             f"({ctgov.pubmed_link(pmid=it['pmid'])}){free}")
                 if r2.button("+ 줄 추가", key=f"ma_padd_{it['pmid']}", use_container_width=True):
                     tl = it["title"].lower()
-                    side = "B vs 위약" if (b_txt and b_txt.split()[0].lower() in tl
-                                          and not (a_txt and a_txt.split()[0].lower() in tl)) else "A vs 위약"
+                    side = ctgov.SIDE_B if (b_txt and b_txt.split()[0].lower() in tl
+                                            and not (a_txt and a_txt.split()[0].lower() in tl)) else ctgov.SIDE_A
                     rows = edited.to_dict("records") + [{
                         "합침": True, "비교": side, "임상번호": "", "제목": it["title"][:120],
                         "점검": "직접 입력", "논문": f"{it['journal']} {it['year']}".strip(),
@@ -1476,7 +1519,7 @@ def _meta_page():
             notes.append(f"{nm} ({r['비교']}): {how}")
             continue
         per[r["비교"]].append(dict(label=nm, y=y, v=v, sub=(r.get("소그룹") or "").strip() or "(없음)",
-                                   title=r.get("제목") or ""))
+                                   title=r.get("제목") or "", cd=(r.get("대조군 용량") or "").strip()))
         used[r["비교"]].add(r.get("임상번호") or "")
         if "최종값" in (r.get("점검") or ""):
             finals += 1
@@ -1495,10 +1538,10 @@ def _meta_page():
         return
 
     ind = None
-    if "A vs 위약" in pooled and "B vs 위약" in pooled:
-        pa, pb = pooled["A vs 위약"], pooled["B vs 위약"]
+    if ctgov.SIDE_A in pooled and ctgov.SIDE_B in pooled:
+        pa, pb = pooled[ctgov.SIDE_A], pooled[ctgov.SIDE_B]
         ind = meta_calc.bucher(pa["m"], pa["se"], pb["m"], pb["se"])
-    dct = pooled.get("A vs B (직접)")
+    dct = pooled.get(ctgov.SIDE_D)
 
     with top_box:
         k = st.columns(4)
@@ -1511,8 +1554,8 @@ def _meta_page():
             col.metric(title, meta_calc.fmt(measure, mm))
             col.caption(f"{meta_calc.fmt(measure, lo)} ~ {meta_calc.fmt(measure, hi)} · 임상 {pdict['p']['k']} · "
                         f"I² {pdict['p']['i2']:.0f}%")
-        _met(k[0], f"{a_name} vs 위약", pooled.get("A vs 위약"))
-        _met(k[1], f"{b_name} vs 위약", pooled.get("B vs 위약"))
+        _met(k[0], f"{a_name} vs {comp_disp}", pooled.get(ctgov.SIDE_A))
+        _met(k[1], f"{b_name} vs {comp_disp}", pooled.get(ctgov.SIDE_B))
         if ind:
             mm, lo, hi = meta_calc.ci(measure, ind[0], ind[1])
             k[2].metric("간접 비교 (A − B)" if measure not in meta_calc.RATIO else "간접 비교 (A / B)",
@@ -1527,8 +1570,9 @@ def _meta_page():
             st.caption("위험차는 %p 로 보여 줍니다.")
 
     items = []
-    for s_, head, nm in (("A vs 위약", f"<b>{a_name} vs 위약</b>", "A"), ("B vs 위약", f"<b>{b_name} vs 위약</b>", "B"),
-                         ("A vs B (직접)", f"<b>같은 임상 안 직접 비교 ({a_name} − {b_name})</b>", "D")):
+    for s_, head, nm in ((ctgov.SIDE_A, f"<b>{a_name} vs {comp_disp}</b>", "A"),
+                         (ctgov.SIDE_B, f"<b>{b_name} vs {comp_disp}</b>", "B"),
+                         (ctgov.SIDE_D, f"<b>같은 임상 안 직접 비교 ({a_name} − {b_name})</b>", "D")):
         if not per[s_]:
             continue
         items.append(dict(kind="head", label=head))
@@ -1539,7 +1583,7 @@ def _meta_page():
         items.append(dict(kind="pool", label=f"<b>합친 값 ({method})</b>", y=pooled[s_]["m"],
                           se=pooled[s_]["se"], color="#7a5aa6" if nm == "D" else "#2f6f8f"))
     if ind:
-        items.append(dict(kind="head", label=f"<b>간접 비교 ({a_name} − {b_name}, 위약 공통)</b>"))
+        items.append(dict(kind="head", label=f"<b>간접 비교 ({a_name} − {b_name}, {comp_disp} 공통)</b>"))
         items.append(dict(kind="pool", label="<b>간접 비교</b>", y=ind[0], se=ind[1], color="#b4572e"))
     with left:
         st.plotly_chart(_ma_forest(items, measure), use_container_width=True, key="ma_forest")
@@ -1552,19 +1596,28 @@ def _meta_page():
             msgs.append("같은 임상 안 직접 비교 — "
                         + meta_calc.verdict(measure, dct["m"], dct["se"], lower_better, a_name, b_name, what))
         if not msgs:
-            msgs.append("두 성분을 비교하려면 A vs 위약, B vs 위약 임상이 모두 있거나, 같은 임상 안 직접 비교가 있어야 합니다.")
+            msgs.append(f"두 성분을 비교하려면 A vs {comp_disp}, B vs {comp_disp} 임상이 모두 있거나, "
+                        "같은 임상 안 직접 비교가 있어야 합니다.")
         st.info("**결론**\n\n" + "\n\n".join(msgs))
         warns = []
-        for s_, nm in (("A vs 위약", a_name), ("B vs 위약", b_name), ("A vs B (직접)", "직접 비교")):
+        for s_, nm in ((ctgov.SIDE_A, a_name), (ctgov.SIDE_B, b_name), (ctgov.SIDE_D, "직접 비교")):
             if s_ in pooled:
                 kk, i2 = pooled[s_]["p"]["k"], pooled[s_]["p"]["i2"]
                 if i2 >= 50:
                     warns.append(f"{nm}: 임상 사이 차이가 큰 편입니다 (I² {i2:.0f}%). 개별 결과도 함께 보세요.")
-                if kk <= 2 and method == "랜덤효과" and s_ != "A vs B (직접)":
+                if kk == 1 and s_ != ctgov.SIDE_D:
+                    warns.append(f"{nm}: 임상이 1개뿐이라 이 결과는 그 임상 하나에 좌우됩니다.")
+                elif kk == 2 and method == "랜덤효과" and s_ != ctgov.SIDE_D:
                     warns.append(f"{nm}: 임상이 {kk}개뿐이라 랜덤효과 추정이 불안정합니다.")
-        shared = (used["A vs 위약"] & used["B vs 위약"]) - {""}
+        if comp_disp != ctgov.PLACEBO:
+            for s_, nm in ((ctgov.SIDE_A, a_name), (ctgov.SIDE_B, b_name)):
+                ds = sorted({x["cd"] for x in per[s_] if x["cd"]})
+                if len(ds) > 1:
+                    warns.append(f"{nm}: 비교약({comp_disp}) 용량이 임상마다 다릅니다 ({', '.join(ds)}). "
+                                 "[용량 짝으로 소그룹 나누기]로 나눠 보세요.")
+        shared = (used[ctgov.SIDE_A] & used[ctgov.SIDE_B]) - {""}
         if shared and ind:
-            warns.append(f"{', '.join(sorted(shared))} 은(는) 두 성분에 같이 쓰였습니다 (같은 위약군). "
+            warns.append(f"{', '.join(sorted(shared))} 은(는) 두 성분에 같이 쓰였습니다 (같은 비교군). "
                          "간접 비교가 실제보다 약간 확실해 보일 수 있습니다.")
         if measure == "SMD" and finals:
             warns.append("SMD 에 '최종값' 임상이 섞여 있습니다. 변화량과 최종값은 섞지 않는 것이 원칙입니다.")
@@ -1596,7 +1649,7 @@ def _meta_page():
 
     with st.expander("깔때기 그림 — 작은 임상이 한쪽으로 쏠렸는지"):
         fig = go.Figure()
-        for s_, color in (("A vs 위약", "#2f6f8f"), ("B vs 위약", "#b4572e")):
+        for s_, color in ((ctgov.SIDE_A, "#2f6f8f"), (ctgov.SIDE_B, "#b4572e")):
             lst = per[s_]
             if not lst:
                 continue
