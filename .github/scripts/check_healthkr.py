@@ -22,7 +22,7 @@ def robots():
     try:
         r = requests.get(BASE + "/robots.txt", headers=UA, timeout=30)
         print(f"robots.txt: HTTP {r.status_code}")
-        for l in r.text.splitlines()[:60]:
+        for l in r.text.splitlines()[:200]:
             if l.strip():
                 print("   " + l.strip()[:150])
     except Exception as e:
@@ -36,14 +36,14 @@ def terms(pg):
         if "이용약관" in t or "저작권" in t:
             h = a.get_attribute("href") or ""
             print(f"약관 링크: {t} → {h[:120]}")
-    for u in (BASE + "/footer/agreement", BASE + "/footer/copyright"):
+    for u in (BASE + "/notice/terms",):
         try:
             pg.goto(u, wait_until="domcontentloaded", timeout=60_000)
             time.sleep(3)
             lines = [l.strip() for l in pg.inner_text("body").splitlines() if l.strip()]
             hits = [l for l in lines if any(w in l for w in words)]
             print(f"\n{u}: {pg.title()} · 관련 문장 {len(hits)}개")
-            for l in hits[:15]:
+            for l in hits[:25]:
                 print("   " + l[:200])
         except Exception as e:
             print(f"{u}: 실패 {str(e)[:100]}")
@@ -69,15 +69,20 @@ def structure(pg):
     btn = sorted(set(re.findall(r"(PDF|다운로드|내려받기|인쇄|첨부)", txt)))
     print("단추 글자:", btn)
     # 첫 질환 하나 열어서 모양 보기
-    first = next((v[0][1] for k, v in sorted(links.items(), key=lambda x: -len(x[1])) if v[0][1] and v[0][1] != START), None)
-    if first:
-        u = first if first.startswith("http") else BASE + first
+    for first in [BASE + "/drug-info/disease/I10", BASE + "/drug-info/disease/E11"]:
+        u = first
         pg.goto(u, wait_until="domcontentloaded", timeout=90_000)
         time.sleep(5)
         t2 = pg.inner_text("body")
         print(f"\n----- 질환 하나: {pg.title()} · 글자 {len(t2):,}자")
-        heads = [h.inner_text().strip()[:40] for h in pg.query_selector_all("h1,h2,h3,h4,dt,th")][:25]
+        heads = [h.inner_text().strip()[:40] for h in pg.query_selector_all("h1,h2,h3,h4,h5,dt,th,strong")][:40]
         print("   제목·항목:", " | ".join(heads))
+        body = t2
+        for w in ("치료", "약물", "1차", "병용", "권고", "가이드라인", "처방", "성분"):
+            print(f"   '{w}' {body.count(w)}번")
+        # 본문 길이만(내용은 적지 않는다): 메뉴를 뺀 가운데 부분
+        main = pg.query_selector("main, #content, .content, .contents, article")
+        print("   본문 글자 수:", len(main.inner_text()) if main else "본문 영역 못 찾음")
         print("   로그인 요구 문구:", [w for w in ("로그인", "회원", "약사 인증") if w in t2][:3])
         files = [(a.inner_text() or "").strip()[:40] + " → " + (a.get_attribute("href") or "")[:80]
                  for a in pg.query_selector_all("a") if re.search(r"\.pdf|download|fileDown", a.get_attribute("href") or "", re.I)]
