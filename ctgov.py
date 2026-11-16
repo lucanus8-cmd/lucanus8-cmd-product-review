@@ -444,14 +444,12 @@ def comparators_of(study, names, dose, kind, out_kw, week):
         t = g.get("title", "")
         if _has(t, names):
             continue
-        if _PLACEBO_RE.search(t) and not drug_words(t):
+        if _PLACEBO_RE.search(t):          # '위약 + 메트포르민'처럼 바탕 치료가 붙어도 위약으로 센다
             out.add("위약")
             continue
-        ws = drug_words(t)
-        if len(ws) == 1:                 # 다른 약이 하나뿐인 군만 (병용군은 비교약으로 안 셈)
+        ws = drug_words(t) - drug_words(" ".join(x.get("title", "") for x in groups if _has(x.get("title", ""), names)))
+        if len(ws) == 1:                   # 바탕 치료를 뺀 다른 약이 하나뿐인 군만 (병용군은 안 셈)
             out |= ws
-        elif _PLACEBO_RE.search(t):
-            out.add("위약")
     return out
 
 
