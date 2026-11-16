@@ -43,7 +43,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -123,3 +123,12 @@ jobs:
         run: |
           python -m pip install --quiet requests==2.32.3
           python .github/scripts/check_ctgov_speed.py
+
+      - name: PubMed 접속 시험 (학술지·임상번호로 논문 찾기)
+        if: inputs.what == 'pubmed'
+        env:
+          DRUGS: ${{ inputs.words }}
+          NCTS: ${{ inputs.urls }}
+        run: |
+          python -m pip install --quiet requests==2.32.3
+          python .github/scripts/check_pubmed.py
