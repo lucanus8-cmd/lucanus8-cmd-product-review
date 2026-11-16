@@ -77,9 +77,15 @@ def words_in(t):
     return {w for w in OTHER if w in t}
 
 
+def dose_ok(title, dose):
+    """군 이름에 정한 용량이 있거나, 용량이 아예 안 적혀 있으면 통과."""
+    t = title.lower()
+    return re.search(rf"(?<![\d.]){dose}\s*mg", t) is not None or re.search(r"\d\s*mg", t) is None
+
+
 def pick_groups(groups, drug, dose):
     dg = [g for g in groups if drug in g["title"].lower() and not g["title"].lower().startswith("placebo")
-          and re.search(rf"(?<![\d.]){dose}\s*mg", g["title"].lower())]
+          and dose_ok(g["title"], dose)]
     pg = [g for g in groups if "placebo" in g["title"].lower() and drug not in g["title"].lower()]
     if not pg:
         pg = [g for g in groups if g["title"].lower().startswith("placebo")]
@@ -184,14 +190,15 @@ def extract(s, drug, dose):
             return nct, title, "숫자 형식을 못 읽음"
         return dict(nct=nct, title=title, md=md, se=se, n1=n1, n2=n2, src=src,
                     arms=f"{gd['title'][:45]} vs {gp['title'][:35]}")
-    return nct, title, f"{dose}mg 군과 위약 군을 못 찾음(다른 약 병용 비교 등)"
+    gt = " / ".join(g["title"][:40] for g in prim[0].get("groups", [])[:5])
+    return nct, title, f"{dose}mg 군과 위약 군을 못 찾음(다른 약 병용 비교 등)", gt
 
 
 def alone(groups, drug, dose):
     """그 약 단독군(같은 바탕 치료는 허용): (군, 그 군의 다른 약 이름들)"""
     for g in groups:
         t = g["title"].lower()
-        if drug in t and not t.startswith("placebo") and re.search(rf"(?<![\d.]){dose}\s*mg", t):
+        if drug in t and not t.startswith("placebo") and dose_ok(t, dose):
             return g, words_in(t) - {drug}
     return None, None
 
@@ -273,6 +280,8 @@ def main():
                 ok.append(e)
             else:
                 why.setdefault(e[2], []).append(e[0])
+                if len(e) > 3:
+                    print(f"   (군 못 찾음) {e[0]} {e[1][:60]}\n      군: {e[3]}")
         for k, v in sorted(why.items(), key=lambda x: -len(x[1])):
             print(f"   빠짐 {len(v):>2}개: {k}  예 {', '.join(v[:3])}")
         print(f"   쓸 수 있는 임상 {len(ok)}개")
