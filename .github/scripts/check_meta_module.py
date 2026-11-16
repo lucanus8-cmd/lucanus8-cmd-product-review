@@ -13,14 +13,14 @@ import ctgov      # noqa: E402
 import meta_calc as mc  # noqa: E402
 
 CASES = [
-    ("bempedoic acid", "ezetimibe", "연속형", "LDL", 12, ("3상", "4상"), "MD"),
-    ("empagliflozin 10", "dapagliflozin 10", "연속형", "HbA1c", 24, ("3상",), "MD"),
-    ("empagliflozin", "dapagliflozin", "생존분석", "cardiovascular death, heart failure", 0, ("3상",), "HR"),
-    ("empagliflozin", "dapagliflozin", "이분형", "hypoglycemia, hypoglycaemia", 0, ("3상",), "RR"),
+    ("bempedoic acid", "ezetimibe", "연속형", "LDL", 12, ("3상", "4상"), "MD", ""),
+    ("empagliflozin 10", "dapagliflozin 10", "연속형", "HbA1c", 24, ("3상",), "MD", "type 2 diabetes"),
+    ("empagliflozin", "dapagliflozin", "생존분석", "cardiovascular death, heart failure", 0, ("3상",), "HR", ""),
+    ("empagliflozin", "dapagliflozin", "이분형", "hypoglycemia, hypoglycaemia", 0, ("3상",), "RR", ""),
 ]
 if os.environ.get("CASE"):
-    a, b, k, o, w, ph, m = os.environ["CASE"].split(";")
-    CASES = [(a, b, k, o, int(w or 0), tuple(ph.split(",")), m)]
+    a, b, k, o, w, ph, m, cd = (os.environ["CASE"].split(";") + [""])[:8]
+    CASES = [(a, b, k, o, int(w or 0), tuple(ph.split(",")), m, cd)]
 
 
 def es(kind, measure, r):
@@ -32,9 +32,9 @@ def es(kind, measure, r):
     return mc.es_surv(r.get("hr"), r.get("lo"), r.get("hi"))
 
 
-def run(a, b, kind, out, week, phases, measure):
-    print(f"\n######## {a} vs {b} · {kind} · '{out}' · {week or '시점 무관'}주 · {'/'.join(phases)} · {measure}")
-    res = ctgov.search(a, b, kind, out, week, phases)
+def run(a, b, kind, out, week, phases, measure, cond):
+    print(f"\n######## {a} vs {b} · {kind} · '{out}' · {week or '시점 무관'}주 · {'/'.join(phases)} · {measure} · 질환 '{cond}'")
+    res = ctgov.search(a, b, kind, out, week, phases, cond=cond)
     print(f"받음: A {res['found']['A']}개 · B {res['found']['B']}개 · {res['sec']:.1f}초 · 500개에서 끊김 {res['capped']}")
     for k, v in res["skipped"].items():
         print(f"   빠짐 {k}: {v}")
@@ -75,6 +75,7 @@ def main():
     for c in CASES:
         try:
             run(*c)
+            time.sleep(1.5)
         except Exception as e:
             import traceback
             traceback.print_exc()

@@ -55,10 +55,12 @@ def _get(url, params, timeout=25):
         return r.read()
 
 
-def fetch_studies(drug, phases=("3상", "4상"), out_kw="", timeout=25):
+def fetch_studies(drug, phases=("3상", "4상"), out_kw="", cond="", timeout=25):
     """성분 하나로 결과가 올라온 임상을 받는다. 단계는 받은 뒤 거른다(필터 문법 차이에 안전)."""
     base = {"query.intr": drug, "pageSize": 100, "format": "json",
             "aggFilters": "results:with", "fields": FIELDS}
+    if (cond or "").strip():
+        base["query.cond"] = cond.strip()
     kw = [k for k in _kw_list(out_kw) if re.fullmatch(r"[A-Za-z0-9 \-]+", k)]
     if kw:
         base["query.outc"] = " OR ".join(kw)
@@ -99,9 +101,12 @@ def _kw_list(out_kw):
     return [k.strip() for k in re.split(r"[,|/]", out_kw or "") if k.strip()]
 
 
+_NOT_DRUG = {"cholesterol", "ergosterol", "phytosterol", "sitosterol"}
+
+
 def drug_words(t):
     t = (t or "").lower()
-    return set(_DRUG_RE.findall(t)) | {w for w in _DRUG_WORDS if w in t}
+    return (set(_DRUG_RE.findall(t)) | {w for w in _DRUG_WORDS if w in t}) - _NOT_DRUG
 
 
 def aliases(study, drug):
@@ -354,13 +359,15 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names):
         row["_flags"].append("최종값")
     bg = _background(text, groups, names)
     row["_bg"] = bg
-    if not arms or not pls:
+    pairs = [(g, p) for g in arms for p in pls
+             if _others(g.get("title", ""), names) == _others(p.get("title", ""), names)]
+    if not pairs:
         row["합침"] = False
         row["_flags"].append("군 못 찾음")
         return row, info
-    if len(arms) > 1:
+    if len({g.get("id") for g, _ in pairs}) > 1:
         row["_flags"].append("용량·군 여러 개(첫 군)")
-    g1, g2 = arms[0], pls[0]
+    g1, g2 = pairs[0]
     row.update(시험군=g1.get("title", ""), 대조군=g2.get("title", ""), _g1=g1.get("id"), _g2=g2.get("id"))
     row.update(fill(kind, o, g1.get("id"), g2.get("id")))
     if row.pop("_pct", False):
@@ -380,8 +387,12 @@ def direct_row(study, a_names, a_dose, b_names, b_dose, kind, out_kw, week):
         groups = o.get("groups") or []
         ga = find_arm(groups, a_names, a_dose, avoid=b_names)
         gb = find_arm(groups, b_names, b_dose, avoid=a_names)
-        if not ga or not gb or ga[0].get("id") == gb[0].get("id"):
+        pairs = [(x, y) for x in ga for y in gb if x.get("id") != y.get("id")
+                 and {w for w in _others(x.get("title", ""), a_names) if not _same(w, b_names)}
+                 == {w for w in _others(y.get("title", ""), b_names) if not _same(w, a_names)}]
+        if not pairs:
             continue
+        ga, gb = [pairs[0][0]], [pairs[0][1]]
         row = {"합침": True, "비교": "A vs B (직접)", "임상번호": nct, "제목": title,
                "시험군": ga[0].get("title", ""), "대조군": gb[0].get("title", ""), "소그룹": sub,
                "_flags": list(flags) + ([] if primary else ["2차 평가변수"]), "_unit": o.get("unitOfMeasure", ""),
@@ -413,7 +424,7 @@ def regroup(kind, info, g1, g2):
 
 
 # ── 전체 ─────────────────────────────────────────────────────────────
-def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies):
+def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond=""):
     """두 성분 → 입력표 초안.
 
     돌려주는 것: rows(행 목록), infos(임상번호|비교 → 군 정보), skipped(성분별 빠진 이유 개수),
@@ -425,7 +436,7 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
     rows, infos, skipped, found, capped = [], {}, {}, {}, False
     studies = {}
     for key, drug, dose, other in (("A", a, a_dose, b), ("B", b, b_dose, a)):
-        ss, cut = fetch(drug, phases, out_kw)
+        ss, cut = fetch(drug, phases, out_kw, cond)
         capped = capped or cut
         found[key] = len(ss)
         skipped[key] = Counter()
@@ -498,30 +509,58 @@ def _unit_key(u):
 # ── PubMed ───────────────────────────────────────────────────────────
 def _eget(path, params, timeout=20):
     p = dict(params, tool="product-review")
-    return _get(EUTILS + path, p, timeout)
+    for i in range(3):
+        try:
+            return _get(EUTILS + path, p, timeout)
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or i == 2:          # 너무 자주 물으면 잠깐 쉬었다 다시
+                raise
+            time.sleep(1.2 * (i + 1))
+
+
+_NOT_PRIMARY = {"Review", "Systematic Review", "Meta-Analysis", "Comment", "Editorial", "Letter",
+                "News", "Published Erratum", "Retraction of Publication"}
+
+
+def _medline(txt):
+    """MEDLINE 글 → [{PMID, TA, DP, PT[], SI[]}]"""
+    out = []
+    for rec in re.split(r"\n\s*\n", txt):
+        d, last = {}, None
+        for line in rec.splitlines():
+            if len(line) > 6 and line[4:6] == "- ":
+                last = line[:4].strip()
+                d.setdefault(last, []).append(line[6:].strip())
+            elif last and line.startswith("      "):
+                d[last][-1] += " " + line.strip()
+        if d.get("PMID"):
+            out.append(d)
+    return out
 
 
 def pubmed_for_ncts(ncts):
-    """임상번호 → (학술지, 연도, PMID). 임상번호로 묶인 논문 중 가장 먼저 나온 것."""
+    """임상번호 → (학술지, 연도, PMID). 리뷰·논평을 빼고 가장 먼저 나온 논문(PMID 가 가장 작은 것)."""
     ncts = [n for n in dict.fromkeys(ncts) if re.fullmatch(r"NCT\d{8}", n or "")]
     if not ncts:
         return {}
+    want = set(ncts)
     term = " OR ".join(f"{n}[si]" for n in ncts)
-    j = json.loads(_eget("esearch.fcgi", {"db": "pubmed", "term": term, "retmax": 120, "retmode": "json"}))
-    ids = j.get("esearchresult", {}).get("idlist", [])
-    if not ids:
-        return {}
-    root = ET.fromstring(_eget("efetch.fcgi", {"db": "pubmed", "id": ",".join(ids[:120]), "retmode": "xml"}, 30))
+    j = json.loads(_eget("esearch.fcgi", {"db": "pubmed", "term": term, "retmax": 3000, "retmode": "json"}))
+    ids = sorted({int(x) for x in j.get("esearchresult", {}).get("idlist", [])})
     best = {}
-    for art in root.iter("PubmedArticle"):
-        pmid = art.findtext(".//PMID") or ""
-        jn = art.findtext(".//Journal/ISOAbbreviation") or art.findtext(".//Journal/Title") or ""
-        yr = art.findtext(".//JournalIssue/PubDate/Year") or (art.findtext(".//JournalIssue/PubDate/MedlineDate") or "")[:4]
-        acc = {a.text for a in art.iter("AccessionNumber") if a.text}
-        for n in acc & set(ncts):
-            cur = best.get(n)
-            if cur is None or (yr or "9999") < (cur[1] or "9999"):
-                best[n] = (jn.replace(".", ""), yr, pmid)
+    for start in range(0, min(len(ids), 600), 200):
+        time.sleep(0.35)
+        txt = _eget("efetch.fcgi", {"db": "pubmed", "id": ",".join(map(str, ids[start:start + 200])),
+                                    "rettype": "medline", "retmode": "text"}, 30).decode("utf-8", "replace")
+        for d in _medline(txt):
+            if set(d.get("PT", [])) & _NOT_PRIMARY:
+                continue
+            found = set(re.findall(r"NCT\d{8}", " ".join(d.get("SI", [])))) & want
+            for n in found:
+                if n not in best:
+                    best[n] = ((d.get("TA") or [""])[0], (d.get("DP") or [""])[0][:4], d["PMID"][0])
+        if len(best) == len(want):
+            break
     return best
 
 
