@@ -12,7 +12,9 @@ import os
 os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
 
 import gc
+import math
 import re
+from collections import Counter
 import time
 from pathlib import Path
 import pandas as pd
@@ -22,6 +24,8 @@ import plotly.graph_objects as go
 import scout_sources as ss
 import be_calc
 import cost_calc
+import ctgov
+import meta_calc
 
 st.set_page_config(page_title="제품 검토", layout="wide", page_icon="🔎")
 
@@ -166,7 +170,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-16-b"
+BUILD = "2026-11-16-c"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1129,6 +1133,521 @@ def _cost_page():
             "곱합니다(한 번에 분석할 수 있으면 실제는 더 적습니다). 병원 단가의 "
             "72시간·24시간 기준점은 추정이고, 240시간을 넘는 경우는 자료가 없어 "
             "240시간 값으로 둡니다.")
+
+
+# ══════════════════════════ 간이 메타분석 ══════════════════════════
+# 임상 분석 탭 → 📐 간이 메타분석. 계산은 meta_calc, 자료 받기는 ctgov (둘 다 별도 파일).
+# [임상 찾기]를 누를 때만 ClinicalTrials.gov·PubMed 에 접속하고, 결과는 작은 표로 줄여
+# 몇 시간 저장한다(최근 20개). 위젯 key 는 모두 ma_ 로 시작한다.
+_MA_SIDES = ["A vs 위약", "B vs 위약", "A vs B (직접)"]
+_MA_TEXT = ["비교", "임상번호", "제목", "시험군", "대조군"]
+_MA_TAIL = ["점검", "논문", "링크", "소그룹"]
+_MA_NUM = {
+    "연속형": [("시험군 인원", "n1"), ("시험군 평균", "m1"), ("시험군 SD", "sd1"),
+             ("대조군 인원", "n2"), ("대조군 평균", "m2"), ("대조군 SD", "sd2"),
+             ("차이", "d"), ("95% 하한", "lo"), ("95% 상한", "hi")],
+    "이분형": [("시험군 발생", "e1"), ("시험군 인원", "n1"), ("대조군 발생", "e2"), ("대조군 인원", "n2")],
+    "생존분석": [("HR", "hr"), ("95% 하한", "lo"), ("95% 상한", "hi")],
+}
+
+
+@st.cache_data(ttl=6 * 3600, max_entries=20, show_spinner=False)
+def _ma_search(a, b, kind, out_kw, week, phases, cond):
+    res = ctgov.search(a, b, kind, out_kw, week, phases, fetch=ctgov.fetch_studies, cond=cond)
+    res["at"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600))
+    return res
+
+
+@st.cache_data(ttl=24 * 3600, max_entries=40, show_spinner=False)
+def _ma_pubs(ncts):
+    return ctgov.pubmed_for_ncts(list(ncts))
+
+
+@st.cache_data(ttl=6 * 3600, max_entries=30, show_spinner=False)
+def _ma_pubsearch(q, top, rct):
+    return ctgov.pubmed_search(q, top, rct)
+
+
+def _ma_cols(kind):
+    return ["합침"] + _MA_TEXT + [c for c, _ in _MA_NUM[kind]] + _MA_TAIL
+
+
+def _ma_frame(kind, rows=()):
+    """행 목록 → 입력표. 글자 칸은 object, 숫자 칸은 float 로 고정한다(편집기 dtype 오류 방지)."""
+    cols = _ma_cols(kind)
+    data = {c: [] for c in cols}
+    for r in rows:
+        for c in cols:
+            data[c].append(r.get(c))
+    df = pd.DataFrame(data, columns=cols)
+    df["합침"] = pd.Series([bool(x) if x is not None and x == x else True for x in df["합침"]],
+                         dtype=bool, index=df.index)
+    for c in _MA_TEXT + _MA_TAIL:
+        df[c] = pd.Series(["" if (x is None or x != x) else str(x) for x in df[c]], dtype=object, index=df.index)
+    for c, _ in _MA_NUM[kind]:
+        df[c] = pd.to_numeric(pd.Series(list(df[c]), dtype=object, index=df.index), errors="coerce").astype(float)
+    return df
+
+
+def _ma_rows_from_search(res, kind, pubs):
+    out = []
+    keymap = dict(_MA_NUM[kind])
+    for r in res["rows"]:
+        row = {k: r.get(k, "") for k in ["합침"] + _MA_TEXT + ["점검", "소그룹"]}
+        for col, k in keymap.items():
+            row[col] = r.get(k)
+        p = pubs.get(r["임상번호"])
+        row["논문"] = f"{p[0]} {p[1]}".strip() if p else ""
+        row["링크"] = ctgov.pubmed_link(r["임상번호"], p[2] if p else None)
+        out.append(row)
+    order = {s: i for i, s in enumerate(_MA_SIDES)}
+    out.sort(key=lambda x: (order.get(x["비교"], 9), not x["합침"], x["임상번호"]))
+    return out
+
+
+def _ma_set_base(kind, df):
+    st.session_state[f"ma_base_{kind}"] = df
+    st.session_state[f"ma_ver_{kind}"] = st.session_state.get(f"ma_ver_{kind}", 0) + 1
+
+
+def _ma_effect(kind, measure, r):
+    g = lambda c: r.get(c)  # noqa: E731
+    if kind == "연속형":
+        return meta_calc.es_cont(measure, g("시험군 인원"), g("시험군 평균"), g("시험군 SD"),
+                                 g("대조군 인원"), g("대조군 평균"), g("대조군 SD"),
+                                 g("차이"), g("95% 하한"), g("95% 상한"))
+    if kind == "이분형":
+        return meta_calc.es_bin(measure, g("시험군 발생"), g("시험군 인원"), g("대조군 발생"), g("대조군 인원"))
+    return meta_calc.es_surv(g("HR"), g("95% 하한"), g("95% 상한"))
+
+
+def _ma_disp(measure, y):
+    if measure in meta_calc.RATIO:
+        return math.exp(y)
+    return y * 100 if measure == "RD" else y
+
+
+def _ma_forest(items, measure):
+    """items: dict(label, y, se, w, kind='study'|'pool'|'head', color)."""
+    n = len(items)
+    fig = go.Figure()
+    ys, labels = [], []
+    sx, sy, sp, sm, ssz = [], [], [], [], []
+    for i, it in enumerate(items):
+        yy = n - i
+        ys.append(yy)
+        labels.append(it["label"])
+        if it["kind"] == "head":
+            continue
+        m = _ma_disp(measure, it["y"])
+        lo = _ma_disp(measure, it["y"] - meta_calc.Z * it["se"])
+        hi = _ma_disp(measure, it["y"] + meta_calc.Z * it["se"])
+        txt = (f"{meta_calc.fmt(measure, meta_calc.show(measure, it['y']))} "
+               f"[{meta_calc.fmt(measure, meta_calc.show(measure, it['y'] - meta_calc.Z * it['se']))}, "
+               f"{meta_calc.fmt(measure, meta_calc.show(measure, it['y'] + meta_calc.Z * it['se']))}]")
+        fig.add_annotation(x=1.01, xref="paper", y=yy, yref="y", text=("<b>" + txt + "</b>") if it["kind"] == "pool" else txt,
+                           showarrow=False, xanchor="left", font=dict(size=12, color="#31333f"))
+        if it["kind"] == "study":
+            sx.append(m)
+            sy.append(yy)
+            sp.append(hi - m)
+            sm.append(m - lo)
+            ssz.append(7 + (it.get("w") or 0) * 0.3)
+        else:
+            fig.add_trace(go.Scatter(x=[lo, m, hi, m, lo], y=[yy, yy + .32, yy, yy - .32, yy], fill="toself",
+                                     mode="lines", line=dict(color=it["color"], width=1), fillcolor=it["color"],
+                                     hoverinfo="skip", showlegend=False))
+    if sx:
+        fig.add_trace(go.Scatter(x=sx, y=sy, mode="markers", showlegend=False, hoverinfo="skip",
+                                 marker=dict(symbol="square", size=ssz, color="#2f6f8f"),
+                                 error_x=dict(type="data", symmetric=False, array=sp, arrayminus=sm,
+                                              color="#2f6f8f", thickness=1.5, width=0)))
+    nul = 1.0 if measure in meta_calc.RATIO else 0.0
+    fig.add_vline(x=nul, line=dict(color="#b0b5c0", dash="dash", width=1))
+    fig.update_yaxes(tickvals=ys, ticktext=labels, range=[0.4, n + 0.6], showgrid=False, zeroline=False)
+    fig.update_xaxes(type="log" if measure in meta_calc.RATIO else "linear", showgrid=True, gridcolor="#f0f1f4",
+                     zeroline=False, title_text=f"{meta_calc.MEASURE_LABEL[measure]}"
+                     + (" (%p)" if measure == "RD" else "") + "   ← 더 낮음 · 더 높음 →")
+    fig.update_layout(height=26 * n + 90, margin=dict(l=10, r=170, t=10, b=50), plot_bgcolor="#fff")
+    return fig
+
+
+def _meta_page():
+    st.markdown("**📐 간이 메타분석** · 두 성분의 위약 대조 임상을 합쳐 효과를 비교합니다 "
+                "(제품 검토 참고용 · 허가·논문 제출용이 아닙니다)")
+
+    c = st.columns([1, 1, 1.3, 1.3])
+    a_txt = c[0].text_input("성분 A", key="ma_a", placeholder="예: bempedoic acid",
+                            help="영문 성분명. 용량을 정하려면 뒤에 숫자 (예: empagliflozin 10)")
+    b_txt = c[1].text_input("성분 B", key="ma_b", placeholder="예: ezetimibe")
+    kind = c[2].radio("지표 종류", list(_MA_NUM), horizontal=True, key="ma_kind")
+    lower_better = c[3].radio("방향", ["낮을수록 좋음", "높을수록 좋음"], horizontal=True,
+                              key="ma_dir") == "낮을수록 좋음"
+    c = st.columns([1, .55, 1, 1.1, 1.1, .8])
+    out_kw = c[0].text_input("지표 이름 (영문 일부)", key="ma_out", placeholder="예: LDL, HbA1c",
+                             help="쉼표로 여러 개 (하나라도 들어가면 찾음)")
+    week = int(c[1].number_input("시점 (주)", min_value=0, max_value=520, value=12, step=1, key="ma_week",
+                                 help="0 이면 시점 상관없이"))
+    cond = c[2].text_input("질환 (영문, 선택)", key="ma_cond", placeholder="예: type 2 diabetes",
+                           help="비우면 질환 상관없이 찾습니다")
+    phases = c[3].multiselect("단계", ["1상", "2상", "3상", "4상"], default=["3상", "4상"], key="ma_ph")
+    with c[4]:
+        st.write("")
+        use_ct = st.checkbox("ClinicalTrials.gov에서 찾기", value=True, key="ma_ct")
+    with c[5]:
+        st.write("")
+        go_btn = st.button("🔎 임상 찾기", type="primary", key="ma_go", use_container_width=True)
+
+    a_name = (a_txt or "").strip() or "A"
+    b_name = (b_txt or "").strip() or "B"
+    what = (out_kw or "").strip() or "지표"
+    bkey = f"ma_base_{kind}"
+    if bkey not in st.session_state:
+        _ma_set_base(kind, _ma_frame(kind))
+
+    if go_btn:
+        if not use_ct:
+            st.info("ClinicalTrials.gov 찾기를 껐습니다. 아래 표에 직접 넣거나 CSV를 올리세요.")
+        elif not (a_txt or "").strip() or not (b_txt or "").strip():
+            st.warning("성분 A와 성분 B를 모두 넣어 주세요.")
+        elif not phases:
+            st.warning("단계를 하나 이상 골라 주세요.")
+        else:
+            try:
+                with st.spinner("ClinicalTrials.gov에서 임상을 찾는 중…"):
+                    res = _ma_search(a_txt.strip(), b_txt.strip(), kind, (out_kw or "").strip(), week,
+                                     tuple(sorted(phases)), (cond or "").strip())
+            except Exception as e:
+                res = None
+                st.error(f"ClinicalTrials.gov에 접속하지 못했습니다 ({type(e).__name__}). "
+                         "잠시 뒤 다시 누르거나, 아래 표에 직접 넣어 주세요.")
+            if res is not None:
+                pubs = {}
+                try:
+                    with st.spinner("PubMed에서 논문을 잇는 중…"):
+                        pubs = _ma_pubs(tuple(sorted({r["임상번호"] for r in res["rows"]})))
+                except Exception:
+                    st.caption("PubMed 논문 연결은 이번에 하지 못했습니다 (링크는 그대로 씁니다).")
+                _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(res, kind, pubs)))
+                st.session_state[f"ma_res_{kind}"] = res
+
+    res = st.session_state.get(f"ma_res_{kind}")
+    if res:
+        nside = Counter(r["비교"] for r in res["rows"])
+        st.caption(f"ClinicalTrials.gov {res['at']} 받음 ({res['sec']:.1f}초) · {res['a']} 결과 있는 임상 "
+                   f"{res['found']['A']}개 중 {nside.get('A vs 위약', 0)}줄, {res['b']} {res['found']['B']}개 중 "
+                   f"{nside.get('B vs 위약', 0)}줄 · 같은 임상 안 직접 비교 {nside.get('A vs B (직접)', 0)}줄"
+                   + (" · 임상이 많아 성분당 500개까지만 봤습니다" if res.get("capped") else "")
+                   + " · 체크를 바꾸면 아래 결과가 다시 계산됩니다")
+
+    # ── ② 입력표 ──────────────────────────────────────────────
+    st.markdown(f"##### ② 합칠 임상 확인 <span style='font-weight:400;color:#808495;font-size:13.5px'>"
+                f"— A = {a_name} · B = {b_name} · 표 안에서 체크·숫자를 바로 고칠 수 있습니다</span>",
+                unsafe_allow_html=True)
+    base = st.session_state[bkey]
+    cfg = {
+        "합침": st.column_config.CheckboxColumn("합침", default=True, width="small"),
+        "비교": st.column_config.SelectboxColumn("비교", options=_MA_SIDES, default="A vs 위약", required=True),
+        "임상번호": st.column_config.TextColumn("임상번호"),
+        "제목": st.column_config.TextColumn("제목", width="medium"),
+        "점검": st.column_config.TextColumn("점검", disabled=True),
+        "논문": st.column_config.TextColumn("논문"),
+        "링크": st.column_config.LinkColumn("링크", display_text="PubMed ↗"),
+        "소그룹": st.column_config.TextColumn("소그룹", help="소그룹 비교에 씁니다 (예: 지역, 바탕 치료)"),
+    }
+    for col, _ in _MA_NUM[kind]:
+        cfg[col] = st.column_config.NumberColumn(col, format="%.4g")
+    edited = st.data_editor(base, key=f"ma_ed_{kind}_{st.session_state.get(f'ma_ver_{kind}', 0)}",
+                            column_config=cfg, num_rows="dynamic", hide_index=True, use_container_width=True)
+
+    b1, b2, b3 = st.columns([1, 1, 2])
+    b1.download_button("📥 입력표 CSV 내려받기",
+                       data=edited.assign(_종류=kind, _A=a_name, _B=b_name).to_csv(index=False).encode("utf-8-sig"),
+                       file_name="meta_input.csv", mime="text/csv", key="ma_dl_in", use_container_width=True)
+    up = b2.file_uploader("📤 CSV 올리기", type=["csv"], key=f"ma_up_{kind}", label_visibility="collapsed")
+    if up is not None and st.session_state.get(f"ma_upid_{kind}") != (up.name, up.size):
+        st.session_state[f"ma_upid_{kind}"] = (up.name, up.size)
+        try:
+            u = pd.read_csv(up, encoding="utf-8-sig")
+            need = [c for c, _ in _MA_NUM[kind]] + ["비교"]
+            miss = [x for x in need if x not in u.columns]
+            if miss:
+                st.error(f"이 CSV에는 '{kind}' 입력표 칸이 없습니다: {', '.join(miss)}")
+            else:
+                rows = u.where(pd.notna(u), None).to_dict("records")
+                _ma_set_base(kind, _ma_frame(kind, rows))
+                st.rerun()
+        except Exception as e:
+            st.error(f"CSV를 읽지 못했습니다 ({type(e).__name__}).")
+
+    if res and any((res.get("skipped") or {}).values()):
+        with st.expander("빠진 임상 보기 (사유별)"):
+            for k, nm in (("A", res["a"]), ("B", res["b"])):
+                sk = res["skipped"].get(k) or {}
+                if sk:
+                    st.markdown(f"**{nm}** — " + " · ".join(f"{w} {n}개" for w, n in
+                                                           sorted(sk.items(), key=lambda x: -x[1])))
+            st.caption("1차·2차 평가변수 중 지표 이름·시점·종류가 맞는 것이 없거나, 그 성분 군이 없는 임상입니다.")
+
+    infos = (res or {}).get("infos") or {}
+    if infos:
+        with st.expander("군 바꾸기 (ClinicalTrials.gov에서 불러온 임상)"):
+            keys = [f"{r['임상번호']}|{r['비교']}" for r in edited.to_dict("records")
+                    if f"{r['임상번호']}|{r['비교']}" in infos]
+            if keys:
+                pk = st.selectbox("임상", keys, key="ma_rg_pick",
+                                  format_func=lambda k: f"{k.split('|')[0]} · {k.split('|')[1]} · {infos[k]['title'][:60]}")
+                inf = infos[pk]
+                st.caption(f"평가변수: {inf['outcome'][:120]} · {inf['timeframe'][:60]} · 단위 {inf['unit']}")
+                gids = [g for g, _ in inf["groups"]]
+                gname = dict(inf["groups"])
+                q1, q2, q3 = st.columns([2, 2, 1])
+                g1 = q1.selectbox("시험군", gids, format_func=lambda g: gname.get(g, g), key="ma_rg_g1")
+                g2 = q2.selectbox("대조군", gids, index=min(1, len(gids) - 1),
+                                  format_func=lambda g: gname.get(g, g), key="ma_rg_g2")
+                with q3:
+                    st.write("")
+                    if st.button("적용", key="ma_rg_go", use_container_width=True):
+                        new = ctgov.regroup(kind, inf, g1, g2)
+                        df = edited.copy()
+                        nct, side = pk.split("|")
+                        hit = (df["임상번호"] == nct) & (df["비교"] == side)
+                        for col, k in _MA_NUM[kind]:
+                            df.loc[hit, col] = new.get(k)
+                        df.loc[hit, "시험군"] = gname.get(g1, g1)
+                        df.loc[hit, "대조군"] = gname.get(g2, g2)
+                        df.loc[hit, "합침"] = True
+                        _ma_set_base(kind, _ma_frame(kind, df.to_dict("records")))
+                        st.rerun()
+
+    with st.expander("④ PubMed에서 논문 찾아 넣기"):
+        p1, p2, p3, p4 = st.columns([2.2, 1.4, .8, .7])
+        pq = p1.text_input("찾을 말 (영문)", key="ma_pq",
+                           placeholder=f"예: {(a_txt or 'ezetimibe').strip()} placebo")
+        top = p2.radio("학술지", ["NEJM·Lancet·JAMA·BMJ", "전체"], horizontal=True, key="ma_ptop") != "전체"
+        with p3:
+            st.write("")
+            rct = st.checkbox("RCT만", value=True, key="ma_prct")
+        with p4:
+            st.write("")
+            pgo = st.button("찾기", key="ma_pgo", use_container_width=True)
+        if pgo and (pq or "").strip():
+            try:
+                st.session_state["ma_pm"] = _ma_pubsearch(pq.strip(), top, rct)
+            except Exception as e:
+                st.error(f"PubMed에 접속하지 못했습니다 ({type(e).__name__}).")
+        pm = st.session_state.get("ma_pm")
+        if pm:
+            total, items = pm
+            st.caption(f"{total:,}건 중 {len(items)}건 · [+ 줄 추가]를 누르면 표에 빈 줄이 생기고, 숫자는 논문을 보고 넣습니다")
+            for it in items:
+                r1, r2 = st.columns([8, 1])
+                free = " · 무료 전문" if it.get("pmc") else ""
+                r1.markdown(f"{it['year']} · *{it['journal']}* · [{it['title']}]"
+                            f"({ctgov.pubmed_link(pmid=it['pmid'])}){free}")
+                if r2.button("+ 줄 추가", key=f"ma_padd_{it['pmid']}", use_container_width=True):
+                    tl = it["title"].lower()
+                    side = "B vs 위약" if (b_txt and b_txt.split()[0].lower() in tl
+                                          and not (a_txt and a_txt.split()[0].lower() in tl)) else "A vs 위약"
+                    rows = edited.to_dict("records") + [{
+                        "합침": True, "비교": side, "임상번호": "", "제목": it["title"][:120],
+                        "점검": "직접 입력", "논문": f"{it['journal']} {it['year']}".strip(),
+                        "링크": ctgov.pubmed_link(pmid=it["pmid"]), "소그룹": ""}]
+                    _ma_set_base(kind, _ma_frame(kind, rows))
+                    st.rerun()
+
+    # ── ⑤ 결과 ────────────────────────────────────────────────
+    st.markdown("##### ⑤ 결과")
+    top_box = st.container()
+    left, side = st.columns([1.6, 1], gap="large")
+    with side:
+        method = st.radio("합치는 방법", ["고정효과", "랜덤효과"], index=1, horizontal=True, key="ma_method")
+        measure = st.radio("효과크기", meta_calc.MEASURES[kind], horizontal=True, key=f"ma_meas_{kind}",
+                           format_func=lambda m: meta_calc.MEASURE_LABEL[m])
+
+    per, notes, used = {s: [] for s in _MA_SIDES}, [], {s: set() for s in _MA_SIDES}
+    finals = 0
+    for r in edited.to_dict("records"):
+        if not r.get("합침") or r.get("비교") not in per:
+            continue
+        y, v, how = _ma_effect(kind, measure, r)
+        nm = r.get("임상번호") or (r.get("제목") or "")[:20] or "(이름 없음)"
+        if y is None:
+            notes.append(f"{nm} ({r['비교']}): {how}")
+            continue
+        per[r["비교"]].append(dict(label=nm, y=y, v=v, sub=(r.get("소그룹") or "").strip() or "(없음)",
+                                   title=r.get("제목") or ""))
+        used[r["비교"]].add(r.get("임상번호") or "")
+        if "최종값" in (r.get("점검") or ""):
+            finals += 1
+
+    pooled = {}
+    for s_, lst in per.items():
+        if lst:
+            p = meta_calc.pool([x["y"] for x in lst], [x["v"] for x in lst])
+            m, se, w = meta_calc.pick(p, method)
+            pooled[s_] = dict(p=p, m=m, se=se, w=w)
+
+    if not any(per.values()):
+        top_box.info("임상을 찾거나 표에 숫자를 넣으면 결과가 나옵니다.")
+        if notes:
+            st.caption("계산에서 빠진 줄: " + " / ".join(notes[:10]))
+        return
+
+    ind = None
+    if "A vs 위약" in pooled and "B vs 위약" in pooled:
+        pa, pb = pooled["A vs 위약"], pooled["B vs 위약"]
+        ind = meta_calc.bucher(pa["m"], pa["se"], pb["m"], pb["se"])
+    dct = pooled.get("A vs B (직접)")
+
+    with top_box:
+        k = st.columns(4)
+
+        def _met(col, title, pdict):
+            if not pdict:
+                col.metric(title, "—")
+                return
+            mm, lo, hi = meta_calc.ci(measure, pdict["m"], pdict["se"])
+            col.metric(title, meta_calc.fmt(measure, mm))
+            col.caption(f"{meta_calc.fmt(measure, lo)} ~ {meta_calc.fmt(measure, hi)} · 임상 {pdict['p']['k']} · "
+                        f"I² {pdict['p']['i2']:.0f}%")
+        _met(k[0], f"{a_name} vs 위약", pooled.get("A vs 위약"))
+        _met(k[1], f"{b_name} vs 위약", pooled.get("B vs 위약"))
+        if ind:
+            mm, lo, hi = meta_calc.ci(measure, ind[0], ind[1])
+            k[2].metric("간접 비교 (A − B)" if measure not in meta_calc.RATIO else "간접 비교 (A / B)",
+                        meta_calc.fmt(measure, mm))
+            k[2].caption(f"{meta_calc.fmt(measure, lo)} ~ {meta_calc.fmt(measure, hi)} · p {ind[2]:.2f}")
+        else:
+            k[2].metric("간접 비교", "—")
+        _met(k[3], "직접 비교 (같은 임상)", dct)
+        if measure == "MD":
+            st.caption("평균차는 넣은 숫자의 단위를 따릅니다 (예: 변화율이면 %p).")
+        elif measure == "RD":
+            st.caption("위험차는 %p 로 보여 줍니다.")
+
+    items = []
+    for s_, head, nm in (("A vs 위약", f"<b>{a_name} vs 위약</b>", "A"), ("B vs 위약", f"<b>{b_name} vs 위약</b>", "B"),
+                         ("A vs B (직접)", f"<b>같은 임상 안 직접 비교 ({a_name} − {b_name})</b>", "D")):
+        if not per[s_]:
+            continue
+        items.append(dict(kind="head", label=head))
+        w = pooled[s_]["w"]
+        for x, wi in zip(per[s_], w):
+            items.append(dict(kind="study", label=f"{x['label']} · {x['title'][:22]}", y=x["y"],
+                              se=math.sqrt(x["v"]), w=wi))
+        items.append(dict(kind="pool", label=f"<b>합친 값 ({method})</b>", y=pooled[s_]["m"],
+                          se=pooled[s_]["se"], color="#7a5aa6" if nm == "D" else "#2f6f8f"))
+    if ind:
+        items.append(dict(kind="head", label=f"<b>간접 비교 ({a_name} − {b_name}, 위약 공통)</b>"))
+        items.append(dict(kind="pool", label="<b>간접 비교</b>", y=ind[0], se=ind[1], color="#b4572e"))
+    with left:
+        st.plotly_chart(_ma_forest(items, measure), use_container_width=True, key="ma_forest")
+
+    with side:
+        msgs = []
+        if ind:
+            msgs.append(meta_calc.verdict(measure, ind[0], ind[1], lower_better, a_name, b_name, what))
+        if dct:
+            msgs.append("같은 임상 안 직접 비교 — "
+                        + meta_calc.verdict(measure, dct["m"], dct["se"], lower_better, a_name, b_name, what))
+        if not msgs:
+            msgs.append("두 성분을 비교하려면 A vs 위약, B vs 위약 임상이 모두 있거나, 같은 임상 안 직접 비교가 있어야 합니다.")
+        st.info("**결론**\n\n" + "\n\n".join(msgs))
+        warns = []
+        for s_, nm in (("A vs 위약", a_name), ("B vs 위약", b_name), ("A vs B (직접)", "직접 비교")):
+            if s_ in pooled:
+                kk, i2 = pooled[s_]["p"]["k"], pooled[s_]["p"]["i2"]
+                if i2 >= 50:
+                    warns.append(f"{nm}: 임상 사이 차이가 큰 편입니다 (I² {i2:.0f}%). 개별 결과도 함께 보세요.")
+                if kk <= 2 and method == "랜덤효과" and s_ != "A vs B (직접)":
+                    warns.append(f"{nm}: 임상이 {kk}개뿐이라 랜덤효과 추정이 불안정합니다.")
+        shared = (used["A vs 위약"] & used["B vs 위약"]) - {""}
+        if shared and ind:
+            warns.append(f"{', '.join(sorted(shared))} 은(는) 두 성분에 같이 쓰였습니다 (같은 위약군). "
+                         "간접 비교가 실제보다 약간 확실해 보일 수 있습니다.")
+        if measure == "SMD" and finals:
+            warns.append("SMD 에 '최종값' 임상이 섞여 있습니다. 변화량과 최종값은 섞지 않는 것이 원칙입니다.")
+        if ind and dct:
+            ilo, ihi = meta_calc.ci(measure, ind[0], ind[1])[1:]
+            dlo, dhi = meta_calc.ci(measure, dct["m"], dct["se"])[1:]
+            nul = meta_calc.null_value(measure)
+            if (ilo <= nul <= ihi) != (dlo <= nul <= dhi):
+                warns.append("직접 비교와 간접 비교의 결론이 다릅니다. 임상 대상·바탕 치료를 확인하세요.")
+        for w_ in warns:
+            st.warning(w_, icon="⚠️")
+        if notes:
+            st.caption("계산에서 빠진 줄: " + " / ".join(notes[:8]) + (" …" if len(notes) > 8 else ""))
+
+    with st.expander("하나씩 빼 보기 — 임상 하나씩 빼고 다시 계산"):
+        out = []
+        for s_ in _MA_SIDES:
+            lst = per[s_]
+            if len(lst) < 2:
+                continue
+            loo = meta_calc.leave_one_out([x["y"] for x in lst], [x["v"] for x in lst], method)
+            for x, r_ in zip(lst, loo):
+                out.append({"비교": s_, "뺀 임상": x["label"], "합친 값 [95% CI]": meta_calc.fmt_ci(measure, r_[0], r_[1]),
+                            "I²(%)": round(r_[2])})
+        if out:
+            st.dataframe(pd.DataFrame(out), hide_index=True, use_container_width=True)
+        else:
+            st.caption("임상이 2개 이상인 쪽이 없습니다.")
+
+    with st.expander("깔때기 그림 — 작은 임상이 한쪽으로 쏠렸는지"):
+        fig = go.Figure()
+        for s_, color in (("A vs 위약", "#2f6f8f"), ("B vs 위약", "#b4572e")):
+            lst = per[s_]
+            if not lst:
+                continue
+            fig.add_trace(go.Scatter(x=[_ma_disp(measure, x["y"]) for x in lst], y=[math.sqrt(x["v"]) for x in lst],
+                                     mode="markers", name=a_name if s_.startswith("A") else b_name,
+                                     text=[x["label"] for x in lst], marker=dict(size=9, color=color)))
+            fe = pooled[s_]["p"]["fe"]
+            mx = max(math.sqrt(x["v"]) for x in lst) * 1.1
+            fig.add_trace(go.Scatter(x=[_ma_disp(measure, fe - meta_calc.Z * mx), _ma_disp(measure, fe),
+                                        _ma_disp(measure, fe + meta_calc.Z * mx)], y=[mx, 0, mx], mode="lines",
+                                     line=dict(color=color, dash="dot", width=1), showlegend=False, hoverinfo="skip"))
+        fig.update_yaxes(autorange="reversed", title_text="표준오차 (아래로 갈수록 작은 임상)")
+        fig.update_xaxes(type="log" if measure in meta_calc.RATIO else "linear",
+                         title_text=meta_calc.MEASURE_LABEL[measure])
+        fig.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=40), plot_bgcolor="#fff")
+        st.plotly_chart(fig, use_container_width=True, key="ma_funnel")
+        st.caption("임상이 10개 미만이면 쏠림을 판단하기 어렵습니다. 점이 삼각형 안에 고르게 퍼져 있으면 무난합니다.")
+
+    with st.expander("소그룹 비교 — 표의 '소그룹' 칸 기준"):
+        out = []
+        for s_ in _MA_SIDES:
+            groups = {}
+            for x in per[s_]:
+                groups.setdefault(x["sub"], []).append(x)
+            if len(groups) < 2:
+                continue
+            for g_, lst in groups.items():
+                p = meta_calc.pool([x["y"] for x in lst], [x["v"] for x in lst])
+                m, se, _ = meta_calc.pick(p, method)
+                out.append({"비교": s_, "소그룹": g_, "임상 수": p["k"],
+                            "합친 값 [95% CI]": meta_calc.fmt_ci(measure, m, se), "I²(%)": round(p["i2"])})
+        if out:
+            st.dataframe(pd.DataFrame(out), hide_index=True, use_container_width=True)
+        else:
+            st.caption("소그룹이 2개 이상인 쪽이 없습니다. 표의 '소그룹' 칸에 지역·바탕 치료 등을 적으면 나뉩니다.")
+
+    res_rows = []
+    for s_ in _MA_SIDES:
+        for x, wi in zip(per[s_], pooled.get(s_, {}).get("w", [])):
+            res_rows.append({"비교": s_, "임상": x["label"], "효과 [95% CI]": meta_calc.fmt_ci(measure, x["y"], math.sqrt(x["v"])),
+                             "가중치(%)": round(wi, 1)})
+        if s_ in pooled:
+            res_rows.append({"비교": s_, "임상": f"합친 값 ({method})",
+                             "효과 [95% CI]": meta_calc.fmt_ci(measure, pooled[s_]["m"], pooled[s_]["se"]),
+                             "가중치(%)": 100.0})
+    if ind:
+        res_rows.append({"비교": "간접 비교 (A−B)", "임상": f"{a_name} vs {b_name}",
+                         "효과 [95% CI]": meta_calc.fmt_ci(measure, ind[0], ind[1]), "가중치(%)": None})
+    st.download_button("📥 결과 CSV 내려받기",
+                       data=pd.DataFrame(res_rows).to_csv(index=False).encode("utf-8-sig"),
+                       file_name="meta_result.csv", mime="text/csv", key="ma_dl_out")
 
 
 def _price_calc_page():
@@ -2727,7 +3246,7 @@ if PAGE == "clinical":
         # 탭이 아니라 라디오를 쓰는 이유: st.tabs 는 안 보이는 탭까지 전부 계산한다.
         # 라디오 + st.stop() 이면 고른 쪽만 돈다(약가 분석 탭과 같은 방식).
         _view = st.radio("보기", ["🔍 검색", "📊 분석", "🧮 생동 피험자 수",
-                                  "💰 1상 비용 어림"],
+                                  "💰 1상 비용 어림", "📐 간이 메타분석"],
                          horizontal=True, key="clin_view", label_visibility="collapsed")
 
         if _view.endswith("피험자 수"):
@@ -2737,6 +3256,11 @@ if PAGE == "clinical":
 
         if _view.endswith("비용 어림"):
             _cost_page()
+            ss.release_memory()
+            st.stop()
+
+        if _view.endswith("메타분석"):      # '분석'으로 끝나므로 아래 '분석' 보기보다 먼저 본다
+            _meta_page()
             ss.release_memory()
             st.stop()
 
