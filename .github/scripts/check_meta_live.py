@@ -83,6 +83,11 @@ def main():
     with sync_playwright() as p:
         br = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
         pg = br.new_context(viewport={"width": 1600, "height": 2600}, locale="ko-KR").new_page()
+        pg.goto(URL + "/?page=status", wait_until="domcontentloaded", timeout=180_000)
+        if wait_for(pg, "코드 버전"):
+            settle(pg, need=3)
+            ln = [l for l in body(pg).splitlines() if "코드 버전" in l]
+            print("사이트 " + (ln[0].strip() if ln else "코드 버전 못 읽음"))
         pg.goto(URL + "/?page=clinical", wait_until="domcontentloaded", timeout=180_000)
         if not wait_for(pg, "임상 분석"):
             print("임상 분석 화면이 안 떴다")
@@ -119,6 +124,11 @@ def main():
         for l in body(pg).splitlines():
             if any(w in l for w in ("받음", "접속하지 못했습니다", "PubMed 논문 연결")):
                 print("   " + l.strip()[:300])
+        rd = app(pg).locator("[data-testid='stRadio']").filter(has_text="공통 비교약").first
+        if rd.count():
+            print("   공통 비교약 목록: " + " / ".join(x.strip() for x in rd.inner_text().splitlines() if x.strip())[:300])
+        else:
+            print("   공통 비교약 목록 없음 (새 코드가 아니거나 공통 비교약이 없음)")
         mets = app(pg).evaluate("() => [...document.querySelectorAll(\"[data-testid='stMetric']\")]"
                                 ".map(e => e.innerText.replace(/\\n/g, ' '))")
         print("   숫자 칸: " + " | ".join(mets))
