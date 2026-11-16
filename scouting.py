@@ -166,7 +166,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-16-a"
+BUILD = "2026-11-16-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2051,9 +2051,25 @@ def _dmf_clin_prep():
 
 
 def _atc_levels(df, cfg):
-    """매출 자료의 ATC 단계 칸 목록. IQVIA: 'ATC 1(한글)'~'ATC 4(한글)'. 없으면 설정의 atc1 하나."""
-    lv = sorted([c for c in df.columns if re.match(r"^ATC\s*\d", str(c))],
-                key=lambda c: int(re.search(r"\d", str(c)).group()))
+    """매출 자료의 ATC 단계 칸 — 단계마다 하나씩(1~4단계).
+    IQVIA는 단계마다 'ATC n', 'ATC n(한글)', 'ATC n CODE', 'ATC n DESC' 처럼 여러 칸이 있어
+    한글 이름 칸을 먼저, 없으면 설명(DESC) → 이름 → 코드 순으로 하나만 고른다."""
+    by_lv = {}
+    for c in df.columns:
+        mt = re.match(r"^ATC\s*(\d)", str(c))
+        if mt:
+            by_lv.setdefault(int(mt.group(1)), []).append(c)
+
+    def _rank(c):
+        u = str(c).upper()
+        if "한글" in u:
+            return 0
+        if "DESC" in u:
+            return 1
+        if "CODE" in u:
+            return 3
+        return 2
+    lv = [sorted(v, key=_rank)[0] for k, v in sorted(by_lv.items()) if k <= 4]
     if not lv and cfg.get("atc1") and cfg["atc1"] in df.columns:
         lv = [cfg["atc1"]]
     return lv
@@ -2464,7 +2480,8 @@ if PAGE == "sugg":
         _pool = m
         for _i, _c in enumerate(_atc_lv):
             _opts = sorted({str(x).strip() for x in _pool[_c] if str(x).strip()})
-            _lab = re.sub(r"\(한글\)", "", str(_c)).strip() if len(_atc_lv) > 1 else "ATC"
+            _lvn = re.match(r"^ATC\s*(\d)", str(_c))
+            _lab = ("ATC " + _lvn.group(1) + "단계") if (len(_atc_lv) > 1 and _lvn) else "ATC"
             _sel = _ac[_i].multiselect(_lab, _opts, default=[], key=f"sugg_atc_{_i}_{abs(hash(tuple(_opts))) % 10**8}",
                                        help="비우면 전체" if _i == 0 else "위 단계에서 고른 것 안의 항목만 나옵니다")
             _sel = [x for x in _sel if x in _opts]
