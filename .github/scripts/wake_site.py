@@ -1,9 +1,10 @@
-"""사이트를 깨우고, 매출 자료(IQVIA·UBIST)가 없으면 '불러오기'를 눌러 둔다.
+"""사이트를 깨우고, 자료 파일(허가·특허·임상·약가·공단 협상·매출)을 미리 만들어 둔다.
 
 매일 오전·저녁 7시에 GitHub 가 돌린다(.github/workflows/wake-site.yml).
 - 잠들어 있으면(12시간 동안 방문 없음) 깨우기 단추를 누른다.
-- 비밀번호를 넣고 제품 제안 화면을 연다. 매출이 없으면 이 화면에 '불러오기' 단추가 나온다.
-- 단추가 있으면 누르고 끝날 때까지 기다린다. 없으면(이미 있음) 그냥 닫는다.
+- 비밀번호를 넣고 '?page=status&prep=1' 을 연다. 사이트는 화면 대신 자료 파일만 차례로 만들고
+  (이미 최신이면 건너뜀) '모두 준비됨'을 띄운다. 메모리에는 올리지 않는다.
+- 그 주소가 없는 예전 사이트면, 예전처럼 제품 제안 화면의 매출 '불러오기' 단추를 누른다.
 
 로봇 기록은 공개다. 화면 글은 적지 않고 '깨움/불러옴/이미 있음/실패' 같은 결과만 적는다.
 읽고 누르기만 하므로 사이트 코드는 바뀌지 않는다.
@@ -64,10 +65,59 @@ def press(fr, label):
     return False
 
 
+def prep_files(pg):
+    """새 방식: 파일만 미리 만들기. 끝나면 0, 실패면 1, 그 주소가 없는 예전 사이트면 None."""
+    pg.goto(URL + "/?page=status&prep=1", wait_until="domcontentloaded", timeout=180_000)
+    time.sleep(8)
+    wake_if_sleeping(pg)
+    t0, seen = time.time(), False
+    while time.time() - t0 < 25 * 60:
+        fr = app(pg)
+        t = text_of(fr)
+        if PW and fr.query_selector("input[type='password']"):
+            box = fr.query_selector("input[type='password']")
+            box.fill(PW)
+            box.press("Enter")
+            print("비밀번호를 넣었다")
+            time.sleep(12)
+            continue
+        if "자료 미리 만들기" in t:
+            seen = True
+        lines = [l.strip() for l in t.splitlines() if " — " in l and any(
+            w in l for w in ("준비됨", "만드는 중", "기다림"))]
+        if "모두 준비됨" in t:
+            for l in lines:
+                print("   " + l[:60])
+            print(f"모두 준비됨 · 걸린 시간 {time.time() - t0:.0f}초")
+            return 0
+        if seen and "실패 —" in t:
+            for l in lines:
+                print("   " + l[:60])
+            print("[실패] 자료를 만들지 못했다 — " + next((l for l in t.splitlines() if "실패 —" in l), "")[:150])
+            return 1
+        if not seen and time.time() - t0 > 4 * 60:
+            print("'자료 미리 만들기' 주소가 없는 예전 사이트 — 예전 방식으로 매출만 불러온다")
+            return None
+        time.sleep(6)
+    print("[실패] 25분 안에 끝나지 않았다")
+    return 1
+
+
 def main():
     if not URL:
         print("APP_URL 이 없다")
         return 1
+    with sync_playwright() as p:
+        br = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
+        pg = br.new_context(viewport={"width": 1500, "height": 1800}, locale="ko-KR").new_page()
+        r = prep_files(pg)
+        br.close()
+    if r is not None:
+        return r
+    return old_main()
+
+
+def old_main():
     with sync_playwright() as p:
         br = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
         pg = br.new_context(viewport={"width": 1500, "height": 1800}, locale="ko-KR").new_page()

@@ -6,6 +6,7 @@
 추가 파일 업로드/파일ID 입력 불필요 — 소스 ID는 아래 상수로 고정.
 """
 import io
+import os
 import threading
 import re
 import time
@@ -373,6 +374,18 @@ KST = 9 * 3600                  # 한국시간 = UTC+9
 # 매출(IQVIA·UBIST)은 사람이 직접 올리는 자료라 매일 바뀌지 않는다 → 주 1회만 본다.
 WEEKLY = {"iqvia", "ubist"}
 
+def _save(df, path, kind="parquet"):
+    """임시 파일에 다 쓴 뒤 한 번에 바꿔치기한다.
+    쓰는 도중에 누가 그 화면을 열어도 반쯤 쓰인 파일을 읽지 않게 하려는 것이다."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    if kind == "pickle":
+        df.to_pickle(tmp)
+    else:
+        df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
 def _cache_path(name):
     return (SAVED / f"{name}.pkl") if name in ("iqvia", "ubist") else (SD / f"{name}.parquet")
 
@@ -491,7 +504,7 @@ def _do_build(include_sales=False, force=False, only=None):
                 _ss.save_kor_core_key_map(_km)   # 앱 시작마다 다시 만들지 않도록 저장
         except Exception:
             pass        # 파생열 실패는 치명적이지 않음(로더가 그때 계산한다)
-        df.to_parquet(SD / f"{n}.parquet", index=False)
+        _save(df, SD / f"{n}.parquet")
 
     for name in ["approval", "patent", "clinical"]:
         if need[name]:
@@ -541,27 +554,27 @@ def _do_build(include_sales=False, force=False, only=None):
                 _ss.enrich_price(merged)
             except Exception:
                 pass
-            merged.to_parquet(SD / "price.parquet", index=False)
+            _save(merged, SD / "price.parquet")
         _try("price", _build_price)
 
     # 공단협상(NHIS 공개자료)
     if need["nego"]:
         def _build_nego():
             try:
-                _nego_df().to_parquet(SD / "nego.parquet", index=False)
+                _save(_nego_df(), SD / "nego.parquet")
             except Exception:
                 p = SD / "nego.parquet"
                 if p.exists():
                     p.touch()   # 스크래핑 실패 → 기존 유지
                 else:
-                    pd.DataFrame(columns=["연도", "제품명", "회사명", "협상결과", "_nm"]).to_parquet(p, index=False)
+                    _save(pd.DataFrame(columns=["연도", "제품명", "회사명", "협상결과", "_nm"]), p)
         _try("nego", _build_nego)
 
     # 매출(대용량) — include_sales=True 일 때만
     if include_sales and need["iqvia"]:
-        _try("iqvia", lambda: _parse_iqvia(_download(drive, IQVIA_ID)).to_pickle(SAVED / "iqvia.pkl"))
+        _try("iqvia", lambda: _save(_parse_iqvia(_download(drive, IQVIA_ID)), SAVED / "iqvia.pkl", "pickle"))
     if include_sales and need["ubist"]:
-        _try("ubist", lambda: _parse_ubist(_download(drive, UBIST_ID)).to_pickle(SAVED / "ubist.pkl"))
+        _try("ubist", lambda: _save(_parse_ubist(_download(drive, UBIST_ID)), SAVED / "ubist.pkl", "pickle"))
 
     return "built" if rebuilt else "local"
 
@@ -588,6 +601,39 @@ def _refresh_in_background(include_sales=False, force=False, only=None):
 
     threading.Thread(target=_run, daemon=True).start()
     return True
+
+# ── 자료 파일만 미리 만들기 (깨우기 로봇용) ─────────────────────────────────
+# 화면을 열지 않고 파일만 만들어 둔다. 메모리에는 올리지 않는다(사람이 그 화면을 열 때 올라감).
+PREP_ORDER = ["approval", "patent", "clinical", "price", "nego", "iqvia", "ubist"]
+PREP_LABEL = {"approval": "허가", "patent": "특허", "clinical": "임상", "price": "약가",
+              "nego": "공단 협상", "iqvia": "매출 IQVIA", "ubist": "매출 UBIST"}
+
+
+def prepare_needed():
+    """없거나 오래된 자료 (기준은 화면과 같음: 하루 자료는 새벽 5시, 매출은 주 1회)."""
+    return [n for n in PREP_ORDER if _stale(n)]
+
+
+def prepare_all():
+    """필요한 것만 뒤에서 차례로 만든다. 이미 다른 작업이 돌고 있으면 시작하지 않는다(False)."""
+    names = prepare_needed()
+    if not names:
+        return False
+    return build_later(names, delay=0)
+
+
+def prepare_status():
+    """[(이름, 한글 이름, 상태)] — 상태는 '준비됨' / '만드는 중' / '기다림'."""
+    run = _BG["running"]
+    out = []
+    for n in PREP_ORDER:
+        if _cache_path(n).exists() and not _stale(n):
+            stt = "준비됨"
+        else:
+            stt = "만드는 중" if run else "기다림"
+        out.append((n, PREP_LABEL[n], stt))
+    return out
+
 
 def background_status():
     """(갱신중?, 마지막 완료시각, 마지막 오류)"""

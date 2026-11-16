@@ -198,7 +198,7 @@ def listed_patent_mask(pt):
         return pd.Series(True, index=pt.index)
     return pt[PATENT_PAGE_COL].astype(str).str.contains("제품", na=False)
 
-@st.cache_data(show_spinner="허가 로딩 중…")
+@st.cache_data(show_spinner="허가 로딩 중…", max_entries=1)
 def _load_approval(_mt):
     return enrich_approval(pd.read_parquet(SD / "approval.parquet"))
 
@@ -231,7 +231,7 @@ def save_kor_core_key_map(m):
     except Exception:
         pass
 
-@st.cache_data
+@st.cache_data(max_entries=1)
 def _kor_core_key_map_cached(_mt):
     """한글 성분코어 → 영문 조인키. 저장된 맵이 있으면 그대로 쓴다."""
     try:
@@ -307,7 +307,7 @@ def enrich_price(df):
         df["_core"] = ing_core_series(df["주성분명"]) if "주성분명" in df.columns else ""
     return df
 
-@st.cache_data(show_spinner="특허 로딩 중…")
+@st.cache_data(show_spinner="특허 로딩 중…", max_entries=1)
 def _load_patent(_mt):
     # 파일이 없어도(시트 연결 실패 등) 앱이 죽지 않도록 빈 표를 돌려준다.
     # 각 화면은 patent_available()로 '미연결' 안내를 따로 표시한다.
@@ -323,7 +323,7 @@ def load_patent():
     _ensure("patent")
     return _load_patent(_mtime(SD / "patent.parquet"))
 
-@st.cache_data(show_spinner="임상 로딩 중…")
+@st.cache_data(show_spinner="임상 로딩 중…", max_entries=1)
 def _load_clinical(_mt):
     if not (SD / "clinical.parquet").exists():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제품명", "성분명", "CLINIC_STEP_NM", "_core"]})
@@ -494,7 +494,7 @@ def original_products(keys):
 def price_available():
     return (SD / "price.parquet").exists()
 
-@st.cache_data(show_spinner="약가 로딩 중…")
+@st.cache_data(show_spinner="약가 로딩 중…", max_entries=1)
 def _load_price(_mt):
     return enrich_price(pd.read_parquet(SD / "price.parquet"))
 
@@ -608,7 +608,7 @@ def nego_available():
         _ensure("nego")
     return (SD / "nego.parquet").exists()
 
-@st.cache_data
+@st.cache_data(max_entries=1)
 def _load_nego(_mt):
     return pd.read_parquet(SD / "nego.parquet")
 

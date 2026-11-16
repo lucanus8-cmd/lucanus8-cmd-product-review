@@ -136,14 +136,14 @@ def build_cache(which):
 
 # ── 빠른 로드 (pickle 캐시에서) ─────────────────────────────────────────────
 
-@st.cache_data(show_spinner="IQVIA 로딩 중…")
+@st.cache_data(show_spinner="IQVIA 로딩 중…", max_entries=1)
 def load_iqvia(cache_mtime):
     df = pd.read_pickle(IQVIA_CACHE)
     lc_qtr = [c for c in df.columns if re.match(r"LC-\d{2}Q\d", c)]
     lc_yr  = [c for c in df.columns if re.match(r"\d{4}년$", c)]
     return df, lc_qtr, lc_yr
 
-@st.cache_data(show_spinner="UBIST 로딩 중…")
+@st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
 def load_ubist(cache_mtime):
     df = pd.read_pickle(UBIST_CACHE)
     # 연간 컬럼만 기본 num_cols로 (분기·연간 혼합 중복합산 방지)

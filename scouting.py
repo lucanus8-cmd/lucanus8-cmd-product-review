@@ -81,19 +81,33 @@ def _data_status_banner():
 DATA_DIR = Path(__file__).parent / "saved_data"
 TODAY = pd.Timestamp.today().normalize()
 
-@st.cache_data(show_spinner="IQVIA 로딩 중…")
-def load_iqvia():
-    bootstrap.ensure_sales()          # 매출 자료는 쓸 때 확보한다(시작 때 기다리지 않도록)
+def _file_mtime(p):
+    try:
+        return p.stat().st_mtime
+    except Exception:
+        return 0.0
+
+# 매출 파일의 수정시각을 캐시 열쇠로 쓴다: 파일이 새로 만들어지면 다음에 열 때 자동으로 새로 읽고,
+# max_entries=1 이라 예전 표는 메모리에서 빠진다.
+@st.cache_data(show_spinner="IQVIA 로딩 중…", max_entries=1)
+def _load_iqvia_file(_mt):
     df = pd.read_pickle(DATA_DIR / "iqvia.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^\d{4}년$", str(c))])
     return df, yr
 
-@st.cache_data(show_spinner="UBIST 로딩 중…")
-def load_ubist():
-    bootstrap.ensure_sales()
+@st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
+def _load_ubist_file(_mt):
     df = pd.read_pickle(DATA_DIR / "ubist.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^처방조제액\(원\)_\d{4}년$", str(c))])
     return df, yr
+
+def load_iqvia():
+    bootstrap.ensure_sales()          # 매출 자료는 쓸 때 확보한다(시작 때 기다리지 않도록)
+    return _load_iqvia_file(_file_mtime(DATA_DIR / "iqvia.pkl"))
+
+def load_ubist():
+    bootstrap.ensure_sales()
+    return _load_ubist_file(_file_mtime(DATA_DIR / "ubist.pkl"))
 
 def year_of(c):
     m = re.search(r"(\d{4})", str(c)); return m.group(1) if m else str(c)
@@ -170,7 +184,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-16-d"
+BUILD = "2026-11-17-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -236,6 +250,49 @@ def yearly_matrix(price_df, codes, name_map):
     pv.columns = [str(c) for c in pv.columns]   # 연도(정수)+문자열 혼합 헤더 경고 방지
     pv.insert(0, "제품명", [name_map.get(c, c) for c in pv.index])
     return pv.reset_index(drop=True)
+
+# ── 자료 파일만 미리 만들기 (깨우기 로봇용: ?page=status&prep=1) ─────────────
+# 화면은 그리지 않고 파일만 차례로 만든다. 메모리에 올리지 않으므로 가볍다.
+# 이미 최신이면 아무것도 하지 않는다. 진행 상황만 3초마다 다시 보여 준다.
+if st.query_params.get("prep") == "1":
+    st.subheader("🔄 자료 미리 만들기")
+    st.caption("화면은 열지 않고 자료 파일만 만들어 둡니다. 이미 최신인 자료는 건너뜁니다.")
+    try:
+        bootstrap.prepare_all()
+    except Exception:
+        pass
+
+    def _prep_body():
+        try:
+            rows = bootstrap.prepare_status()
+            _run, _done, _err = bootstrap.background_status()
+        except Exception as _e:
+            st.error(f"상태를 읽지 못했습니다 — {type(_e).__name__}")
+            return
+        st.markdown("  \n".join(f"{'✅' if s_ == '준비됨' else '⏳' if s_ == '만드는 중' else '·'} {lb} — {s_}"
+                                 for _, lb, s_ in rows))
+        left = [n for n, _, s_ in rows if s_ != "준비됨"]
+        if not left:
+            st.success("모두 준비됨")
+            return
+        if not _run:
+            tries = st.session_state.get("_prep_tries", 0)
+            if _err and tries >= 2:
+                st.error("실패 — " + str(_err)[:200])
+                return
+            if time.time() - st.session_state.get("_prep_last", 0.0) > 15:
+                st.session_state["_prep_tries"] = tries + 1
+                st.session_state["_prep_last"] = time.time()
+                try:
+                    bootstrap.prepare_all()
+                except Exception:
+                    pass
+
+    if hasattr(st, "fragment"):
+        st.fragment(run_every="3s")(_prep_body)()
+    else:
+        _prep_body()
+    st.stop()
 
 # ── 이 화면이 쓰는 자료만 먼저 확보 ────────────────────────────────────────
 # 앱을 켤 때 모든 자료를 받으면 홈만 보려고 들어와도 1~2분을 기다린다.
@@ -393,7 +450,7 @@ def fetch_sales_now():
     with st.spinner("매출 자료(IQVIA·UBIST)를 받아오는 중… 처음엔 1~2분 걸릴 수 있습니다"):
         ok, err = bootstrap.fetch_sales()
     if ok:
-        for _ld in (load_iqvia, load_ubist):   # 새로 받은 파일을 읽도록 캐시만 비운다
+        for _ld in (_load_iqvia_file, _load_ubist_file):   # 새로 받은 파일을 읽도록 캐시만 비운다
             try: _ld.clear()
             except Exception: pass
         return True
