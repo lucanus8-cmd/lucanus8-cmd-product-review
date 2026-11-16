@@ -43,7 +43,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -132,3 +132,9 @@ jobs:
         run: |
           python -m pip install --quiet requests==2.32.3
           python .github/scripts/check_pubmed.py
+
+      - name: 사이트용 메타분석 모듈을 실제 자료로 돌려 보기
+        if: inputs.what == 'metamod'
+        env:
+          CASE: ${{ inputs.words }}
+        run: python .github/scripts/check_meta_module.py
