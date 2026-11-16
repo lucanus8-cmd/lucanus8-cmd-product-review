@@ -35,11 +35,11 @@ def es(kind, measure, r):
 def run(a, b, kind, out, week, phases, measure, cond, comp=""):
     print(f"\n######## {a} vs {b} · {kind} · '{out}' · {week or '시점 무관'}주 · {'/'.join(phases)} · {measure} · 질환 '{cond}'")
     res = ctgov.search(a, b, kind, out, week, phases, cond=cond, comp=comp)
-    print(f"공통 비교약: {comp or '위약'}")
     print(f"받음: A {res['found']['A']}개 · B {res['found']['B']}개 · {res['sec']:.1f}초 · 500개에서 끊김 {res['capped']}")
     print("공통 비교약 목록 (A 임상 수 · B 임상 수):")
-    for c, (na, nb) in res["comparators"].items():
-        print(f"   {'★' if na and nb else ' '} {c}: A {na} · B {nb}")
+    for c, na, nb, ok in res["comparators"]:
+        print(f"   {'★' if ok else ' '} {c}: A {na} · B {nb}")
+    print(f"→ 쓴 비교약: {res['comp']} (기본 {res['default']})")
     for k, v in res["skipped"].items():
         print(f"   빠짐 {k}: {v}")
     try:
