@@ -164,6 +164,12 @@ def find_arm(groups, names, dose, avoid=()):
     return hits
 
 
+def find_comparator(groups, names, comp_names):
+    """공통 비교약 군 (그 성분이 섞이지 않은 군)."""
+    return [g for g in groups if _has(g.get("title", ""), comp_names) and not _has(g.get("title", ""), names)
+            and not _PLACEBO_RE.match(g.get("title", "").strip())]
+
+
 def find_placebo(groups, names):
     return [g for g in groups if _PLACEBO_RE.search(g.get("title", "")) and not _has(g.get("title", ""), names)]
 
@@ -338,7 +344,7 @@ def _background(text, groups, names):
     return sorted((words - alone) | (common or set()))
 
 
-def side_rows(study, label, names, dose, kind, out_kw, week, other_names):
+def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_names=None):
     """한 임상 · 한 성분 → (행, 군 정보) 또는 (None, 빠진 이유)."""
     nct, title, text, flags, sub = _study_info(study)
     cands, why = candidates(study, kind, out_kw, week)
@@ -347,7 +353,7 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names):
     o, primary = cands[0]
     groups = o.get("groups") or []
     arms = find_arm(groups, names, dose, avoid=other_names)
-    pls = find_placebo(groups, names)
+    pls = find_comparator(groups, names, comp_names) if comp_names else find_placebo(groups, names)
     info = {"nct": nct, "title": title, "outcome": o.get("title", ""), "timeframe": o.get("timeFrame", ""),
             "unit": o.get("unitOfMeasure", ""), "groups": [(g.get("id"), g.get("title", "")) for g in groups],
             "o": _slim(o)}
@@ -360,7 +366,8 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names):
     bg = _background(text, groups, names)
     row["_bg"] = bg
     pairs = [(g, p) for g in arms for p in pls
-             if _others(g.get("title", ""), names) == _others(p.get("title", ""), names)]
+             if {w for w in _others(g.get("title", ""), names) if not (comp_names and _same(w, comp_names))}
+             == {w for w in _others(p.get("title", ""), names) if not (comp_names and _same(w, comp_names))}]
     if not pairs:
         row["합침"] = False
         row["_flags"].append("군 못 찾음")
@@ -424,7 +431,7 @@ def regroup(kind, info, g1, g2):
 
 
 # ── 전체 ─────────────────────────────────────────────────────────────
-def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond=""):
+def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond="", comp=""):
     """두 성분 → 입력표 초안.
 
     돌려주는 것: rows(행 목록), infos(임상번호|비교 → 군 정보), skipped(성분별 빠진 이유 개수),
@@ -445,7 +452,8 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
             studies.setdefault(nct, s)
             names = aliases(s, drug)
             other_names = aliases(s, other)
-            row, info = side_rows(s, f"{key} vs 위약", names, dose, kind, out_kw, week, other_names)
+            comp_names = (aliases(s, comp.lower().strip()) if comp.strip() else None)
+            row, info = side_rows(s, f"{key} vs 위약", names, dose, kind, out_kw, week, other_names, comp_names)
             if row is None:
                 skipped[key][info] += 1
                 continue

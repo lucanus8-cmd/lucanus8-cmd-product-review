@@ -19,8 +19,8 @@ CASES = [
     ("empagliflozin", "dapagliflozin", "이분형", "hypoglycemia, hypoglycaemia", 0, ("3상",), "RR", ""),
 ]
 if os.environ.get("CASE"):
-    a, b, k, o, w, ph, m, cd = (os.environ["CASE"].split(";") + [""])[:8]
-    CASES = [(a, b, k, o, int(w or 0), tuple(ph.split(",")), m, cd)]
+    a, b, k, o, w, ph, m, cd, cp = (os.environ["CASE"].split(";") + ["", ""])[:9]
+    CASES = [(a, b, k, o, int(w or 0), tuple(ph.split(",")), m, cd, cp)]
 
 
 def es(kind, measure, r):
@@ -32,9 +32,10 @@ def es(kind, measure, r):
     return mc.es_surv(r.get("hr"), r.get("lo"), r.get("hi"))
 
 
-def run(a, b, kind, out, week, phases, measure, cond):
+def run(a, b, kind, out, week, phases, measure, cond, comp=""):
     print(f"\n######## {a} vs {b} · {kind} · '{out}' · {week or '시점 무관'}주 · {'/'.join(phases)} · {measure} · 질환 '{cond}'")
-    res = ctgov.search(a, b, kind, out, week, phases, cond=cond)
+    res = ctgov.search(a, b, kind, out, week, phases, cond=cond, comp=comp)
+    print(f"공통 비교약: {comp or '위약'}")
     print(f"받음: A {res['found']['A']}개 · B {res['found']['B']}개 · {res['sec']:.1f}초 · 500개에서 끊김 {res['capped']}")
     for k, v in res["skipped"].items():
         print(f"   빠짐 {k}: {v}")
