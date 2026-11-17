@@ -187,7 +187,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-17-b"
+BUILD = "2026-11-17-c"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2987,8 +2987,6 @@ def _dmf_view(m, name, unit, yr=()):
 _RP_OK, _RP_CAND, _RP_BAD, _RP_GREY, _RP_PURPLE = "#2C7A4B", "#2A5B8C", "#B0281F", "#6B7773", "#5B3596"
 _RP_TRIAL_KO = {"RECRUITING": "모집 중", "NOT_YET_RECRUITING": "모집 예정", "ACTIVE_NOT_RECRUITING": "진행 중(모집 끝)",
                 "ENROLLING_BY_INVITATION": "초청 모집"}
-_RP_KO = {}          # 영문 → 한글 짧은 이름 (AI 번역을 한 번만 하려고 기억)
-_RP_TERMS = {}       # 한글 질환명 → 영문 검색어
 
 
 @st.cache_data(ttl=6 * 3600, max_entries=30, show_spinner=False)
@@ -3073,53 +3071,9 @@ def _rp_sales(src):
         return {}, ""
 
 
-def _rp_korean(items):
-    """영문 단백질·질환 이름 → 짧은 한글 이름 (AI). 실패하면 빈 값 → 화면은 영문·분류를 보여 준다."""
-    need = [x for x in dict.fromkeys(items) if x and x not in _RP_KO]
-    if need:
-        try:
-            import gemini_ai
-            if gemini_ai.available():
-                prompt = ("다음 영어 의학 용어를 한국 제약회사 직원이 알아보기 쉬운 짧은 한국어 이름으로 바꿔 주세요. "
-                          "단백질은 '칼슘 통로 α2δ 소단위', 'PDE5 효소', '뮤 오피오이드 수용체'처럼 15자 이내로, "
-                          "질환은 표준 한국어 병명으로. 설명 없이 JSON 객체 하나로만 답하세요. 키는 원문 그대로.\n"
-                          + json.dumps(need[:60], ensure_ascii=False))
-                ok, txt = gemini_ai.analyze(prompt, tries=1)
-                if ok:
-                    mm = re.search(r"\{.*\}", txt or "", re.S)
-                    got = json.loads(mm.group(0)) if mm else {}
-                    for k, v in (got or {}).items():
-                        if k in need and isinstance(v, str) and 0 < len(v.strip()) <= 40:
-                            _RP_KO[k] = v.strip()
-        except Exception:
-            pass
-        for x in need:
-            _RP_KO.setdefault(x, "")
-    return {x: _RP_KO.get(x, "") for x in items}
-
-
 def _rp_disease_terms(q):
-    """한글 질환명 → 영문 검색어 (AI). 영문이면 그대로."""
-    q = q.strip()
-    if not re.search(r"[가-힣]", q):
-        return q
-    if q in _RP_TERMS:
-        return _RP_TERMS[q]
-    out = ""
-    try:
-        import gemini_ai
-        if gemini_ai.available():
-            ok, txt = gemini_ai.analyze(
-                "다음 한국어 병명·증상을 국제 질병 데이터베이스(Open Targets) 검색에 쓸 영어 이름으로 바꿔 주세요. "
-                "가장 흔한 표준 영어 이름 1~3개를 쉼표로만 구분해 답하세요. 설명은 쓰지 마세요.\n" + q, tries=1)
-            if ok:
-                out = ", ".join(t.strip(" .\"'") for t in (txt or "").splitlines()[0].split(",")
-                                if re.fullmatch(r"[A-Za-z0-9 '\-()]{2,60}", t.strip(" .\"'")))[:200]
-    except Exception:
-        out = ""
-    if out:
-        _RP_TERMS[q] = out
-    return out
+    """한글 병명 → 영문 이름 (정해진 사전, AI 없음). 영문이면 그대로, 사전에 없으면 빈 값."""
+    return repurpose.ko_disease(q)
 
 
 def _rp_drug_term(q):
@@ -3230,7 +3184,8 @@ def _repurpose_view(src):
 
     query = ss_state.get("rp_query")
     if not query or query[0] != mode or not query[1]:
-        st.info("이름을 넣고 **🔎 지도 그리기**를 누르세요. 한글로 넣어도 됩니다 (약은 허가 자료, 질환은 AI 로 영문 이름을 찾습니다).")
+        st.info("이름을 넣고 **🔎 지도 그리기**를 누르세요. 약은 한글로 넣어도 허가 자료에서 영문 성분명을 찾습니다. "
+                "질환은 영문으로 넣거나, 자주 쓰는 한글 병명(예: 기침·고혈압·천식)은 정해진 사전으로 바꿉니다.")
         return
     _, qtext, force_id = query
 
@@ -3243,7 +3198,7 @@ def _repurpose_view(src):
     else:
         term = _rp_disease_terms(qtext)
         if not term:
-            st.warning("한글 질환명을 영문으로 바꾸지 못했습니다 (AI 연결 없음). 영문 질환명으로 넣어 보세요. 예: cough")
+            st.warning(f"'{qtext}'은(는) 한글 병명 사전에 없습니다. 영문 질환명으로 넣어 보세요. 예: cough, Raynaud disease")
             return
     try:
         cands = _rp_find(mode, term)
@@ -3316,8 +3271,8 @@ def _repurpose_view(src):
         st.info("조건에 맞는 칸이 없습니다. 최소 점수를 낮추거나 체크를 풀어 보세요.")
         return
 
-    ko = _rp_korean([m["name"] for m in g["mid"]] + ([d_["name"] for d_ in g["right"]] if mode == "drug"
-                                                     else [raw["name"]]))
+    # 한글 병명은 정해진 사전에 있을 때만 덧붙인다(AI 없음). 단백질은 Open Targets 영문 이름·분류를 그대로 쓴다.
+    ko = {n_: repurpose.ko_name(n_) for n_ in ([d_["name"] for d_ in g["right"]] if mode == "drug" else [raw["name"]])}
 
     # ④ 범례
     if mode == "drug":
@@ -3369,10 +3324,11 @@ def _repurpose_view(src):
         _rp_node(fig, 0, L["y"], f"<b>{_rp_esc(_ko_l or raw['name'])}</b>" + (f"<br><span style='font-size:11px'>{_rp_esc(raw['name'])}</span>" if _ko_l else ""),
                  "#262730", "L", raw["name"], bg="#F1F2F5", size=15)
     for m in g["mid"]:
-        sub = ko.get(m["name"]) or repurpose.class_ko(m.get("cls")) or m["name"][:24]
+        sub = repurpose.class_ko(m.get("cls")) or "단백질"
         sub += f" · {repurpose.action_ko(m.get('action'))}" if mode == "drug" and m.get("action") else (
             f" · {m['score']:.2f}" if mode == "disease" else "")
-        _rp_node(fig, 1, m["y"], f"<b><i>{_rp_esc(m['symbol'])}</i></b><br><span style='font-size:11px'>{_rp_esc(sub)}</span>",
+        _rp_node(fig, 1, m["y"], f"<b><i>{_rp_esc(m['symbol'])}</i></b><br><span style='font-size:10.5px'>"
+                 f"{_rp_esc(_rp_short(m['name'], 30))}</span><br><span style='font-size:11px'>{_rp_esc(sub)}</span>",
                  "#22705F", "T:" + m["id"], f"{m['symbol']} · {m['name']}", bg="#DFF0EA", size=14)
     sel = ss_state.get("rp_sel")
     for d_ in g["right"]:
@@ -3432,8 +3388,7 @@ def _repurpose_view(src):
             if o.startswith("T:"):
                 m = next(x for x in g["mid"] if "T:" + x["id"] == o)
                 st.markdown(f"### *{m['symbol']}*")
-                st.markdown(f"**단백질**: {_rp_esc(ko.get(m['name']) or repurpose.class_ko(m.get('cls')))}  \n"
-                            f"<span style='font-size:12.5px;color:#555867'>{_rp_esc(m['name'])}</span>", unsafe_allow_html=True)
+                st.markdown(f"**단백질**: {_rp_esc(m['name'])}", unsafe_allow_html=True)
                 st.markdown(f"**분류**: {_rp_esc(repurpose.class_ko(m.get('cls')) or '-')}"
                             + (f"  \n**이 약의 작용**: {_rp_esc(repurpose.action_ko(m.get('action')))} ({_rp_esc(m.get('moa'))})"
                                if mode == "drug" and m.get("action") else "")
@@ -3478,7 +3433,7 @@ def _repurpose_view(src):
                 for t, s in d_["targets"]:
                     m = next((x for x in g["mid"] if x["id"] == t), None)
                     if m:
-                        st.markdown(f"**표적** *{_rp_esc(m['symbol'])}* — {_rp_esc(ko.get(m['name']) or repurpose.class_ko(m.get('cls')))}"
+                        st.markdown(f"**표적** *{_rp_esc(m['symbol'])}* — {_rp_esc(repurpose.class_ko(m.get('cls')) or '단백질')}"
                                     f" · 질환 연결 {s:.2f}  \n<span style='font-size:12.5px;color:#555867'>{_rp_esc(m['name'])}</span>",
                                     unsafe_allow_html=True)
                 st.markdown(f"**전체 최고 단계**: {repurpose.stage_ko(d_['stage'])}  \n**이 질환 임상 (Open Targets)**: {d_['n_trials']}건"

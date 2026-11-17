@@ -347,3 +347,76 @@ def disease_graph(raw, n_targets=6, n_per=3, min_score=0.0, approved_only=True, 
     edges = [(tid, d["key"], s) for d in right for (tid, s) in d["targets"] if tid in mid_ids]
     return {"left": {"name": raw["name"], "id": raw["id"], "y": (max(ys.values()) / 2) if ys else 0},
             "mid": mids, "right": right, "edges": edges}
+
+
+# ── 한글 병명 사전 (AI 없이, 정해진 표로만 바꾼다) ─────────────────────────
+# 왼쪽: 한글 (띄어쓰기 무시), 오른쪽: Open Targets 에서 찾을 영문 이름. 없으면 영문으로 넣으라고 안내한다.
+KO_DISEASE = {
+    "기침": "cough", "만성기침": "cough", "감기": "common cold", "독감": "influenza", "인플루엔자": "influenza",
+    "폐렴": "pneumonia", "결핵": "tuberculosis", "코로나19": "COVID-19", "코로나": "COVID-19",
+    "천식": "asthma", "만성폐쇄성폐질환": "chronic obstructive pulmonary disease", "copd": "chronic obstructive pulmonary disease",
+    "특발성폐섬유증": "idiopathic pulmonary fibrosis", "폐섬유증": "idiopathic pulmonary fibrosis",
+    "알레르기비염": "allergic rhinitis", "알레르기성비염": "allergic rhinitis",
+    "고혈압": "hypertension", "폐동맥고혈압": "pulmonary arterial hypertension", "폐고혈압": "pulmonary hypertension",
+    "당뇨": "type 2 diabetes mellitus", "당뇨병": "type 2 diabetes mellitus", "제2형당뇨병": "type 2 diabetes mellitus",
+    "제1형당뇨병": "type 1 diabetes mellitus", "비만": "obesity",
+    "고지혈증": "hyperlipidemia", "이상지질혈증": "dyslipidemia", "고콜레스테롤혈증": "hypercholesterolemia",
+    "고요산혈증": "hyperuricemia", "통풍": "gout",
+    "심부전": "heart failure", "협심증": "angina pectoris", "심근경색": "myocardial infarction",
+    "관상동맥질환": "coronary artery disease", "심방세동": "atrial fibrillation", "뇌졸중": "stroke",
+    "레이노": "Raynaud disease", "레이노현상": "Raynaud disease", "레이노병": "Raynaud disease",
+    "알츠하이머": "Alzheimer disease", "알츠하이머병": "Alzheimer disease", "치매": "dementia",
+    "파킨슨병": "Parkinson disease", "파킨슨": "Parkinson disease", "뇌전증": "epilepsy", "간질": "epilepsy",
+    "편두통": "migraine disorder", "두통": "headache", "우울증": "major depressive disorder",
+    "불안장애": "anxiety disorder", "조현병": "schizophrenia", "양극성장애": "bipolar disorder", "불면증": "insomnia",
+    "adhd": "attention deficit hyperactivity disorder", "주의력결핍과잉행동장애": "attention deficit hyperactivity disorder",
+    "자폐": "autism spectrum disorder", "신경병증성통증": "neuropathic pain", "섬유근육통": "fibromyalgia",
+    "하지불안증후군": "restless legs syndrome", "다발성경화증": "multiple sclerosis",
+    "루게릭병": "amyotrophic lateral sclerosis", "근위축성측삭경화증": "amyotrophic lateral sclerosis",
+    "알코올의존": "alcohol dependence", "니코틴의존": "nicotine dependence", "요통": "low back pain",
+    "아토피피부염": "atopic eczema", "아토피": "atopic eczema", "건선": "psoriasis", "두드러기": "urticaria",
+    "여드름": "acne", "탈모": "alopecia",
+    "류마티스관절염": "rheumatoid arthritis", "골관절염": "osteoarthritis", "퇴행성관절염": "osteoarthritis",
+    "골다공증": "osteoporosis", "루푸스": "systemic lupus erythematosus", "전신홍반루푸스": "systemic lupus erythematosus",
+    "강직성척추염": "ankylosing spondylitis", "베체트병": "Behcet disease", "쇼그렌증후군": "Sjogren syndrome",
+    "전신경화증": "systemic sclerosis", "경피증": "systemic sclerosis",
+    "크론병": "Crohn disease", "궤양성대장염": "ulcerative colitis", "과민성대장증후군": "irritable bowel syndrome",
+    "위식도역류질환": "gastroesophageal reflux disease", "역류성식도염": "gastroesophageal reflux disease",
+    "소화성궤양": "peptic ulcer disease", "위궤양": "peptic ulcer disease", "변비": "constipation", "설사": "diarrhea",
+    "구토": "vomiting", "메스꺼움": "nausea", "간경변": "liver cirrhosis", "지방간": "non-alcoholic fatty liver disease",
+    "비알코올성지방간": "non-alcoholic fatty liver disease", "비알코올성지방간염": "non-alcoholic steatohepatitis",
+    "b형간염": "hepatitis B", "c형간염": "hepatitis C", "hiv": "HIV infection", "대상포진": "herpes zoster",
+    "만성신장병": "chronic kidney disease", "만성콩팥병": "chronic kidney disease",
+    "전립선비대증": "benign prostatic hyperplasia", "과민성방광": "overactive bladder", "발기부전": "erectile dysfunction",
+    "월경통": "dysmenorrhea", "생리통": "dysmenorrhea", "자궁내막증": "endometriosis",
+    "다낭성난소증후군": "polycystic ovary syndrome", "불임": "infertility", "난임": "infertility",
+    "녹내장": "glaucoma", "황반변성": "age-related macular degeneration", "안구건조증": "dry eye syndrome",
+    "백내장": "cataract", "갑상선기능저하증": "hypothyroidism", "갑상선기능항진증": "hyperthyroidism",
+    "빈혈": "anemia", "철결핍성빈혈": "iron deficiency anemia", "혈우병": "hemophilia", "저나트륨혈증": "hyponatremia",
+    "폐암": "lung cancer", "유방암": "breast cancer", "위암": "gastric cancer", "대장암": "colorectal cancer",
+    "간암": "hepatocellular carcinoma", "췌장암": "pancreatic cancer", "전립선암": "prostate cancer",
+    "갑상선암": "thyroid cancer", "백혈병": "leukemia", "림프종": "lymphoma", "다발골수종": "multiple myeloma",
+    "다발성골수종": "multiple myeloma",
+}
+# 화면에 한글 병명을 덧붙일 때 쓰는 거꾸로 표 (영문 소문자 → 한글). 같은 영문이면 먼저 나온 한글을 쓴다.
+EN_KO = {}
+for _k, _v in KO_DISEASE.items():
+    if re.search(r"[가-힣]", _k):
+        EN_KO.setdefault(_v.lower(), _k)
+
+
+def ko_disease(q):
+    """한글 병명 → 영문 이름 (사전). 영문이면 그대로, 사전에 없으면 빈 값."""
+    q = (q or "").strip()
+    if not re.search(r"[가-힣]", q):
+        return q
+    k = re.sub(r"\s+", "", q).lower()
+    if k in KO_DISEASE:
+        return KO_DISEASE[k]
+    hits = sorted((x for x in KO_DISEASE if x in k or (len(k) >= 2 and k in x)), key=len, reverse=True)
+    return KO_DISEASE[hits[0]] if hits else ""
+
+
+def ko_name(en):
+    """영문 병명 → 사전에 있는 한글 병명 (없으면 빈 값). 화면 덧붙임용."""
+    return EN_KO.get((en or "").strip().lower(), "")
