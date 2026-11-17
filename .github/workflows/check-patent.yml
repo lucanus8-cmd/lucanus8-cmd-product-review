@@ -10,7 +10,7 @@ on:
         required: true
         default: "미라베그론"
       what:
-        description: "search = 성분 하나 찾기 · types = 특허유형별 건수 · impact = 물질/형태 나눴을 때 영향 · dmf = DMF 탭 읽기(쉼표로 여러 성분) · disease = 임상 대상질환 세기(쉼표로 여러 성분) · dmfview = 제품 제안 원료사 동향 열기(성분 하나) · metalive = 임상 분석 간이 메타분석 돌려 보기(성분A;성분B;지표;주;질환)"
+        description: "search = 성분 하나 찾기 · types = 특허유형별 건수 · impact = 물질/형태 나눴을 때 영향 · dmf = DMF 탭 읽기(쉼표로 여러 성분) · disease = 임상 대상질환 세기(쉼표로 여러 성분) · dmfview = 제품 제안 원료사 동향 열기(성분 하나) · metalive = 임상 분석 간이 메타분석 돌려 보기(성분A;성분B;지표;주;질환) · rplive = 제품 제안 약물 재창출 돌려 보기(약;질환)"
         required: true
         default: "search"
 
@@ -47,6 +47,8 @@ jobs:
             python .github/scripts/check_dmf_view.py
           elif [ "${{ inputs.what }}" = "metalive" ]; then
             python .github/scripts/check_meta_live.py
+          elif [ "${{ inputs.what }}" = "rplive" ]; then
+            python .github/scripts/check_repurpose_live.py
           elif [ "${{ inputs.what }}" = "disease" ]; then
             python .github/scripts/check_clinic_disease.py
           elif [ "${{ inputs.what }}" = "dmf" ]; then

@@ -215,9 +215,9 @@ def class_ko(c):
     return CLASS_KO.get(c or "", c or "")
 
 
-def trials(reports):
-    """임상 기록 → (전체 수, 진행 중 목록, 중단 이유 목록). 같은 번호는 한 번만."""
-    seen, ongoing, fails, n = set(), [], [], 0
+def trials(reports, with_done=False):
+    """임상 기록 → (전체 수, 진행 중 목록, 중단 이유 목록[, 완료 수]). 같은 번호는 한 번만."""
+    seen, ongoing, fails, n, done = set(), [], [], 0, 0
     for r in reports or []:
         rid = (r.get("id") or "").lower()
         if (r.get("source") or "") != "ClinicalTrials.gov" and not rid.startswith("nct"):
@@ -229,21 +229,23 @@ def trials(reports):
         stt = (r.get("trialOverallStatus") or "").upper()
         if stt in ONGOING:
             ongoing.append(r)
+        if stt == "COMPLETED":
+            done += 1
         if stt in STOPPED:
             for c in r.get("trialStopReasonCategories") or []:
                 if c in FAIL_REASON:
                     fails.append(FAIL_REASON[c])
-    return n, ongoing, fails
+    return (n, ongoing, fails, done) if with_done else (n, ongoing, fails)
 
 
 def status_of(stage, reports):
     """(상태 글자, 종류) — 종류: ok 허가 / bad 중단·실패 / cand 임상 있음 / none 근거만."""
-    n, ongoing, fails = trials(reports)
+    n, ongoing, fails, done = trials(reports, with_done=True)
     if stage == "APPROVAL":
         return "허가", "ok"
     if stage == "WITHDRAWAL":
         return "시장 철수", "bad"
-    if fails and not ongoing:
+    if fails and not ongoing and not done:     # 끝난 임상 없이 효과 부족·안전성으로만 멈춤
         return "중단 · " + "/".join(sorted(set(fails))), "bad"
     if stage and stage != "UNKNOWN":
         return "임상 · " + stage_ko(stage), "cand"
@@ -301,9 +303,10 @@ def drug_graph(raw, n_targets=5, n_per=6, min_score=0.2, hide_approved=False, on
 def disease_graph(raw, n_targets=6, n_per=3, min_score=0.0, approved_only=True, only_ongoing=False,
                   keep_drug=None, rank_drug=None, max_nodes=18):
     """질환 지도: 왼쪽 질환 1개 → 가운데 표적 → 오른쪽 약. keep_drug/rank_drug 로 사이트 자료(특허·허가)를 반영."""
-    tgs = [t for t in raw["targets"] if t["score"] >= min_score][:n_targets]
-    drugs = {}
-    for t in tgs:
+    drugs, tgs = {}, []
+    for t in raw["targets"]:
+        if t["score"] < min_score or len(tgs) >= n_targets:
+            continue
         best = {}
         for r in raw["by_target"].get(t["id"], []):
             k = r["key"]
@@ -322,6 +325,9 @@ def disease_graph(raw, n_targets=6, n_per=3, min_score=0.0, approved_only=True, 
             if only_ongoing and not ongoing:
                 continue
             cand.append((k, r, kn, n, ongoing, fails))
+        if not cand:
+            continue                      # 쓸 수 있는 약이 없는 표적(유전 연구로만 이어진 것)은 건너뛴다
+        tgs.append(t)
         cand.sort(key=lambda c: ((rank_drug(c[0]) if rank_drug else 0), -stage_rank(c[1]["stage"]), c[1]["name"]))
         for k, r, kn, n, ongoing, fails in cand[:n_per]:
             d = drugs.setdefault(k, {"key": k, "id": r["id"], "name": r["name"], "stage": r["stage"],
@@ -329,7 +335,8 @@ def disease_graph(raw, n_targets=6, n_per=3, min_score=0.0, approved_only=True, 
                                      "fails": fails, "reports": kn.get("reports", []), "targets": []})
             d["targets"].append((t["id"], t["score"]))
     right = list(drugs.values())
-    right.sort(key=lambda d: ((rank_drug(d["key"]) if rank_drug else 0), -max(s for _, s in d["targets"])))
+    t_order = {t["id"]: i for i, t in enumerate(tgs)}       # 같은 표적의 약끼리 모아 선이 덜 엉키게
+    right.sort(key=lambda d: (min(t_order.get(t, 99) for t, _ in d["targets"]), (rank_drug(d["key"]) if rank_drug else 0)))
     right = right[:max_nodes]
     ys = {d["key"]: float(len(right) - 1 - i) for i, d in enumerate(right)}
     for d in right:
