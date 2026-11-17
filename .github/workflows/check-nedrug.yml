@@ -144,3 +144,9 @@ jobs:
         env:
           WORDS: ${{ inputs.words }}
         run: python .github/scripts/check_opentargets.py
+
+      - name: 사이트용 약물 재창출 모듈을 실제 자료로 돌려 보기
+        if: inputs.what == 'repurpose'
+        env:
+          WORDS: ${{ inputs.words }}
+        run: python .github/scripts/check_repurpose.py
