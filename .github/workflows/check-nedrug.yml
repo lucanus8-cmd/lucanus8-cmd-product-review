@@ -14,7 +14,7 @@ on:
         required: false
         default: "0"
       what:
-        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기, clinic = 개발코드 생동 찾기, healthkr = 약학정보원 질환정보 구조·약관 보기, ctgov = ClinicalTrials.gov 접속·간이 메타분석 (words 에 약:용량,약:용량)"
+        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기, clinic = 개발코드 생동 찾기, healthkr = 약학정보원 질환정보 구조·약관 보기, ctgov = ClinicalTrials.gov 접속·간이 메타분석 (words 에 약:용량,약:용량), opentargets = Open Targets 구조·질의 시험 (words 에 약;질환), repurpose = 약물 재창출 모듈 시험 (words 에 약;질환)"
         required: false
         default: "item"
       urls:
@@ -43,7 +43,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -138,3 +138,9 @@ jobs:
         env:
           CASE: ${{ inputs.words }}
         run: python .github/scripts/check_meta_module.py
+
+      - name: Open Targets 공개 API 구조·질의 시험
+        if: inputs.what == 'opentargets'
+        env:
+          WORDS: ${{ inputs.words }}
+        run: python .github/scripts/check_opentargets.py
