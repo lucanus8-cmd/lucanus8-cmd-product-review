@@ -79,16 +79,66 @@ def deep(tname, depth=2, seen=None):
         deep(s_, depth - 1, seen)
 
 
+_TQ = ("query($n:String!){__type(name:$n){fields{name args{name type{kind}} "
+       "type{name kind ofType{name kind ofType{name kind ofType{name kind ofType{name kind}}}}}}}}")
+_CACHE = {}
+
+
+def _fields(tname):
+    if tname not in _CACHE:
+        r = gql(_TQ, {"n": tname})
+        _CACHE[tname] = ((r.get("data") or {}).get("__type") or {}).get("fields") or []
+    return _CACHE[tname]
+
+
+def sel(tname, depth=2):
+    """타입의 칸을 자동으로 골라 질의 문장을 만든다(인자가 필요한 칸은 뺀다)."""
+    parts = []
+    for f in _fields(tname):
+        if any(a["type"]["kind"] == "NON_NULL" for a in f["args"]) or f["name"] in (
+                "molblock", "similarEntities", "literatureOcurrences", "adverseEvents", "pharmacogenomics",
+                "evidences", "associatedDiseases", "associatedTargets", "credibleSets", "interactions",
+                "associationTimeSeries", "drugAndClinicalCandidates", "indications", "mechanismsOfAction",
+                "childMolecules", "parentMolecule", "descendants", "ancestors", "children", "parents",
+                "resolvedAncestors", "phenotypes", "transcripts", "geneOntology", "proteinCodingCoordinates",
+                "baselineExpression", "mousePhenotypes", "tractability", "safetyLiabilities", "pathways",
+                "homologues", "chemicalProbes", "dbXrefs", "dbXRefs", "description", "functionDescriptions"):
+            continue
+        x = f["type"]
+        while x.get("ofType"):
+            x = x["ofType"]
+        if x["kind"] in ("SCALAR", "ENUM"):
+            parts.append(f["name"])
+        elif x["kind"] == "OBJECT" and depth > 0:
+            sub = sel(x["name"], depth - 1)
+            if sub:
+                parts.append(f"{f['name']}{{{sub}}}")
+    return " ".join(parts)
+
+
 def main():
-    seen = set()
-    for t in ("Drug", "MechanismsOfAction", "clinicalIndicationsFromDrugImp", "clinicalTargets",
-              "clinicalIndicationsFromDiseaseImp", "SearchResults", "MappingResults"):
-        deep(t, 2, seen)
-    for q in (DIS, "cough", "chronic cough", "refractory chronic cough", "Raynaud"):
-        show(f"질환 찾기 '{q}'", "query($q:String!){search(queryString:$q, entityNames:[\"disease\"], page:{index:0,size:10}){total hits{id name entity}}}",
-             {"q": q}, cut=1500)
-    show("mapIds", "query($q:[String!]!){mapIds(queryTerms:$q, entityNames:[\"disease\",\"drug\"]){mappings{term hits{id name entity}}}}",
-         {"q": ["chronic cough", "cough", "Raynaud disease", "sildenafil", "gabapentin"]}, cut=3000)
+    for t in ("ClinicalIndicationFromDrug", "ClinicalTargetFromTarget", "ClinicalIndicationFromDisease",
+              "DrugWarning", "DrugLabelAndSource", "SearchResult", "MechanismOfActionRow"):
+        try:
+            print(f"\n----- {t}: {sel(t, 1)}")
+        except Exception as e:
+            print(t, "실패", e)
+    s1 = sel("ClinicalIndicationFromDrug", 1)
+    show("약 → 적응증 (sildenafil)", "query{drug(chemblId:\"CHEMBL192\"){name maximumClinicalStage drugType "
+         "synonyms{" + sel("DrugLabelAndSource", 0) + "} tradeNames{" + sel("DrugLabelAndSource", 0) + "} "
+         "drugWarnings{" + sel("DrugWarning", 0) + "} "
+         "mechanismsOfAction{rows{mechanismOfAction actionType targetName targets{id approvedSymbol approvedName}}} "
+         "indications{count rows{" + s1 + "}}}}", cut=6000)
+    show("표적 → 약 (PDE5A)", "query{target(ensemblId:\"ENSG00000138735\"){drugAndClinicalCandidates{count rows{"
+         + sel("ClinicalTargetFromTarget", 1) + "}}}}", cut=4000)
+    show("질환 → 약 (Cough)", "query{disease(efoId:\"HP_0012735\"){name drugAndClinicalCandidates{count rows{"
+         + sel("ClinicalIndicationFromDisease", 1) + "}}}}", cut=4000)
+    show("질환 → 표적 (Cough)", """query{disease(efoId:"HP_0012735"){associatedTargets(page:{index:0,size:10}){count rows{score
+        datatypeScores{id score} target{id approvedSymbol approvedName targetClass{label level}}}}}}""", cut=4000)
+    show("표적 → 질환 (CACNA2D1)", """query{target(ensemblId:"ENSG00000153956"){approvedSymbol approvedName
+        associatedDiseases(page:{index:0,size:10}){count rows{score disease{id name}}}}}""", cut=2500)
+    show("검색 hit 칸", "query{search(queryString:\"gabapentin\", entityNames:[\"drug\"], page:{index:0,size:3}){hits{"
+         + sel("SearchResult", 0) + "}}}", cut=2500)
     return 0
 
 
