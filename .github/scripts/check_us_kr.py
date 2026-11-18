@@ -225,10 +225,13 @@ def korea_trials(k, canon, split, wanted):
         sk = en_skel_ko(w)
         if len(sk) >= 4:
             skel2key[sk].add(w)
-    out, how = defaultdict(list), Counter()
-    for nm, step, dt, sp, prod in zip(c["성분명"], c["CLINIC_STEP_NM"], c["CLST_APRV_DT"], c.get("원개발사", ""), c["제품명"]):
-        parts = [p for p in re.split(r",|/|·|\+|및", str(nm)) if p.strip()]
-        f = form_of(re.sub(r"\(.*?\)|\[.*?\]|\d.*$", "", str(prod)), FORM_KO)
+    print("   제형 칸(SHAPE_CD):", Counter(c.get("SHAPE_CD", pd.Series(dtype=str))).most_common(12))
+    out, how = [], Counter()
+    for nm, step, dt, sp, prod, stt, shp in zip(c["성분명"], c["CLINIC_STEP_NM"], c["CLST_APRV_DT"], c.get("원개발사", ""),
+                                               c["제품명"], c.get("STATUS", ""), c.get("SHAPE_CD", "")):
+        parts = [p for p in re.split(r",|/|·|\+|및|;", str(nm)) if p.strip()]
+        f = form_of(str(shp), FORM_KO) or form_of(re.sub(r"\(.*?\)|\[.*?\]|\d.*$", "", str(prod)), FORM_KO)
+        keys = set()
         for p in parts:
             key = None
             lat = re.findall(r"[A-Za-z][A-Za-z\- ]{3,}", p)
@@ -245,11 +248,18 @@ def korea_trials(k, canon, split, wanted):
                 else:
                     h = None
             if key and key in wanted:
-                out[key].append((dt, step, sp, prod, f))
+                keys.add(key)
                 how[h] += 1
-    print(f"후보 성분에 연결된 임상 {sum(len(v) for v in out.values()):,}건 · 성분 {len(out):,}개 · 연결 방법 {dict(how)}")
-    print("   한글 발음 대조 예:", [(k_, v[0][3][:20]) for k_, v in list(out.items())[:0]])
+        if keys:
+            out.append((frozenset(keys), str(dt)[:10], step, sp, prod, f, stt))
+    print(f"후보 성분에 연결된 임상 {len(out):,}건 · 연결 방법 {dict(how)}")
     return out
+
+
+def trials_for(trials, t):
+    """후보(주성분 묶음 t)에 해당하는 국내 임상: 단일제는 그 성분이 든 임상, 복합제는 그 성분들이 모두 든 임상"""
+    need = set(t)
+    return [x for x in trials if need <= x[0]]
 
 
 def fda_indications(apps_wanted):
@@ -302,14 +312,17 @@ def ctgov_korea(names):
     return out
 
 
+ONGOING = {"모집중", "모집완료", "승인완료"}
+
+
 def trial_txt(lst, f=None):
     if not lst:
         return ""
-    lst = sorted(lst, reverse=True)
-    dt, step, sp, prod, ff = lst[0]
-    recent = sum(1 for x in lst if x[0][:4] >= "2021")
-    same = sum(1 for x in lst if f and x[4] == f)
-    return (f"국내 임상 {len(lst)}건(2021년 이후 {recent}) · 최근 {dt[:4]}-{dt[4:6]} {step} {sp[:20]}"
+    lst = sorted(lst, key=lambda x: x[1], reverse=True)
+    _, dt, step, sp, prod, ff, stt = lst[0]
+    ing = sum(1 for x in lst if x[6] in ONGOING)
+    same = sum(1 for x in lst if f and x[5] == f)
+    return (f"국내 임상 승인 {len(lst)}건 (진행 중 {ing}) · 최근 {dt} {step} {stt} · {str(sp)[:25]}"
             + (f" · 이 제형 임상 {same}건" if f else ""))
 
 
@@ -445,7 +458,7 @@ def main():
         trials = korea_trials(k, canon, split, wanted)
     except Exception as e:
         print("임상 목록 실패:", type(e).__name__, str(e)[:200])
-        trials = {}
+        trials = []
     FLUID = re.compile(r"^(dextrose|glucose|sodium chloride|potassium chloride|calcium chloride|magnesium chloride|"
                        r"magnesium sulfate|sodium lactate|sodium acetate|acetate|dibasic|monobasic|amino acids|"
                        r"sodium bicarbonate|sodium gluconate|soybean oil|fish oil|olive oil|lipid|glycerophosphate|"
@@ -466,9 +479,10 @@ def main():
     except Exception as e:
         print("ClinicalTrials.gov 실패:", type(e).__name__, str(e)[:200])
         ct = {}
-    ttx = lambda t, f=None: " ; ".join(filter(None, (trial_txt(trials.get(x, []), f) and f"{x}: {trial_txt(trials.get(x, []), f)}" if len(t) > 1 else trial_txt(trials.get(x, []), f) for x in t)))  # noqa: E731
-    print(f"   국내 성분 없음 후보 중 국내 임상 있음: {sum(1 for t in gap if any(trials.get(x) for x in t))}가지"
-          f" · 제형 없음 후보 중 같은 성분 국내 임상 있음: {sum(1 for t, _ in gap_form if any(trials.get(x) for x in t))}가지")
+    ttx = lambda t, f=None: trial_txt(trials_for(trials, t), f)  # noqa: E731
+    print(f"   국내 성분 없음 후보 중 국내 임상 승인 있음: {sum(1 for t in gap if trials_for(trials, t))}가지"
+          f" (진행 중 {sum(1 for t in gap if any(x[6] in ONGOING for x in trials_for(trials, t)))})"
+          f" · 제형 없음 후보 중 같은 성분 국내 임상 있음: {sum(1 for t, _ in gap_form if trials_for(trials, t))}가지")
     info = defaultdict(lambda: {"date": "9", "brands": Counter(), "anda": set(), "nda": set(), "forms": set()})
     for t, f, br, d, kd, app in zip(us["keys"], us["fg"], us["brand"], us["date"], us["kind"], us["app"]):
         x = info[t]
