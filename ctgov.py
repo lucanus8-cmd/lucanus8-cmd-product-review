@@ -22,6 +22,7 @@ FIELDS = ",".join([
     "protocolSection.identificationModule",
     "protocolSection.designModule.phases",
     "protocolSection.conditionsModule",
+    "derivedSection.conditionBrowseModule.meshes",
     "protocolSection.eligibilityModule",
     "protocolSection.armsInterventionsModule.interventions",
     "resultsSection.outcomeMeasuresModule",
@@ -30,6 +31,7 @@ MAX_PAGES = 5            # 성분 하나당 최대 500개 임상
 SIDE_A, SIDE_B, SIDE_D = "A vs 비교군", "B vs 비교군", "A vs B (직접)"
 PLACEBO = "위약"
 MAX_COMPS = 6            # 비교약 목록은 임상이 많은 순으로 최대 6개까지 표를 만들어 둔다
+MAX_EP = 15              # 한 임상에서 읽는 평가변수 묶음 수 상한
 PHASE_CODE = {"1상": "PHASE1", "2상": "PHASE2", "3상": "PHASE3", "4상": "PHASE4"}
 Z = 1.959963984540054
 TOP_JOURNALS = ("N Engl J Med", "Lancet", "JAMA", "BMJ")
@@ -217,6 +219,220 @@ def candidates(study, kind, out_kw, week):
     return res, (why or "지표 이름 없음")
 
 
+# ── 평가변수·질환 묶기 (AI 없음, 정해진 규칙) ─────────────────────────
+# 같은 척도·같은 방식(변화량/변화율/최종값)·같은 시점끼리만 한 묶음으로 합친다.
+# 척도 사전은 위에서부터 먼저 맞는 것을 쓴다(구체적인 것을 위에 둔다).
+_SCALES = [
+    ("DAS28-CRP", r"das\s*-?\s*28.{0,25}crp|disease activity score.{0,45}crp|crp.{0,12}das\s*-?\s*28"),
+    ("DAS28-ESR", r"das\s*-?\s*28.{0,25}esr|disease activity score.{0,45}(esr|erythrocyte)|esr.{0,12}das\s*-?\s*28"),
+    ("DAS28 (CRP·ESR 미표기)", r"das\s*-?\s*28|disease activity score\s*-?\s*28"),
+    ("CDAI (류마티스)", r"clinical disease activity index"),
+    ("CDAI (크론병)", r"crohn'?s disease activity index"),
+    ("CDAI", r"\bcdai\b"),
+    ("SDAI", r"\bsdai\b|simplified disease activity"),
+    ("HAQ-DI", r"\bhaq\b|haq-?di|health assessment questionnaire"),
+    ("ACR20 반응", r"\bacr\s*-?\s*20\b|american college of rheumatology.{0,40}\b20\b"),
+    ("ACR50 반응", r"\bacr\s*-?\s*50\b|american college of rheumatology.{0,40}\b50\b"),
+    ("ACR70 반응", r"\bacr\s*-?\s*70\b|american college of rheumatology.{0,40}\b70\b"),
+    ("HbA1c", r"hba1c|hb\s*a1c|\ba1c\b|glyc(at|osyl)ated\s+h(a)?emoglobin|h(a)?emoglobin\s+a1c"),
+    ("공복 혈당", r"fasting (plasma |blood |serum )?glucose|\bfpg\b"),
+    ("식후 혈당", r"post-?prandial (plasma )?glucose|\bppg\b"),
+    ("BMI", r"body mass index|\bbmi\b"),
+    ("허리둘레", r"waist circumference"),
+    ("체중", r"body weight|\bweight\b"),
+    ("Non-HDL-C", r"non-?\s*hdl"),
+    ("LDL-C", r"\bldl|low[- ]density lipoprotein"),
+    ("HDL-C", r"\bhdl|high[- ]density lipoprotein"),
+    ("중성지방", r"triglyceride"),
+    ("총콜레스테롤", r"total cholesterol"),
+    ("ApoB", r"\bapo(lipoprotein)?\s*-?\s*b\b"),
+    ("Lp(a)", r"lipoprotein\s*\(a\)|\blp\s*\(a\)"),
+    ("수축기 혈압", r"systolic"),
+    ("이완기 혈압", r"diastolic"),
+    ("UACR", r"albumin[- ]to[- ]creatinine|\buacr\b"),
+    ("eGFR", r"\begfr\b|glomerular filtration"),
+    ("혈청 크레아티닌", r"serum creatinine"),
+    ("칼륨", r"potassium"),
+    ("요산", r"uric acid|serum urate|\bsua\b"),
+    ("FEV1", r"\bfev\s*-?\s*1|forced expiratory volume"),
+    ("FVC", r"\bfvc\b|forced vital capacity"),
+    ("최대 호기 유량", r"peak expiratory flow|\bpef\b"),
+    ("악화", r"exacerbation"),
+    ("ACQ", r"\bacq\b|acq-?\d|asthma control questionnaire"),
+    ("SGRQ", r"sgrq|st\.? george"),
+    ("CAT", r"copd assessment test|\bcat\b score"),
+    ("PASI 100", r"pasi\s*-?\s*100"),
+    ("PASI 90", r"pasi\s*-?\s*90"),
+    ("PASI 75", r"pasi\s*-?\s*75"),
+    ("PASI", r"\bpasi\b|psoriasis area"),
+    ("EASI 90", r"easi\s*-?\s*90"),
+    ("EASI 75", r"easi\s*-?\s*75"),
+    ("EASI 50", r"easi\s*-?\s*50"),
+    ("EASI", r"\beasi\b|eczema area"),
+    ("sPGA", r"\bspga\b|static physician"),
+    ("IGA", r"\biga\b|investigator'?s? global assessment"),
+    ("DLQI", r"dlqi|dermatology life quality"),
+    ("가려움", r"itch|prurit"),
+    ("MADRS", r"madrs|montgomery"),
+    ("HAM-A", r"ham-?a\b|hamilton anxiety"),
+    ("HAM-D", r"ham-?d\b|hamd|hamilton (rating scale for )?depression"),
+    ("PANSS", r"panss|positive and negative syndrome"),
+    ("CGI-S", r"cgi-?s\b|clinical global impression.{0,20}severity"),
+    ("CGI-I", r"cgi-?i\b|clinical global impression.{0,20}improvement"),
+    ("YMRS", r"ymrs|young mania"),
+    ("ADAS-Cog", r"adas-?cog"),
+    ("MMSE", r"mmse|mini-?mental"),
+    ("CDR-SB", r"cdr-?sb|clinical dementia rating"),
+    ("UPDRS", r"updrs"),
+    ("WOMAC 통증", r"womac.{0,25}pain"),
+    ("WOMAC 기능", r"womac.{0,30}function"),
+    ("WOMAC", r"womac"),
+    ("통증 강도", r"pain (intensity|score|nrs|vas)|\bnrs\b.{0,15}pain|visual analog(ue)? scale.{0,25}pain|average pain"),
+    ("IPSS", r"ipss|international prostate symptom"),
+    ("최대 요속", r"qmax|maximum (urinary )?flow"),
+    ("배뇨 횟수", r"micturition"),
+    ("요절박", r"urgency"),
+    ("요실금", r"incontinence"),
+    ("골밀도 요추", r"(bmd|bone mineral density).{0,40}(lumbar|spine)"),
+    ("골밀도 고관절", r"(bmd|bone mineral density).{0,40}total hip"),
+    ("골밀도 대퇴경부", r"(bmd|bone mineral density).{0,40}femoral neck"),
+    ("골밀도", r"\bbmd\b|bone mineral density"),
+    ("월 편두통 일수", r"migraine days"),
+    ("월 두통 일수", r"headache days"),
+    ("Mayo 점수", r"\bmayo\b"),
+    ("자발 배변", r"spontaneous bowel movement|\bc?sbms?\b"),
+    ("좌심실 박출률", r"ejection fraction|\blvef\b"),
+    ("NT-proBNP", r"nt-?\s*pro-?\s*bnp"),
+    ("6분 보행", r"6-?\s*minute walk|six[- ]minute walk|6mwd|6mwt"),
+    ("혈색소", r"h(a)?emoglobin"),
+    ("안압", r"intraocular pressure|\biop\b"),
+    ("최대 교정 시력", r"bcva|best[- ]corrected visual acuity"),
+    ("SVR12", r"\bsvr\s*-?\s*12|sustained virolog"),
+    ("HIV RNA", r"hiv-?1?\s*rna"),
+    ("안면홍조", r"hot flash|hot flush|vasomotor"),
+]
+_SCALES_RE = [(lab, re.compile(rx, re.I)) for lab, rx in _SCALES]
+_TIME_RE = re.compile(r"(?:(\d+(?:\.\d+)?)\s*-?\s*(weeks?|wks?|months?|years?|days?)\b"
+                      r"|\b(weeks?|wks?|months?|years?|days?)\s*(\d+(?:\.\d+)?))", re.I)
+_TIME_WK = {"w": 1, "m": 52 / 12, "y": 52, "d": 1 / 7}
+_EP_STRIP = re.compile(
+    r"\b(?:(?:least[- ]squares?\s+)?mean\s+)?(?:percent(?:age)?\s+)?change(?:s)?\s+(?:from|since)\s+baseline"
+    r"(?:\s+(?:in|to|of|at))?|\b(?:at|to|through|by|up to|over|after)?\s*(?:weeks?|wks?|months?|years?|days?)\s*\d+"
+    r"(?:\.\d+)?|\b\d+(?:\.\d+)?\s*-?\s*(?:weeks?|wks?|months?|years?|days?)\b|\bbaseline\b", re.I)
+_EP_STOP = {"in", "the", "of", "at", "to", "a", "an", "and", "with", "on", "for", "by", "from", "score", "scores",
+            "total", "mean", "change", "changes", "percent", "percentage", "participants", "number", "proportion",
+            "who", "had", "were", "was", "achieving", "achieved", "with", "least", "squares", "ls", "level",
+            "levels", "value", "values", "measured", "as", "during", "period", "treatment", "versus", "vs"}
+
+
+def weeks_of(text):
+    """'12 weeks'·'Week 12'·'Month 6' → 주. 여러 개면 마지막 값. 못 읽으면 None."""
+    hits = _TIME_RE.findall(text or "")
+    if not hits:
+        return None
+    n1, u1, u2, n2 = hits[-1]
+    n, u = (n1, u1) if n1 else (n2, u2)
+    return round(float(n) * _TIME_WK[u[0].lower()], 1)
+
+
+def _ep_core(title):
+    """사전에 없는 지표: 군·시점·'change from baseline' 글자를 지운 핵심어 (순서 유지)."""
+    t = re.split(r"\s+-\s+|\s+:\s+|\bversus\b|\bvs\.?\s", title or "", flags=re.I)[0]
+    t = _EP_STRIP.sub(" ", t)
+    words = []
+    for w in re.findall(r"[A-Za-z0-9]+(?:[-'][A-Za-z0-9]+)*", t):
+        lw = w.lower()
+        if lw in _EP_STOP or lw in [x.lower() for x in words] or drug_words(lw) or re.fullmatch(r"\d+(mg)?", lw):
+            continue
+        words.append(w)
+    return words
+
+
+def ep_group(o, kind):
+    """평가변수 → (묶음 키, 묶음 이름). 같은 척도·방식·시점이면 같은 키."""
+    title = o.get("title") or ""
+    low = title.lower()
+    scale = next((lab for lab, rx in _SCALES_RE if rx.search(title)), None)
+    if scale:
+        skey, sname = scale, scale
+    else:
+        core = _ep_core(title)
+        skey = "~" + " ".join(sorted(w.lower() for w in core)) if core else "~" + low[:60]
+        sname = " ".join(core)[:60] or title[:60] or "(이름 없음)"
+    if kind == "연속형":
+        if re.search(r"percent(age)?\s+change|%\s*change|percent(age)?\s+reduction|percent(age)? decrease", low):
+            mode = "변화율(%)"
+        elif re.search(r"change|reduction|decrease|increase|difference from baseline", low):
+            mode = "변화량"
+        else:
+            mode = "최종값"
+    elif kind == "이분형":
+        mode = "건수"
+    else:
+        mode = "위험비"
+    wk = weeks_of(title) or weeks_of(o.get("timeFrame"))
+    wtxt = f"{wk:g}주" if wk is not None else "시점 미상"
+    return f"{skey}|{mode}|{wtxt}", f"{sname} · {mode} · {wtxt}"
+
+
+def diseases_of(study):
+    """임상의 표준 병명(MeSH). 없으면 등록 질환명에서 괄호를 뗀 것."""
+    meshes = (study.get("derivedSection", {}).get("conditionBrowseModule", {}).get("meshes") or [])
+    terms = [m.get("term") for m in meshes if m.get("term")]
+    if not terms:
+        conds = study.get("protocolSection", {}).get("conditionsModule", {}).get("conditions") or []
+        terms = [re.sub(r"\s*\([^)]*\)", "", c).strip().title() for c in conds]
+    out = []
+    for t in terms:
+        if t and t not in out:
+            out.append(t)
+    return out or ["(질환 등록 없음)"]
+
+
+def disease_options(rows):
+    """[(대표 질환, A 임상 수, B 임상 수, 직접 비교 수)] — 대표 질환 = 임상의 첫 표준 병명. 많은 순."""
+    first = {}
+    for r in rows:
+        first.setdefault(r["임상번호"], r["_dis"][0])
+    out = []
+    for d in dict.fromkeys(first.values()):
+        cnt = {SIDE_A: set(), SIDE_B: set(), SIDE_D: set()}
+        for r in rows:
+            if d in r["_dis"]:
+                cnt[r["비교"]].add(r["임상번호"])
+        out.append((d, len(cnt[SIDE_A]), len(cnt[SIDE_B]), len(cnt[SIDE_D])))
+    nfirst = Counter(first.values())
+    out.sort(key=lambda x: (-nfirst[x[0]], -(x[1] + x[2] + x[3]), x[0]))
+    return out
+
+
+def group_options(rows, dis):
+    """고른 질환 안의 평가변수 묶음 목록. 고를 수 있는 묶음(A·B 양쪽 또는 직접 비교가 있음)을 먼저,
+    그 안에서는 1차 평가변수 줄이 많은 순."""
+    by = {}
+    for r in rows:
+        if dis is not None and dis not in r["_dis"]:
+            continue
+        g = by.setdefault(r["_grp"], {"key": r["_grp"], "label": r["묶음"], SIDE_A: set(), SIDE_B: set(),
+                                      SIDE_D: set(), "prim": 0, "ex": []})
+        g[r["비교"]].add(r["임상번호"])
+        g["prim"] += r.get("구분") == "1차"
+        t = r.get("평가변수") or ""
+        if t and t not in g["ex"]:
+            g["ex"].append(t)
+    out = []
+    for g in by.values():
+        na, nb, nd = len(g[SIDE_A]), len(g[SIDE_B]), len(g[SIDE_D])
+        out.append({"key": g["key"], "label": g["label"], "a": na, "b": nb, "d": nd, "prim": g["prim"],
+                    "ok": bool((na and nb) or nd), "ex": g["ex"]})
+    out.sort(key=lambda g: (not g["ok"], -g["prim"], -(g["a"] + g["b"] + g["d"]), g["label"]))
+    return out
+
+
+def pick_rows(rows, dis, grp):
+    return [r for r in rows if r["_grp"] == grp and (dis is None or dis in r["_dis"])]
+
+
 def _arm_stats(o, kind):
     """군 id → 숫자들."""
     try:
@@ -361,13 +577,15 @@ def _background(text, groups, names):
     return sorted((words - alone) | (common or set()))
 
 
-def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_names=None):
-    """한 임상 · 한 성분 → (행, 군 정보) 또는 (None, 빠진 이유)."""
+def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_names=None, cand=None):
+    """한 임상 · 한 성분 → (행, 군 정보) 또는 (None, 빠진 이유). cand=(평가변수, 1차여부)를 주면 그것을 쓴다."""
     nct, title, text, flags, sub = _study_info(study)
-    cands, why = candidates(study, kind, out_kw, week)
-    if not cands:
-        return None, why
-    o, primary = cands[0]
+    if cand is None:
+        cands, why = candidates(study, kind, out_kw, week)
+        if not cands:
+            return None, why
+        cand = cands[0]
+    o, primary = cand
     groups = o.get("groups") or []
     arms = find_arm(groups, names, dose, avoid=other_names)
     pls = find_comparator(groups, names, comp_names) if comp_names else find_placebo(groups, names)
@@ -409,35 +627,47 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_n
     return row, info
 
 
-def direct_row(study, a_names, a_dose, b_names, b_dose, kind, out_kw, week):
-    nct, title, text, flags, sub = _study_info(study)
+def direct_rows(study, a_names, a_dose, b_names, b_dose, kind, out_kw, week):
+    """같은 임상 안 A vs B → 평가변수 묶음마다 한 줄 [(행, 군 정보, 묶음 키, 묶음 이름)]."""
+    out, seen = [], set()
     cands, _ = candidates(study, kind, out_kw, week)
     for o, primary in cands:
-        groups = o.get("groups") or []
-        ga = find_arm(groups, a_names, a_dose, avoid=b_names)
-        gb = find_arm(groups, b_names, b_dose, avoid=a_names)
-        pairs = [(x, y) for x in ga for y in gb if x.get("id") != y.get("id")
-                 and {w for w in _others(x.get("title", ""), a_names) if not _same(w, b_names)}
-                 == {w for w in _others(y.get("title", ""), b_names) if not _same(w, a_names)}]
-        if not pairs:
+        gk, gl = ep_group(o, kind)
+        if gk in seen or len(seen) >= MAX_EP:
             continue
-        ga, gb = [pairs[0][0]], [pairs[0][1]]
-        row = {"합침": True, "비교": SIDE_D, "임상번호": nct, "제목": title,
-               "시험군": ga[0].get("title", ""), "대조군": gb[0].get("title", ""), "소그룹": sub,
-               "시험군 용량": dose_of(ga[0].get("title", "")), "대조군 용량": dose_of(gb[0].get("title", "")),
-               "_flags": list(flags) + ([] if primary else ["2차 평가변수"]), "_unit": o.get("unitOfMeasure", ""),
-               "_g1": ga[0].get("id"), "_g2": gb[0].get("id"), "_bg": []}
-        row.update(_endpoint(study, o, primary))
-        row.update(fill(kind, o, ga[0].get("id"), gb[0].get("id")))
-        row.pop("_pct", None)
-        if not _has_numbers(kind, row):
-            row["합침"] = False
-            row["_flags"].append("숫자 못 읽음")
-        info = {"nct": nct, "title": title, "outcome": o.get("title", ""), "timeframe": o.get("timeFrame", ""),
-                "unit": o.get("unitOfMeasure", ""), "groups": [(g.get("id"), g.get("title", "")) for g in groups],
-                "o": _slim(o)}
-        return row, info
-    return None, None
+        r = _direct_one(study, o, primary, a_names, a_dose, b_names, b_dose, kind)
+        if r:
+            seen.add(gk)
+            out.append(r + (gk, gl))
+    return out
+
+
+def _direct_one(study, o, primary, a_names, a_dose, b_names, b_dose, kind):
+    nct, title, text, flags, sub = _study_info(study)
+    groups = o.get("groups") or []
+    ga = find_arm(groups, a_names, a_dose, avoid=b_names)
+    gb = find_arm(groups, b_names, b_dose, avoid=a_names)
+    pairs = [(x, y) for x in ga for y in gb if x.get("id") != y.get("id")
+             and {w for w in _others(x.get("title", ""), a_names) if not _same(w, b_names)}
+             == {w for w in _others(y.get("title", ""), b_names) if not _same(w, a_names)}]
+    if not pairs:
+        return None
+    ga, gb = [pairs[0][0]], [pairs[0][1]]
+    row = {"합침": True, "비교": SIDE_D, "임상번호": nct, "제목": title,
+           "시험군": ga[0].get("title", ""), "대조군": gb[0].get("title", ""), "소그룹": sub,
+           "시험군 용량": dose_of(ga[0].get("title", "")), "대조군 용량": dose_of(gb[0].get("title", "")),
+           "_flags": list(flags) + ([] if primary else ["2차 평가변수"]), "_unit": o.get("unitOfMeasure", ""),
+           "_g1": ga[0].get("id"), "_g2": gb[0].get("id"), "_bg": []}
+    row.update(_endpoint(study, o, primary))
+    row.update(fill(kind, o, ga[0].get("id"), gb[0].get("id")))
+    row.pop("_pct", None)
+    if not _has_numbers(kind, row):
+        row["합침"] = False
+        row["_flags"].append("숫자 못 읽음")
+    info = {"nct": nct, "title": title, "outcome": o.get("title", ""), "timeframe": o.get("timeFrame", ""),
+            "unit": o.get("unitOfMeasure", ""), "groups": [(g.get("id"), g.get("title", "")) for g in groups],
+            "o": _slim(o)}
+    return row, info
 
 
 def _slim(o):
@@ -510,12 +740,18 @@ def search_all(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetc
     usable = [c for c, _, _, ok in comps if ok]
     default = usable[0] if usable else PLACEBO
 
+    labels = {}
+
+    def _tag(row, s, gk, gl):
+        labels.setdefault(gk, gl)
+        row["_grp"], row["묶음"], row["_dis"] = gk, labels[gk], diseases_of(s)
+
     direct, dinfos = [], {}
     for nct, s in studies.items():
-        row, info = direct_row(s, aliases(s, a), a_dose, aliases(s, b), b_dose, kind, out_kw, week)
-        if row:
+        for row, info, gk, gl in direct_rows(s, aliases(s, a), a_dose, aliases(s, b), b_dose, kind, out_kw, week):
+            _tag(row, s, gk, gl)
             direct.append(row)
-            dinfos[f"{nct}|{SIDE_D}"] = info
+            dinfos[f"{nct}|{SIDE_D}|{gk}"] = info
 
     by = {}
     for c in ([PLACEBO] if PLACEBO not in usable else []) + usable[:MAX_COMPS]:
@@ -523,30 +759,48 @@ def search_all(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetc
         for key, drug, dose, other, label in (("A", a, a_dose, b, SIDE_A), ("B", b, b_dose, a, SIDE_B)):
             skipped[key] = Counter()
             for s in side_studies[key]:
-                nm = aliases(s, drug)
-                comp_names = None if c == PLACEBO else aliases(s, c)
-                row, info = side_rows(s, label, nm, dose, kind, out_kw, week, aliases(s, other), comp_names)
-                if row is None:
-                    skipped[key][info] += 1
+                cands, why = candidates(s, kind, out_kw, week)
+                if not cands:
+                    skipped[key][why] += 1
                     continue
-                if "군 못 찾음" in row["_flags"]:
-                    titles = [t for _, t in info["groups"]]
-                    if not _has(" ".join(titles), nm):
-                        skipped[key]["그 성분 군이 없음"] += 1
+                nm = aliases(s, drug)
+                oth = aliases(s, other)
+                comp_names = None if c == PLACEBO else aliases(s, c)
+                seen, got, miss = set(), 0, None
+                for o, primary in cands:
+                    gk, gl = ep_group(o, kind)
+                    if gk in seen:
                         continue
-                    has_comp = (any(_PLACEBO_RE.search(t) for t in titles) if c == PLACEBO
-                                else any(_has(t, comp_names) and not _has(t, nm) for t in titles))
-                    if not has_comp:
-                        skipped[key][f"{c} 군이 없음"] += 1
-                        continue
-                rows.append(row)
-                infos[f"{row['임상번호']}|{row['비교']}"] = info
+                    if len(seen) >= MAX_EP:
+                        break
+                    seen.add(gk)
+                    row, info = side_rows(s, label, nm, dose, kind, out_kw, week, oth, comp_names, cand=(o, primary))
+                    if "군 못 찾음" in row["_flags"]:
+                        titles = [t for _, t in info["groups"]]
+                        if not _has(" ".join(titles), nm):
+                            miss = "그 성분 군이 없음"
+                            continue
+                        has_comp = (any(_PLACEBO_RE.search(t) for t in titles) if c == PLACEBO
+                                    else any(_has(t, comp_names) and not _has(t, nm) for t in titles))
+                        if not has_comp:
+                            miss = f"{c} 군이 없음"
+                            continue
+                    _tag(row, s, gk, gl)
+                    rows.append(row)
+                    infos[f"{row['임상번호']}|{row['비교']}|{gk}"] = info
+                    got += 1
+                if not got:
+                    skipped[key][miss or "군 못 찾음"] += 1
         rows += [dict(r, _flags=list(r["_flags"])) for r in direct]
         infos.update(dinfos)
-        _mark(rows, kind)
+        grp_rows = {}
+        for r in rows:
+            grp_rows.setdefault(r["_grp"], []).append(r)
+        for rs in grp_rows.values():
+            _mark(rs, kind)
         by[c] = {"rows": rows, "infos": infos, "skipped": {k: dict(v) for k, v in skipped.items()}}
     return {"comparators": comps, "default": default, "by": by, "found": found, "capped": capped,
-            "sec": time.time() - t0, "a": a, "b": b}
+            "sec": time.time() - t0, "a": a, "b": b, "v": 3}
 
 
 def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fetch_studies, cond="", comp=""):
@@ -557,6 +811,12 @@ def search(a_text, b_text, kind, out_kw, week, phases=("3상", "4상"), fetch=fe
         c = res["default"]
     out = dict(res["by"][c])
     out.update({k: res[k] for k in ("comparators", "default", "found", "capped", "sec", "a", "b")}, comp=c)
+    dopts = disease_options(out["rows"])
+    dis = dopts[0][0] if dopts else None
+    gopts = group_options(out["rows"], dis)
+    grp = gopts[0]["key"] if gopts else None
+    out.update(diseases=dopts, dis=dis, groups=gopts, grp=grp, all_rows=out["rows"],
+               rows=pick_rows(out["rows"], dis, grp) if grp else [])
     return out
 
 

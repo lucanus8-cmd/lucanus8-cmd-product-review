@@ -16,6 +16,7 @@ import math
 import re
 from collections import Counter
 import time
+import zlib
 from pathlib import Path
 import pandas as pd
 import streamlit as st
@@ -1201,7 +1202,7 @@ def _cost_page():
 # 몇 시간 저장한다(최근 20개). 위젯 key 는 모두 ma_ 로 시작한다.
 _MA_SIDES = [ctgov.SIDE_A, ctgov.SIDE_B, ctgov.SIDE_D]
 _MA_OLD_SIDES = {"A vs 위약": ctgov.SIDE_A, "B vs 위약": ctgov.SIDE_B}   # 예전 CSV 호환
-_MA_TEXT = ["비교", "임상번호", "제목", "질환", "평가변수", "시점", "단위", "구분",
+_MA_TEXT = ["비교", "임상번호", "제목", "질환", "평가변수", "묶음", "시점", "단위", "구분",
             "시험군", "대조군", "시험군 용량", "대조군 용량"]
 _MA_TAIL = ["점검", "논문", "링크", "소그룹"]
 _MA_NUM = {
@@ -1217,8 +1218,7 @@ _MA_NUM = {
 def _ma_search(a, b, kind, out_kw, week, phases, cond):
     res = ctgov.search_all(a, b, kind, out_kw, week, phases, fetch=ctgov.fetch_studies, cond=cond)
     res["at"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600))
-    res["v"] = 2          # 2: 질환·평가변수·시점·단위·구분 칸
-    return res
+    return res            # res["v"] == 3: 평가변수·질환 묶음이 붙은 결과
 
 
 @st.cache_data(ttl=24 * 3600, max_entries=40, show_spinner=False)
@@ -1252,10 +1252,10 @@ def _ma_frame(kind, rows=()):
     return df
 
 
-def _ma_rows_from_search(cur, kind, pubs):
+def _ma_rows_from_search(rows, kind, pubs):
     out = []
     keymap = dict(_MA_NUM[kind])
-    for r in cur["rows"]:
+    for r in rows:
         row = {k: r.get(k, "") for k in ["합침"] + _MA_TEXT + ["점검", "소그룹"]}
         for col, k in keymap.items():
             row[col] = r.get(k)
@@ -1328,6 +1328,66 @@ def _ma_ep_summary(df):
             "**시점** — " + _ma_tally([_ma_wk_txt(w) if w is not None else (t or "")[:30]
                                      for w, t in zip(wk, on["시점"])]) +
             " · **1차/2차** — " + _ma_tally(on["구분"]))
+
+
+def _ma_pick_group(kind, res, comp, cur):
+    """질환 묶음·평가변수 묶음을 고르게 하고, 고른 묶음의 줄만 돌려준다. 고른 것이 바뀌면 입력표를 새로 만든다.
+    질환은 '전체'가 없다(섞이지 않게). 평가변수 묶음은 1차 평가변수 줄이 많은 것을 먼저 고른다."""
+    rows = (cur or {}).get("rows") or []
+    pubs = st.session_state.get(f"ma_pubs_{kind}") or {}
+    if not rows:
+        if st.session_state.get(f"ma_cur_{kind}") != (comp, None, None):
+            st.session_state[f"ma_cur_{kind}"] = (comp, None, None)
+            _ma_set_base(kind, _ma_frame(kind))
+        return [], "", 0
+    st.markdown("##### 질환 · 평가변수 묶음 <span style='font-weight:400;color:#808495;font-size:13.5px'>"
+                "— 같은 질환, 같은 척도·방식·시점끼리만 합칩니다</span>", unsafe_allow_html=True)
+    dopts = ctgov.disease_options(rows)
+    dlist = [d for d, *_ in dopts]
+    dcnt = {d: (na, nb, nd) for d, na, nb, nd in dopts}
+    dk = f"ma_dis_{kind}"
+    if st.session_state.get(dk) not in dlist:
+        st.session_state[dk] = dlist[0]
+    dis = st.radio(
+        "질환 묶음 (ClinicalTrials.gov 표준 병명 · 괄호는 A·B 임상 수)", dlist, horizontal=True, key=dk,
+        format_func=lambda d: f"{d} (A {dcnt[d][0]} · B {dcnt[d][1]}" + (f" · 직접 {dcnt[d][2]}" if dcnt[d][2] else "") + ")")
+    gopts = ctgov.group_options(rows, dis)
+    usable = [g for g in gopts if g["ok"]]
+    shown = usable or gopts
+    if not shown:
+        return [], "", 0
+    if not usable:
+        st.warning("이 질환에는 A·B 양쪽에 같이 있는 평가변수 묶음이 없습니다. 한쪽만 있는 묶음을 고를 수는 있지만 "
+                   "간접 비교는 나오지 않습니다.")
+    keys = [g["key"] for g in shown]
+    gkey = f"ma_grp_{kind}"
+    tkey = "ma_grptab_%s_%08x" % (kind, zlib.crc32(repr((comp, dis, res.get("at"), st.session_state.get(f"ma_nsearch_{kind}", 0))).encode()))
+    sel = ((st.session_state.get(tkey) or {}).get("selection") or {}).get("rows") or []
+    if sel and sel[0] < len(keys):
+        st.session_state[gkey] = keys[sel[0]]
+    if st.session_state.get(gkey) not in keys:
+        st.session_state[gkey] = keys[0]
+    gk = st.session_state[gkey]
+    df = pd.DataFrame([{
+        "고름": "●" if g["key"] == gk else "", "평가변수 묶음": g["label"], "A 임상": g["a"], "B 임상": g["b"],
+        "직접 비교": g["d"], "1차 평가변수 줄": g["prim"],
+        "원문 표현 예": (g["ex"][0][:90] if g["ex"] else "") + (f" 외 {len(g['ex']) - 1}가지" if len(g["ex"]) > 1 else "")}
+        for g in shown])
+    st.dataframe(df, key=tkey, on_select="rerun", selection_mode="single-row", hide_index=True,
+                 use_container_width=True, height=min(35 * len(df) + 38, 330),
+                 column_config={"고름": st.column_config.TextColumn("고름", width="small"),
+                                "평가변수 묶음": st.column_config.TextColumn("평가변수 묶음", width="medium"),
+                                "원문 표현 예": st.column_config.TextColumn("원문 표현 예", width="large")})
+    one = [f"{g['label']} (A {g['a']} · B {g['b']})" for g in gopts if not g["ok"]] if usable else []
+    st.caption("줄 왼쪽 칸을 눌러 고르면 그 묶음으로 바뀝니다. 처음에는 1차 평가변수 줄이 가장 많은 묶음을 고릅니다."
+               + (" · 한쪽에만 있어 고를 수 없는 묶음: " + " · ".join(one[:6]) + (" …" if len(one) > 6 else "")
+                  if one else ""))
+    picked = ctgov.pick_rows(rows, dis, gk)
+    now = (comp, dis, gk)
+    if st.session_state.get(f"ma_cur_{kind}") != now:
+        st.session_state[f"ma_cur_{kind}"] = now
+        _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(picked, kind, pubs)))
+    return picked, next(g["label"] for g in shown if g["key"] == gk), len(gopts)
 
 
 def _ma_forest(items, measure):
@@ -1434,15 +1494,18 @@ def _meta_page():
                 st.session_state[f"ma_res_{kind}"] = res
                 st.session_state[f"ma_pubs_{kind}"] = pubs
                 st.session_state[f"ma_comp_{kind}"] = res["default"]
-                st.session_state[f"ma_compcur_{kind}"] = res["default"]
-                _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(res["by"][res["default"]], kind, pubs)))
+                st.session_state.pop(f"ma_cur_{kind}", None)       # 아래에서 질환·묶음을 고른 뒤 표를 만든다
+                st.session_state.pop(f"ma_dis_{kind}", None)
+                st.session_state.pop(f"ma_grp_{kind}", None)
+                st.session_state[f"ma_nsearch_{kind}"] = st.session_state.get(f"ma_nsearch_{kind}", 0) + 1
 
     res = st.session_state.get(f"ma_res_{kind}")
-    if res and "by" not in res:          # 예전 모양으로 저장된 결과는 버린다
+    if res and res.get("v") != 3:        # 예전 모양으로 저장된 결과는 버린다
         res = None
         st.session_state.pop(f"ma_res_{kind}", None)
     comp = ctgov.PLACEBO
     cur = None
+    grp_label, n_grp = "", 0
     if res:
         usable = [c for c, na, nb, ok in res["comparators"] if ok and c in res["by"]]
         cnt = {c: (na, nb) for c, na, nb, ok in res["comparators"]}
@@ -1460,17 +1523,15 @@ def _meta_page():
                   if not ok and (na or nb)]
         if others:
             st.caption("한쪽에만 있는 비교약 (고를 수 없음): " + " · ".join(others[:8]))
-        if comp != st.session_state.get(f"ma_compcur_{kind}"):     # 비교약을 바꿨다 → 표를 새로 만든다
-            st.session_state[f"ma_compcur_{kind}"] = comp
-            _ma_set_base(kind, _ma_frame(kind, _ma_rows_from_search(
-                res["by"][comp], kind, st.session_state.get(f"ma_pubs_{kind}") or {})))
         cur = res["by"].get(comp) or res["by"].get(ctgov.PLACEBO)
-        nside = Counter(r["비교"] for r in cur["rows"])
+        sel_rows, grp_label, n_grp = _ma_pick_group(kind, res, comp, cur)
+        nside = Counter(r["비교"] for r in sel_rows)
         st.caption(f"ClinicalTrials.gov {res['at']} 받음 ({res['sec']:.1f}초) · {res['a']} 결과 있는 임상 "
                    f"{res['found']['A']}개 중 {nside.get(ctgov.SIDE_A, 0)}줄, {res['b']} {res['found']['B']}개 중 "
                    f"{nside.get(ctgov.SIDE_B, 0)}줄 · 같은 임상 안 직접 비교 {nside.get(ctgov.SIDE_D, 0)}줄"
                    + (" · 임상이 많아 성분당 500개까지만 봤습니다" if res.get("capped") else "")
-                   + " · 체크를 바꾸면 결과가 다시 계산되고, 비교약을 바꾸면 표가 새로 만들어집니다(고친 내용은 사라짐)")
+                   + " · 체크를 바꾸면 결과가 다시 계산되고, 비교약·질환·평가변수 묶음을 바꾸면 표가 새로 만들어집니다"
+                   "(고친 내용은 사라짐)")
     comp_disp = comp
 
     # ── ② 입력표 ──────────────────────────────────────────────
@@ -1540,7 +1601,13 @@ def _meta_page():
                                                            sorted(sk.items(), key=lambda x: -x[1])))
             st.caption("1차·2차 평가변수 중 지표 이름·시점·종류가 맞는 것이 없거나, 그 성분 군 또는 고른 비교약 군이 없는 임상입니다.")
 
-    infos = (cur or {}).get("infos") or {}
+    infos = {}
+    if cur and st.session_state.get(f"ma_cur_{kind}"):
+        _gk = st.session_state[f"ma_cur_{kind}"][2]
+        for _k, _v in (cur.get("infos") or {}).items():
+            _n, _sd, _g = _k.split("|", 2)
+            if _g == _gk:
+                infos[f"{_n}|{_sd}"] = _v
     if infos:
         with st.expander("군 바꾸기 (ClinicalTrials.gov에서 불러온 임상)"):
             keys = [f"{r['임상번호']}|{r['비교']}" for r in edited.to_dict("records")
@@ -1611,6 +1678,10 @@ def _meta_page():
 
     # ── ⑤ 결과 ────────────────────────────────────────────────
     st.markdown("##### ⑤ 결과")
+    if res and grp_label:
+        st.caption(f"지금 결과는 **{grp_label}** 묶음만 합친 값입니다"
+                   + (f" (이번 찾기에서 평가변수 묶음 {n_grp}개 · 다른 묶음은 위 '평가변수 묶음' 표에서 고르세요)" if n_grp > 1 else "")
+                   + ". 표에서 줄을 고치거나 더하면 그 줄도 함께 합칩니다.")
     top_box = st.container()
     left, side = st.columns([1.6, 1], gap="large")
     with side:

@@ -40,6 +40,14 @@ def run(a, b, kind, out, week, phases, measure, cond, comp=""):
     for c, na, nb, ok in res["comparators"]:
         print(f"   {'★' if ok else ' '} {c}: A {na} · B {nb}")
     print(f"→ 쓴 비교약: {res['comp']} (기본 {res['default']})")
+    print("질환 묶음 (대표 표준 병명: A · B · 직접):")
+    for d, na, nb, nd in res.get("diseases", [])[:10]:
+        print(f"   {'★' if d == res.get('dis') else ' '} {d}: A {na} · B {nb} · 직접 {nd}")
+    print("평가변수 묶음 (A · B · 직접 · 1차 줄):")
+    for g in res.get("groups", [])[:15]:
+        print(f"   {'★' if g['key'] == res.get('grp') else ('○' if g['ok'] else '×')} {g['label']}: "
+              f"A {g['a']} · B {g['b']} · 직접 {g['d']} · 1차 {g['prim']} · 예: {(g['ex'] or [''])[0][:70]}")
+    print(f"   (묶음 전체 {len(res.get('groups', []))}개 · 전체 줄 {len(res.get('all_rows', []))})")
     for k, v in res["skipped"].items():
         print(f"   빠짐 {k}: {v}")
     try:
