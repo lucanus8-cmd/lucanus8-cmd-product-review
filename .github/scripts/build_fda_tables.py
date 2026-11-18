@@ -228,15 +228,6 @@ def main():
     canon, stats = make_canon(names, pairs)
     prod = build_products(idx, canon)
     print("   주성분 이름 정리:", dict(stats))
-    today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 9 * 3600))
-    prev = os.environ.get("PREV_DIR", "prev/fda")
-    ch = changes(prev, prod, names, today)
-    ch.to_csv(f"{OUT}/fda_changes_latest.csv", index=False, encoding="utf-8-sig")
-    logp = f"{prev}/fda_change_log.csv"
-    log = pd.concat([pd.read_csv(logp, dtype=str, keep_default_na=False) if os.path.exists(logp) else ch.iloc[0:0], ch],
-                    ignore_index=True)
-    log.to_csv(f"{OUT}/fda_change_log.csv", index=False, encoding="utf-8-sig")
-    meta["이번 변경 건수"] = len(ch)
     names.to_csv(f"{OUT}/fda_substance_names.csv", index=False, encoding="utf-8-sig")
     pairs.to_csv(f"{OUT}/fda_usan_inn_pairs.csv", index=False, encoding="utf-8-sig")
     prod.to_csv(f"{OUT}/fda_products.csv", index=False, encoding="utf-8-sig")
@@ -245,7 +236,6 @@ def main():
         pairs.to_excel(w, sheet_name="미국명→국제명", index=False)
     with pd.ExcelWriter(f"{OUT}/FDA_허가목록_적응증.xlsx") as w:
         prod.to_excel(w, sheet_name="FDA 허가 제품", index=False)
-        log.tail(20000).to_excel(w, sheet_name="변경 내역", index=False)
     meta.update({"공식 이름 줄": len(names), "미국→국제 짝": len(pairs), "FDA 제품": len(prod)})
     json.dump(meta, open(f"{OUT}/fda_meta.json", "w"), ensure_ascii=False, indent=1)
     for f in sorted(os.listdir(OUT)):
