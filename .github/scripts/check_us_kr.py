@@ -84,6 +84,114 @@ NOISE_US = re.compile(r"technetium|tc 99m|\bkit\b|\bf 18\b|\bga 68\b|\bin 111\b|
                       r"fludeoxyglucose|\bammonia n 13\b|allergenic|pollen|venom|\bmold\b|\bdander\b", re.I)
 
 
+
+# ═══════════ 국내 임상시험 승인 목록 ═══════════
+KO_SALT = sorted(["브롬화수소산염", "메탄술폰산염", "타르타르산염", "말레산염", "푸마르산염", "숙신산염", "베실산염", "메실산염",
+                  "토실산염", "옥살산염", "살리실산염", "벤조산염", "브롬화물", "염화물", "요오드화물", "히드로클로라이드", "하이드로클로라이드", "글루콘산염", "구연산염", "시트르산염", "주석산염", "아세트산염", "초산염", "젖산염", "염산염",
+                  "황산염", "인산염", "질산염", "탄산염", "이나트륨", "나트륨", "칼슘", "칼륨", "마그네슘", "아연",
+                  "삼수화물", "이수화물", "일수화물", "반수화물", "수화물", "무수물", "염"], key=len, reverse=True)
+_CHO = ["k", "k", "n", "t", "t", "r", "m", "p", "p", "s", "s", "", "j", "j", "j", "k", "t", "p", "h"]
+_JONG = ["", "k", "k", "k", "n", "n", "n", "t", "r", "k", "m", "p", "r", "r", "p", "r", "m", "p", "p", "t", "t", "n",
+         "t", "t", "k", "t", "p", "t"]
+
+
+def ko_core(s):
+    s = re.sub(r"\[[^\]]*\]|\([^)]*\)|\s+", "", str(s or ""))
+    changed = True
+    while changed:
+        changed = False
+        for suf in KO_SALT:
+            if s.endswith(suf) and len(s) > len(suf) + 1:
+                s, changed = s[: -len(suf)], True
+                break
+    return s
+
+
+def ko_skel(s):
+    """한글 성분명 → 자음 뼈대 (영문 성분명과 비교용)"""
+    out = []
+    for ch in s:
+        c = ord(ch) - 0xAC00
+        if not 0 <= c < 11172:
+            return None
+        out += [_CHO[c // 588], "a", _JONG[c % 28]]
+    t = "".join(out).replace("h", "")
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiou]", "", t))
+
+
+def en_skel_ko(e):
+    s = re.sub(r"[^a-z]", "", e.lower())
+    s = s.replace("ph", "p").replace("th", "t").replace("ch", "k").replace("qu", "k").replace("ck", "k").replace("x", "ks")
+    s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k")
+    for a, b in (("g", "k"), ("d", "t"), ("b", "p"), ("v", "p"), ("f", "p"), ("z", "j"), ("l", "r"), ("h", ""),
+                 ("w", ""), ("y", "")):
+        s = s.replace(a, b)
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiou]", "", s))
+
+
+def korea_trials(k, canon, split, wanted):
+    """국내 임상시험 승인 목록 → {주성분 키: [(승인일, 단계, 의뢰사, 제품명, 제형)]} (wanted 성분만)"""
+    head("국내 임상시험 승인 목록")
+    sid = "1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE"
+    raw = get(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv", timeout=300)
+    if raw[:15].lstrip().lower().startswith(b"<!doctype") or raw[:6].lower() == b"<html":
+        print("임상 시트가 공개 링크로 열리지 않음")
+        return {}
+    c = pd.read_csv(io.BytesIO(raw), dtype=str, low_memory=False).fillna("")
+    c.columns = [str(x).split("\n")[0].strip() for x in c.columns]
+    print(f"{len(c):,}행 · 칸 {list(c.columns)} · 상태 {Counter(c.get('STATUS', pd.Series(dtype=str))).most_common(5)}")
+    print("   단계:", Counter(c.get("CLINIC_STEP_NM", pd.Series(dtype=str))).most_common(10))
+    print("   승인일 범위:", c["CLST_APRV_DT"].min(), "~", c["CLST_APRV_DT"].max())
+    print("   성분명 예:", list(c["성분명"].sample(25, random_state=2)))
+    # 한글 성분 → 키: 허가 자료의 단일 성분 줄
+    kor2key = {}
+    for kor, eng in zip(k["주성분"], k["주성분(영문)"]):
+        ks, es = [x for x in re.split(r"/", str(kor)) if x.strip()], split(eng)
+        if len(ks) == 1 and len(es) == 1:
+            kor2key.setdefault(ko_core(ks[0]), canon(es[0]))
+    skel2key = defaultdict(set)
+    for w in wanted:
+        sk = en_skel_ko(w)
+        if len(sk) >= 4:
+            skel2key[sk].add(w)
+    out, how = defaultdict(list), Counter()
+    for nm, step, dt, sp, prod in zip(c["성분명"], c["CLINIC_STEP_NM"], c["CLST_APRV_DT"], c.get("원개발사", ""), c["제품명"]):
+        parts = [p for p in re.split(r",|/|·|\+|및", str(nm)) if p.strip()]
+        f = form_of(re.sub(r"\(.*?\)|\[.*?\]|\d.*$", "", str(prod)), FORM_KO)
+        for p in parts:
+            key = None
+            lat = re.findall(r"[A-Za-z][A-Za-z\- ]{3,}", p)
+            core = ko_core(p)
+            if core in kor2key:
+                key, h = kor2key[core], "허가 자료 한글명"
+            elif lat and canon(lat[0]) in wanted:
+                key, h = canon(lat[0]), "영문 표기"
+            else:
+                sk = ko_skel(core) if core else None
+                hit = skel2key.get(sk) if sk else None
+                if hit and len(hit) == 1:
+                    key, h = next(iter(hit)), "한글 발음 대조"
+                else:
+                    h = None
+            if key and key in wanted:
+                out[key].append((dt, step, sp, prod, f))
+                how[h] += 1
+    print(f"후보 성분에 연결된 임상 {sum(len(v) for v in out.values()):,}건 · 성분 {len(out):,}개 · 연결 방법 {dict(how)}")
+    print("   한글 발음 대조 예:", [(k_, v[0][3][:20]) for k_, v in list(out.items())[:0]])
+    return out
+
+
+def trial_txt(lst, f=None):
+    if not lst:
+        return ""
+    lst = sorted(lst, reverse=True)
+    dt, step, sp, prod, ff = lst[0]
+    recent = sum(1 for x in lst if x[0][:4] >= "2021")
+    same = sum(1 for x in lst if f and x[4] == f)
+    return (f"국내 임상 {len(lst)}건(2021년 이후 {recent}) · 최근 {dt[:4]}-{dt[4:6]} {step} {sp[:20]}"
+            + (f" · 이 제형 임상 {same}건" if f else ""))
+
+
 def main():
     kr = korea()
     head("미국 Drugs@FDA")
@@ -189,6 +297,15 @@ def main():
     print(f"\n미국 (주성분+제형) {len(us_set):,} · 국내 {len(kr_set):,} · 미국 주성분 {len(us_keys):,} · 국내 주성분 {len(kr_keys):,}")
     print(f"▶ 미국에 있고 국내에 성분이 없음: {len(gap):,}가지 (단일제 {len(gap_single):,} · 국내에 취하·만료 품목은 있었음 {sum(1 for t in gap if past[t]):,}"
           f" · 이름을 사전에서 못 찾은 것 {len(unknown):,})")
+    wanted = {x for t in gap for x in t} | {x for t, _ in gap_form for x in t}
+    try:
+        trials = korea_trials(k, canon, split, wanted)
+    except Exception as e:
+        print("임상 목록 실패:", type(e).__name__, str(e)[:200])
+        trials = {}
+    ttx = lambda t, f=None: " ; ".join(filter(None, (trial_txt(trials.get(x, []), f) and f"{x}: {trial_txt(trials.get(x, []), f)}" if len(t) > 1 else trial_txt(trials.get(x, []), f) for x in t)))  # noqa: E731
+    print(f"   국내 성분 없음 후보 중 국내 임상 있음: {sum(1 for t in gap if any(trials.get(x) for x in t))}가지"
+          f" · 제형 없음 후보 중 같은 성분 국내 임상 있음: {sum(1 for t, _ in gap_form if any(trials.get(x) for x in t))}가지")
     info = defaultdict(lambda: {"date": "9", "brands": Counter(), "anda": set(), "nda": set(), "forms": set()})
     for t, f, br, d, kd, app in zip(us["keys"], us["fg"], us["brand"], us["date"], us["kind"], us["app"]):
         x = info[t]
@@ -206,7 +323,7 @@ def main():
         x = info[t]
         print(f"   [목록] 국내 성분 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {', '.join(sorted(x['forms']))} | "
-              f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''}")
+              f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''} | {ttx(t)}")
     print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지 (단일제 {sum(1 for t, _ in gap_form if len(t) == 1):,})")
     kforms = defaultdict(set)
     for t, f in kr_set:
@@ -214,7 +331,7 @@ def main():
     for t, f in gap_form:
         x = info[t]
         print(f"   [목록] 국내 이 제형 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
-              f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {f} | 국내 제형: {', '.join(sorted(kforms[t]))}")
+              f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {f} | 국내 제형: {', '.join(sorted(kforms[t]))} | {ttx(t, f)}")
     return 0
 
 
