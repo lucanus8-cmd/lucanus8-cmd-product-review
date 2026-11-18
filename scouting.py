@@ -187,7 +187,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-17-c"
+BUILD = "2026-11-18-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -1201,7 +1201,8 @@ def _cost_page():
 # 몇 시간 저장한다(최근 20개). 위젯 key 는 모두 ma_ 로 시작한다.
 _MA_SIDES = [ctgov.SIDE_A, ctgov.SIDE_B, ctgov.SIDE_D]
 _MA_OLD_SIDES = {"A vs 위약": ctgov.SIDE_A, "B vs 위약": ctgov.SIDE_B}   # 예전 CSV 호환
-_MA_TEXT = ["비교", "임상번호", "제목", "시험군", "대조군", "시험군 용량", "대조군 용량"]
+_MA_TEXT = ["비교", "임상번호", "제목", "질환", "평가변수", "시점", "단위", "구분",
+            "시험군", "대조군", "시험군 용량", "대조군 용량"]
 _MA_TAIL = ["점검", "논문", "링크", "소그룹"]
 _MA_NUM = {
     "연속형": [("시험군 인원", "n1"), ("시험군 평균", "m1"), ("시험군 SD", "sd1"),
@@ -1216,6 +1217,7 @@ _MA_NUM = {
 def _ma_search(a, b, kind, out_kw, week, phases, cond):
     res = ctgov.search_all(a, b, kind, out_kw, week, phases, fetch=ctgov.fetch_studies, cond=cond)
     res["at"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600))
+    res["v"] = 2          # 2: 질환·평가변수·시점·단위·구분 칸
     return res
 
 
@@ -1286,6 +1288,46 @@ def _ma_disp(measure, y):
     if measure in meta_calc.RATIO:
         return math.exp(y)
     return y * 100 if measure == "RD" else y
+
+
+_MA_TF_RE = re.compile(r"(?:(\d+(?:\.\d+)?)\s*-?\s*(weeks?|wks?|months?|years?|days?)\b"
+                       r"|\b(weeks?|wks?|months?|years?|days?)\s*(\d+(?:\.\d+)?))", re.I)
+_MA_TF_WK = {"w": 1, "m": 52 / 12, "y": 52, "d": 1 / 7}
+
+
+def _ma_weeks(tf):
+    """시점 글자 → 주. '12 weeks'·'Week 12' 모두 읽고, 여러 개면 가장 마지막 값. 못 읽으면 None."""
+    hits = _MA_TF_RE.findall(tf or "")
+    if not hits:
+        return None
+    n1, u1, u2, n2 = hits[-1]
+    n, u = (n1, u1) if n1 else (n2, u2)
+    return round(float(n) * _MA_TF_WK[u[0].lower()], 1)
+
+
+def _ma_wk_txt(w):
+    return f"{w:g}주"
+
+
+def _ma_tally(vals, top=4):
+    c = Counter(v for v in vals if v)
+    out = [f"{v} ({n})" for v, n in c.most_common(top)]
+    if len(c) > top:
+        out.append(f"외 {len(c) - top}가지")
+    return " · ".join(out) or "—"
+
+
+def _ma_ep_summary(df):
+    """합침에 체크된 줄의 질환·평가변수·시점 요약(괄호는 줄 수)."""
+    on = df[df["합침"] == True] if "합침" in df else df   # noqa: E712
+    if on.empty or not any(str(x).strip() for c in ("질환", "평가변수", "시점", "구분") for x in on[c]):
+        return ""
+    wk = [_ma_weeks(x) for x in on["시점"]]
+    return ("**합치는 임상의 질환** — " + _ma_tally(on["질환"]) + "  \n"
+            "**평가변수** — " + _ma_tally(on["평가변수"], 3) + "  \n"
+            "**시점** — " + _ma_tally([_ma_wk_txt(w) if w is not None else (t or "")[:30]
+                                     for w, t in zip(wk, on["시점"])]) +
+            " · **1차/2차** — " + _ma_tally(on["구분"]))
 
 
 def _ma_forest(items, measure):
@@ -1443,6 +1485,11 @@ def _meta_page():
         "대조군 용량": st.column_config.TextColumn("대조군 용량", help="군 이름에서 읽은 용량 (고칠 수 있음)"),
         "임상번호": st.column_config.TextColumn("임상번호"),
         "제목": st.column_config.TextColumn("제목", width="medium"),
+        "질환": st.column_config.TextColumn("질환", width="medium", help="ClinicalTrials.gov 에 등록된 대상 질환"),
+        "평가변수": st.column_config.TextColumn("평가변수", width="large", help="숫자를 읽어 온 평가변수 이름 (등록 원문)"),
+        "시점": st.column_config.TextColumn("시점", help="평가 시점 (등록 원문)"),
+        "단위": st.column_config.TextColumn("단위"),
+        "구분": st.column_config.SelectboxColumn("구분", options=["1차", "2차", ""], help="1차 평가변수인지 2차인지"),
         "점검": st.column_config.TextColumn("점검", disabled=True),
         "논문": st.column_config.TextColumn("논문"),
         "링크": st.column_config.LinkColumn("링크", display_text="PubMed ↗"),
@@ -1452,6 +1499,9 @@ def _meta_page():
         cfg[col] = st.column_config.NumberColumn(col, format="%.4g")
     edited = st.data_editor(base, key=f"ma_ed_{kind}_{st.session_state.get(f'ma_ver_{kind}', 0)}",
                             column_config=cfg, num_rows="dynamic", hide_index=True, use_container_width=True)
+    _sum = _ma_ep_summary(edited)
+    if _sum:
+        st.caption(_sum)
 
     b1, b2, b3 = st.columns([1, 1, 1])
     b1.download_button("📥 입력표 CSV 내려받기",
@@ -1579,7 +1629,8 @@ def _meta_page():
             notes.append(f"{nm} ({r['비교']}): {how}")
             continue
         per[r["비교"]].append(dict(label=nm, y=y, v=v, sub=(r.get("소그룹") or "").strip() or "(없음)",
-                                   title=r.get("제목") or "", cd=(r.get("대조군 용량") or "").strip()))
+                                   title=r.get("제목") or "", cd=(r.get("대조군 용량") or "").strip(),
+                                   wk=_ma_weeks(r.get("시점")), pri=(r.get("구분") or "").strip()))
         used[r["비교"]].add(r.get("임상번호") or "")
         if "최종값" in (r.get("점검") or ""):
             finals += 1
@@ -1679,6 +1730,18 @@ def _meta_page():
         if shared and ind:
             warns.append(f"{', '.join(sorted(shared))} 은(는) 두 성분에 같이 쓰였습니다 (같은 비교군). "
                          "간접 비교가 실제보다 약간 확실해 보일 수 있습니다.")
+        for s_, nm in ((ctgov.SIDE_A, a_name), (ctgov.SIDE_B, b_name), (ctgov.SIDE_D, "직접 비교")):
+            wks = sorted({x["wk"] for x in per[s_] if x["wk"] is not None})
+            if len(wks) > 1 and wks[-1] >= wks[0] * 1.5:
+                warns.append(f"{nm}: 평가 시점이 임상마다 다릅니다 ({', '.join(_ma_wk_txt(w) for w in wks[:5])}). "
+                             "시점이 크게 다르면 따로 보세요.")
+            if {"1차", "2차"} <= {x["pri"] for x in per[s_]}:
+                warns.append(f"{nm}: 1차 평가변수와 2차 평가변수가 섞여 있습니다.")
+        wa = sorted({x["wk"] for x in per[ctgov.SIDE_A] if x["wk"] is not None})
+        wb = sorted({x["wk"] for x in per[ctgov.SIDE_B] if x["wk"] is not None})
+        if ind and wa and wb and len(wa) == 1 and len(wb) == 1 and max(wa[0], wb[0]) >= min(wa[0], wb[0]) * 1.5:
+            warns.append(f"{a_name}({_ma_wk_txt(wa[0])})과 {b_name}({_ma_wk_txt(wb[0])})의 평가 시점이 달라 "
+                         "간접 비교가 기울 수 있습니다.")
         if measure == "SMD" and finals:
             warns.append("SMD 에 '최종값' 임상이 섞여 있습니다. 변화량과 최종값은 섞지 않는 것이 원칙입니다.")
         if ind and dct:

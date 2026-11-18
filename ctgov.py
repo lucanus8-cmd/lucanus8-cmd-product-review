@@ -339,6 +339,14 @@ def _study_info(s):
     return nct, title, text, flags, sub
 
 
+def _endpoint(study, o, primary):
+    """표에 보여 줄 질환·평가변수 칸."""
+    conds = (study.get("protocolSection", {}).get("conditionsModule", {}).get("conditions") or [])
+    cond = ", ".join(conds[:3]) + (f" 외 {len(conds) - 3}" if len(conds) > 3 else "")
+    return {"질환": cond[:120], "평가변수": (o.get("title") or "")[:200], "시점": (o.get("timeFrame") or "")[:120],
+            "단위": (o.get("unitOfMeasure") or "")[:60], "구분": "1차" if primary else "2차"}
+
+
 def _background(text, groups, names):
     """제목에 나오지만 따로 군이 없는 다른 약 = 바탕 치료로 본다."""
     in_groups = set()
@@ -369,6 +377,7 @@ def side_rows(study, label, names, dose, kind, out_kw, week, other_names, comp_n
     row = {"합침": True, "비교": label, "임상번호": nct, "제목": title, "시험군": "", "대조군": "",
            "시험군 용량": "", "대조군 용량": "",
            "소그룹": sub, "_flags": list(flags), "_unit": info["unit"], "_g1": "", "_g2": ""}
+    row.update(_endpoint(study, o, primary))
     if not primary:
         row["_flags"].append("2차 평가변수")
     if kind == "연속형" and "change" not in (o.get("title", "") + o.get("description", "")).lower():
@@ -418,6 +427,7 @@ def direct_row(study, a_names, a_dose, b_names, b_dose, kind, out_kw, week):
                "시험군 용량": dose_of(ga[0].get("title", "")), "대조군 용량": dose_of(gb[0].get("title", "")),
                "_flags": list(flags) + ([] if primary else ["2차 평가변수"]), "_unit": o.get("unitOfMeasure", ""),
                "_g1": ga[0].get("id"), "_g2": gb[0].get("id"), "_bg": []}
+        row.update(_endpoint(study, o, primary))
         row.update(fill(kind, o, ga[0].get("id"), gb[0].get("id")))
         row.pop("_pct", None)
         if not _has_numbers(kind, row):
