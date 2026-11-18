@@ -64,7 +64,7 @@ EN_SYN = {"acetaminophen": "paracetamol", "albuterol": "salbutamol", "epinephrin
           "penicillin v": "phenoxymethylpenicillin", "oxymetazoline": "oxymetazoline"}
 
 
-def en_moiety(name):
+def en_moiety(name, syn=True):
     """영문 성분 하나 → 모체 이름 (소문자). 염·수화물 단어를 떼고, 다 떼어지면 원래 이름."""
     n = unicodedata.normalize("NFKC", name or "").lower()
     n = re.sub(r"\([^)]*\)", " ", n)
@@ -73,7 +73,7 @@ def en_moiety(name):
     m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", full)).strip(" -")
     if not m or m in ("oxide", "hydroxide", "peroxide", "trisilicate", "subsalicylate"):
         m = full
-    for a, b in EN_SYN.items():
+    for a, b in (EN_SYN.items() if syn else ()):
         if m == a or m.startswith(a + " "):
             m = b + m[len(a):]
             break
@@ -246,7 +246,8 @@ def usa():
 
 # ═══════════════ C. 일본 약가 목록 ═══════════════
 JA_SALT = ["メタンスルホン酸塩", "ベンゼンスルホン酸塩", "パラトルエンスルホン酸塩", "エタンスルホン酸塩",
-           "エタンジスルホン酸塩", "臭化物", "塩化物", "ヨウ化物", "塩酸塩", "臭化水素酸塩", "メシル酸塩", "ベシル酸塩", "トシル酸塩", "マレイン酸塩", "フマル酸塩",
+           "エタンジスルホン酸塩", "臭化物", "塩化物", "ヨウ化物", "ヘミペンタ水和物", "セスキ水和物",
+           "ヘミ水和物", "七水和物", "五水和物", "四水和物", "塩酸塩", "臭化水素酸塩", "メシル酸塩", "ベシル酸塩", "トシル酸塩", "マレイン酸塩", "フマル酸塩",
            "コハク酸塩", "酒石酸塩", "クエン酸塩", "硫酸塩", "リン酸塩", "硝酸塩", "乳酸塩", "グルコン酸塩",
            "酢酸塩", "安息香酸塩", "シュウ酸塩", "リンゴ酸塩", "カンシル酸塩", "イセチオン酸塩", "パモ酸塩",
            "キシナホ酸塩", "ナトリウム", "カリウム", "カルシウム", "マグネシウム", "亜鉛", "メグルミン",
@@ -258,6 +259,7 @@ JA_SALT_RE = re.compile("(" + "|".join(sorted(map(re.escape, JA_SALT), key=len, 
 def ja_moiety(n):
     n = unicodedata.normalize("NFKC", str(n or "")).strip()
     n = re.sub(r"[（(][^）)]*[）)]", "", n).replace(" ", "").replace("　", "")
+    n = re.sub(r"^(塩酸|硫酸|酢酸|コハク酸|マレイン酸|フマル酸|酒石酸|クエン酸|リン酸|臭化水素酸|メシル酸|乳酸|硝酸)(?=[ァ-ヴ])", "", n)
     m = JA_SALT_RE.sub("", n)
     if len(m) < 2 or m.endswith("化") or (m.endswith("酸") and len(m) <= 3):   # 塩化カリウム·炭酸カルシウム 같은 무기물
         m = n
@@ -423,14 +425,30 @@ def skel(s, ja=False):
     return re.sub(r"(.)\1+", r"\1", s)
 
 
+JA_ESTER = [("ジプロピオン酸エステル", "dipropionate"), ("酪酸プロピオン酸エステル", "butyrate propionate"),
+            ("プロピオン酸エステル", "propionate"), ("吉草酸酢酸エステル", "valerate acetate"),
+            ("吉草酸エステル", "valerate"), ("酢酸エステル", "acetate"), ("酪酸エステル", "butyrate"),
+            ("リン酸エステル", "phosphate"), ("フランカルボン酸エステル", "furoate"), ("コハク酸エステル", "succinate"),
+            ("パルミチン酸エステル", "palmitate"), ("エナント酸エステル", "enanthate"), ("ウンデシル酸エステル", "undecanoate"),
+            ("デカン酸エステル", "decanoate"), ("安息香酸エステル", "benzoate"), ("シピオン酸エステル", "cypionate")]
+
+
 def kana_map(ja_names, en_names):
-    """일본 모체 이름(가타카나) → 영문 후보 중 자음 뼈대가 같은 것. 하나로 정해질 때만."""
+    """일본 모체 이름(가타카나) → 영문 후보 중 자음 뼈대가 같은 것. 하나로 정해질 때만.
+    에스터(○○プロピオン酸エステル)는 앞 가타카나 + 영문 에스터 이름으로 맞춘다."""
     by = defaultdict(set)
     for e in en_names:
         if e and re.fullmatch(r"[a-z0-9 \-]+", e):
             by[skel(e)].add(e)
     out, amb = {}, 0
     for j in ja_names:
+        suf = next(((k, v) for k, v in JA_ESTER if j.endswith(k)), None)
+        if suf:
+            base = kana_romaji(j[: -len(suf[0])])
+            c = by.get(skel(base + " " + suf[1], True)) if base else None
+            if c and len(c) == 1:
+                out[j] = next(iter(c))
+            continue
         r = kana_romaji(j)
         if not r or " " in r:
             continue
@@ -454,7 +472,15 @@ def match(us, jp, m, kr):
     if jp is not None:
         jp_names = Counter(x for t in jp["moi_ja"] for x in t)
         wk = sum(1 for n in jp_names if n in m)
-        km, amb = kana_map(list(jp_names), en_pool)
+        raw = set()
+        if us is not None:
+            raw |= {en_moiety(x, syn=False) for t in us["ings"] for x in t}
+        km, amb = kana_map(list(jp_names), en_pool | raw)
+        km = {j: en_moiety(e) for j, e in km.items()}           # acetaminophen → paracetamol 같은 동의어 정리
+        dis = [(j, m[j], km[j]) for j in km if j in m and m[j] != km[j]]
+        print("   위키데이터와 가타카나가 다르게 본 예:", dis[:15])
+        kanji_only = [n for n in jp_names if not re.search(r"[ァ-ヴ]", n)]
+        print(f"   가타카나가 없는 이름(수액·전해질·생약 등) {len(kanji_only):,}개 · 행 {sum(jp_names[n] for n in kanji_only):,} 예 {kanji_only[:12]}")
         print(f"위키데이터로 바뀐 일본 이름 {wk:,} · 가타카나 뼈대로 바뀐 것 {len(km):,} (후보 여럿이라 못 정한 것 {amb})"
               f" · 둘이 같이 바꾼 {sum(1 for n in km if n in m):,}개 중 결과 일치 {sum(1 for n in km if n in m and m[n] == km[n]):,}")
         print("   가타카나 뼈대 예:", [(j, kana_romaji(j), e) for j, e in list(km.items())[:25]])
@@ -485,7 +511,7 @@ def match(us, jp, m, kr):
     st_c = next((c for c in kcols if c == "상태"), None)
     print("국내 전문/일반:", Counter(kr[gb_c]).most_common(5) if gb_c else "-", "· 상태:", Counter(kr[st_c]).most_common(5) if st_c else "-")
     k = kr[kr[st_c].eq("정상")] if st_c else kr
-    k = k[k[gb_c].isin(["전문", "일반"])] if gb_c else k
+    k = k[k[gb_c].astype(str).str.contains("전문|일반")] if gb_c else k
     k = k.copy()
     k["moi"] = k[eng_c].map(lambda s: en_set(re.split(r"/|;|\+|,(?=\s*[A-Za-z])", str(s))) if str(s).strip() else None)
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
