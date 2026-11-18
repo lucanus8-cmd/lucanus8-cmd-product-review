@@ -27,14 +27,19 @@ def norm(n):
     return re.sub(r"\s+", " ", n).strip()
 
 
-# ═══════════ FDA 성분 사전 ═══════════
+# ═══════════ FDA 성분 사전 → 공식 이름 동의어 표 ═══════════
+OFFICIAL = re.compile(r"\[(INN|USAN|JAN|BAN|WHO-DD|USP|MI|EP|JP|DCF|MART\.|VANDF|HSDB)[^\]]*\]\s*$", re.I)
+
+
 def gsrs():
-    head("FDA 성분 사전 (GSRS)")
+    """공식 이름(INN·USAN·JAN·USP 등 꼬리표가 붙은 이름)만 모아, 같은 성분(염은 모체로 모음)끼리 묶는다.
+    반환: 이름(염 뗀 소문자) → {묶음}, 묶음 → 대표 이름(INN 우선)"""
+    head("FDA 성분 사전 (GSRS) → 공식 이름 동의어 표")
     idx = json.loads(get("https://api.fda.gov/download.json", timeout=60))
     part = idx["results"]["other"]["substance"]["partitions"]
     t0 = time.time()
     import ijson
-    name2u, parent, moiety, pname, rel_types, n = {}, {}, {}, {}, Counter(), 0
+    syn, inn, usan, n = defaultdict(set), {}, {}, 0
     for p in part:
         z = zipfile.ZipFile(io.BytesIO(get(p["file"], timeout=900)))
         for fn in z.namelist():
@@ -44,50 +49,30 @@ def gsrs():
                     u = r.get("unii")
                     if not u:
                         continue
+                    grp = next(((rel.get("related_substance") or {}).get("unii") for rel in r.get("relationships") or []
+                                if rel.get("type") == "SALT/SOLVATE->PARENT"), None) or u
                     for nm in r.get("names") or []:
-                        k = norm(nm.get("name"))
-                        if k:
-                            name2u.setdefault(k, set()).add(u)
-                    pn = next((x.get("name") for x in r.get("names") or [] if x.get("preferred")), None) \
-                        or (r.get("names") or [{}])[0].get("name")
-                    pname[u] = norm(pn)
-                    for rel in r.get("relationships") or []:
-                        ty = rel.get("type") or ""
-                        rel_types[ty] += 1
-                        ru = (rel.get("related_substance") or {}).get("unii")
-                        if not ru:
+                        raw = nm.get("name") or ""
+                        tag = OFFICIAL.search(raw)
+                        if not tag:
                             continue
-                        if ty == "SALT/SOLVATE->PARENT":
-                            parent.setdefault(u, ru)
-                        elif ty == "ACTIVE MOIETY":
-                            moiety.setdefault(u, ru)
-    print(f"성분 {n:,}개 · 이름 {len(name2u):,}개 · 염→모체 {len(parent):,} · 활성 모체 {len(moiety):,} · {time.time() - t0:.0f}초")
-    print("   관계 종류 (많은 순):", rel_types.most_common(12))
-    return name2u, parent, moiety, pname
+                        k = en_moiety(OFFICIAL.sub("", raw), syn=False)
+                        if not k or len(k) > 60:
+                            continue
+                        syn[k].add(grp)
+                        t = tag.group(1).upper()
+                        if t == "INN":
+                            inn.setdefault(grp, k)
+                        elif t == "USAN":
+                            usan.setdefault(grp, k)
+    rep = {g: inn.get(g) or usan.get(g) for g in set(inn) | set(usan)}
+    print(f"성분 {n:,}개 · 공식 이름 {len(syn):,}개 · 대표 이름 있는 묶음 {len(rep):,} · {time.time() - t0:.0f}초")
+    return syn, rep
 
 
-def resolver(name2u, parent, moiety, pname):
-    stats = Counter()
-
-    def one(raw):
-        """성분 이름 하나 → (비교 키, 활성 모체 이름, 어떻게 찾았나)"""
-        cands = [norm(raw), norm(re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", str(raw)))]
-        stripped = en_moiety(raw, syn=False)
-        cands.append(norm(stripped))
-        for i, c in enumerate(cands):
-            us = name2u.get(c)
-            if us and len(us) == 1:
-                u = next(iter(us))
-                pu = parent.get(u, u)
-                how = ["이름 그대로", "괄호 뗌", "염 뗀 이름"][i]
-                stats[how] += 1
-                return "U:" + pu, pname.get(pu, ""), how
-            if us:
-                stats["이름이 여러 성분에 걸림"] += 1
-        stats["사전에 없음"] += 1
-        return "T:" + stripped, stripped.upper(), "사전에 없음"
-
-    return one, stats
+NOISE_US = re.compile(r"technetium|tc 99m|\bkit\b|\bf 18\b|\bga 68\b|\bin 111\b|\bi 123\b|\bi 131\b|rubidium|thallous|"
+                      r"\bnitrogen\b|\boxygen\b|\bhelium\b|nitrous oxide|carbon dioxide|\bxenon\b|\bkrypton\b|"
+                      r"fludeoxyglucose|\bammonia n 13\b|allergenic|pollen|venom|\bmold\b|\bdander\b", re.I)
 
 
 def main():
@@ -113,41 +98,49 @@ def main():
     us = pd.DataFrame(rows)
     print(f"판매 중 제품 {len(us):,}개")
 
-    name2u, parent, moiety, pname = gsrs()
-    one, stats = resolver(name2u, parent, moiety, pname)
-    cache = {}
+    syn, rep = gsrs()
+    stats = Counter()
+    changed = {}
 
-    def res(x):
-        if x not in cache:
-            cache[x] = one(x)
-        return cache[x]
+    def canon(x):
+        k = en_moiety(x, syn=False)
+        g = syn.get(k)
+        if g and len(g) == 1:
+            c = rep.get(next(iter(g)))
+            if c:
+                stats["공식 이름으로 정리"] += 1
+                if c != k:
+                    changed[k] = c
+                return c
+            stats["공식 이름 있음(대표 없음)"] += 1
+            return k
+        stats["여러 성분에 걸림" if g else "공식 이름 아님"] += 1
+        return k
 
-    us["keys"] = us["ings"].map(lambda t: tuple(sorted({res(x)[0] for x in t if x.strip()})))
-    print("미국 성분 이름 찾기:", dict(stats))
+    split_us = lambda t: [y for x in t for y in re.split(r"\s+AND\s+|;", x) if y.strip()]  # noqa: E731
+    us = us[~us["ings"].map(lambda t: bool(NOISE_US.search(" ".join(t))))].copy()
+    print(f"진단용 방사성·의료용 가스·알레르겐 뺀 미국 제품 {len(us):,}개")
+    us["keys"] = us["ings"].map(lambda t: tuple(sorted({canon(x) for x in split_us(t)})))
+    print("미국 성분 이름:", dict(stats))
     stats.clear()
 
     st_c, gb_c, eng_c, name_c = "상태", "전문/일반", "주성분(영문)", "품목명"
     k = kr[kr[st_c].eq("정상") & kr[gb_c].astype(str).str.contains("전문|일반")].copy()
     split = lambda s: [x for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", str(s)) if x.strip()]  # noqa: E731
-    k["keys"] = k[eng_c].map(lambda s: tuple(sorted({res(x)[0] for x in split(s)})) if str(s).strip() else None)
+    k["keys"] = k[eng_c].map(lambda s: tuple(sorted({canon(x) for x in split(s)})) if str(s).strip() else None)
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
         "", str(s)), FORM_KO))
-    print("국내 성분 이름 찾기:", dict(stats))
-    print("   국내에서 사전에 없던 이름 예:", [n for n, v in cache.items() if v[2] == "사전에 없음"][:40])
-    print("   표기 차이가 흡수된 예:", [(n, v[1]) for n, v in cache.items()
-                                if v[2] != "사전에 없음" and n.lower().split()[0] not in v[1].lower()][:30])
+    print("국내 성분 이름:", dict(stats))
+    print("   표기 차이가 공식 이름으로 정리된 예:", list(changed.items())[:40])
 
-    label = {}
-    for n, (key, mo, how) in cache.items():
-        label.setdefault(key, mo or n)
-    lab = lambda t: " + ".join(sorted(label.get(x, x) for x in t))  # noqa: E731
+    lab = lambda t: " + ".join(t)  # noqa: E731
 
     us_set = {(t, f) for t, f in zip(us["keys"], us["fg"]) if t and isinstance(f, str)}
     kr_set = {(t, f) for t, f in zip(k["keys"], k["fg"]) if t and isinstance(f, str)}
     kr_keys = {t for t in k["keys"] if t}
     allk = kr.copy()
-    allk["keys"] = allk[eng_c].map(lambda s: tuple(sorted({res(x)[0] for x in split(s)})) if str(s).strip() else None)
+    allk["keys"] = allk[eng_c].map(lambda s: tuple(sorted({canon(x) for x in split(s)})) if str(s).strip() else None)
     past = Counter()
     for t, s in zip(allk["keys"], allk[st_c]):
         if t and s != "정상":
@@ -157,11 +150,11 @@ def main():
     gap = sorted(t for t in us_keys if t not in kr_keys)
     gap_single = [t for t in gap if len(t) == 1]
     gap_form = sorted((t, f) for t, f in us_set if t in kr_keys and (t, f) not in kr_set)
-    unknown = [t for t in gap if any(x.startswith("T:") for x in t)]
+    unknown = [t for t in gap if any(syn.get(x) is None for x in t)]
     print(f"\n미국 (주성분+제형) {len(us_set):,} · 국내 {len(kr_set):,} · 미국 주성분 {len(us_keys):,} · 국내 주성분 {len(kr_keys):,}")
     print(f"▶ 미국에 있고 국내에 성분이 없음: {len(gap):,}가지 (단일제 {len(gap_single):,} · 국내에 취하·만료 품목은 있었음 {sum(1 for t in gap if past[t]):,}"
           f" · 이름을 사전에서 못 찾은 것 {len(unknown):,})")
-    print("   단일제 전부:", [lab(t) + (" (국내 과거 허가)" if past[t] else "") for t in gap_single])
+    print("   단일제 전부:", [lab(t) + (" (국내 과거 허가)" if past[t] else "") + (" (공식 이름 아님)" if t in unknown else "") for t in gap_single])
     print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지 (단일제 {sum(1 for t, _ in gap_form if len(t) == 1):,})")
     print("   단일제 전부:", [f"{lab(t)} [{f}]" for t, f in gap_form if len(t) == 1])
     return 0
