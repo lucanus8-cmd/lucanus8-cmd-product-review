@@ -420,7 +420,7 @@ def skel(s, ja=False, z="d"):
         s = (s.replace("ph", "f").replace("th", "t").replace("qu", "kw").replace("x", "ks").replace("ch", "k")
              .replace("y", "i").replace("w", ""))
         s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k").replace("j", "d").replace("z", "d")
-    s = re.sub(r"n(?=[bpm])", "m", s)
+    s = re.sub(r"n(?=[bpm])", "m", s).replace("_", "")
     s = s.replace("l", "r").replace("v", "b").replace("y", "").replace("h", "").replace("f", "")
     s = re.sub(r"[aeiou]", "", s)
     return re.sub(r"(.)\1+", r"\1", s)
@@ -454,7 +454,7 @@ def kana_map(ja_names, en_names):
         suf = next(((k, v) for k, v in JA_ESTER if j.endswith(k)), None)
         if suf:
             base = kana_romaji(j[: -len(suf[0])])
-            c = _ja_cands(by, base + " " + suf[1]) if base else None
+            c = _ja_cands(by, base + "_" + suf[1]) if base else None
             if c and len(c) == 1:
                 out[j] = next(iter(c))
             continue
