@@ -67,7 +67,7 @@ EN_SYN = {"acetaminophen": "paracetamol", "albuterol": "salbutamol", "epinephrin
 def en_moiety(name, syn=True):
     """영문 성분 하나 → 모체 이름 (소문자). 염·수화물 단어를 떼고, 다 떼어지면 원래 이름."""
     n = unicodedata.normalize("NFKC", name or "").lower()
-    n = re.sub(r"\([^)]*\)", " ", n)
+    n = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", n)
     n = re.sub(r"[^a-z0-9 \-]", " ", n)
     full = re.sub(r"\s+", " ", n).strip()
     m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", full)).strip(" -")
@@ -503,8 +503,8 @@ def match(us, jp, m, kr):
         jp["moi_en"] = jp["moi_ja"].map(lambda t: tuple(sorted(m[x] for x in t)) if all(x in m for x in t) else None)
     if us is None or jp is None:
         return
-    us_set = {(mo, f) for mo, f in zip(us["moi"], us["fg"]) if f}
-    jp_set = {(mo, f) for mo, f in zip(jp["moi_en"], jp["fg"]) if mo and f}
+    us_set = {(mo, f) for mo, f in zip(us["moi"], us["fg"]) if isinstance(f, str)}
+    jp_set = {(mo, f) for mo, f in zip(jp["moi_en"], jp["fg"]) if mo and isinstance(f, str)}
     us_moi = {mo for mo, _ in us_set}
     jp_moi = {mo for mo, _ in jp_set}
     both = us_set & jp_set
@@ -522,20 +522,24 @@ def match(us, jp, m, kr):
     k = kr[kr[st_c].eq("정상")] if st_c else kr
     k = k[k[gb_c].astype(str).str.contains("전문|일반")] if gb_c else k
     k = k.copy()
-    k["moi"] = k[eng_c].map(lambda s: en_set(re.split(r"/|;|\+|,(?=\s*[A-Za-z])", str(s))) if str(s).strip() else None)
+    k["moi"] = k[eng_c].map(lambda s: en_set(re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", str(s))) if str(s).strip() else None)
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
         "", str(s)), FORM_KO))
+    print("   국내 영문 성분명 예:", list(k[eng_c].astype(str).sample(12, random_state=1)))
+    for probe in ("alectinib", "bortezomib", "chlorhexidine", "aztreonam", "canagliflozin", "aliskiren"):
+        hit = k[k[eng_c].astype(str).str.lower().str.contains(probe)]
+        print(f"   국내 '{probe}': {len(hit)}품목 · 영문 표기 {list(hit[eng_c].astype(str).unique()[:3])} → 모체 {list(hit['moi'].astype(str).unique()[:3])}")
     print(f"국내 정상 전문+일반 {len(k):,}품목 · 영문 성분명 있음 {k['moi'].notna().mean() * 100:.1f}% · 제형 판독 {k['fg'].notna().mean() * 100:.1f}%")
     print("   못 읽은 제형 예:", Counter(str(n)[-12:] for n, g in zip(k[name_c], k["fg"]) if not g).most_common(12))
     kr_set = {(mo, f) for mo, f in zip(k["moi"], k["fg"]) if mo and f}
     kr_moi = {mo for mo in k["moi"] if mo}
     gap_moi = sorted({mo for mo, f in both if mo not in kr_moi})
     gap_form = sorted({(mo, f) for mo, f in both if mo in kr_moi and (mo, f) not in kr_set})
-    print(f"\n▶ 미국·일본 둘 다 있고 국내에 성분이 없음: {len(gap_moi):,}가지")
-    print("   예:", [" + ".join(x) for x in gap_moi[:40]])
-    print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지")
-    print("   예:", [f"{' + '.join(mo)} [{f}]" for mo, f in gap_form[:40]])
+    print(f"\n▶ 미국·일본 둘 다 있고 국내에 성분이 없음: {len(gap_moi):,}가지 (단일제 {sum(len(x) == 1 for x in gap_moi)})")
+    print("   전부:", [" + ".join(x) for x in gap_moi])
+    print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지 (단일제 {sum(len(x[0]) == 1 for x in gap_form)})")
+    print("   전부:", [f"{' + '.join(mo)} [{f}]" for mo, f in gap_form])
 
 
 def main():
