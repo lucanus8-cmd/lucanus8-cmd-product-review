@@ -32,6 +32,56 @@ OFFICIAL = re.compile(r"\[(INN|USAN|JAN|BAN|WHO-DD|USP|MI|EP|JP|DCF|MART\.|VANDF
 
 
 U2I = {}
+ATC = defaultdict(set)
+ATC_BY = defaultdict(set)
+
+ATC1 = {"A": "소화기·대사", "B": "혈액", "C": "심혈관", "D": "피부", "G": "비뇨생식·성호르몬", "H": "호르몬",
+        "J": "감염", "L": "항암·면역", "M": "근골격", "N": "신경·정신", "P": "기생충", "R": "호흡기",
+        "S": "안과·이비인후", "V": "기타(해독·진단)"}
+ATC2 = {"A02": "위산 질환", "A03": "기능성 위장 질환", "A04": "구토", "A05": "담즙·간", "A06": "변비",
+        "A07": "설사·장염증", "A08": "비만", "A09": "소화효소", "A10": "당뇨병", "A11": "비타민", "A12": "미네랄",
+        "A16": "희귀 대사질환", "B01": "항혈전", "B02": "지혈", "B03": "빈혈", "B05": "수액·전해질", "B06": "기타 혈액",
+        "C01": "심장(부정맥·심부전)", "C02": "고혈압", "C03": "이뇨", "C04": "말초혈관", "C05": "혈관보호",
+        "C07": "고혈압·심장(베타차단)", "C08": "고혈압(칼슘채널)", "C09": "고혈압(RAS)", "C10": "이상지질혈증",
+        "D01": "피부 진균", "D05": "건선", "D06": "피부 감염", "D07": "피부 염증(스테로이드)", "D10": "여드름",
+        "D11": "기타 피부(아토피·탈모 등)", "G01": "부인과 감염", "G02": "기타 부인과", "G03": "성호르몬·피임",
+        "G04": "비뇨기(전립선·방광)", "H01": "뇌하수체 호르몬", "H02": "스테로이드(전신)", "H03": "갑상선",
+        "H04": "췌장 호르몬", "H05": "칼슘 대사", "J01": "세균 감염", "J02": "진균 감염", "J04": "결핵",
+        "J05": "바이러스 감염", "J06": "면역글로불린", "J07": "백신", "L01": "항암", "L02": "호르몬 항암",
+        "L03": "면역증강", "L04": "면역억제(자가면역·이식)", "M01": "소염진통", "M03": "근이완", "M04": "통풍",
+        "M05": "골질환(골다공증)", "M09": "기타 근골격(희귀 근육질환)", "N01": "마취", "N02": "통증·편두통",
+        "N03": "뇌전증", "N04": "파킨슨", "N05": "정신병·불안·수면", "N06": "우울·ADHD·치매",
+        "N07": "기타 신경(중독·다발성경화증 등)", "P01": "원충 감염", "P02": "기생충", "R01": "비강", "R03": "천식·COPD",
+        "R05": "기침·감기", "R06": "알레르기", "R07": "기타 호흡기", "S01": "안과", "S02": "귀",
+        "V03": "해독·기타 치료", "V04": "진단", "V08": "조영제", "V09": "진단(방사성)", "V10": "치료(방사성)"}
+KW_GROUP = [
+    (r"cancer|carcinoma|lymphoma|leukemia|myeloma|tumou?r|sarcoma|melanoma|neoplas|glioma|blastoma|myelodysplastic", "항암"),
+    (r"diabetes", "당뇨병"), (r"hypertension(?! pulmonary)|blood pressure", "고혈압"),
+    (r"pulmonary arterial hypertension", "폐동맥고혈압"), (r"heart failure|cardiomyopathy|atrial fibrillation|angina", "심장"),
+    (r"hyperlipid|cholesterol|\bldl\b|triglycerid", "이상지질혈증"),
+    (r"\bhiv\b|hepatitis|influenza|covid|cytomegalovirus|herpes|viral", "바이러스 감염"),
+    (r"bacterial|infection|pneumonia", "세균 감염"), (r"fungal|candid|aspergill", "진균 감염"),
+    (r"psoriasis|atopic dermatitis|eczema|acne|alopecia|vitiligo|hidradenitis|urticaria", "피부"),
+    (r"rheumatoid|lupus|myasthenia|transplant|arthritis|crohn|ulcerative colitis|spondylitis|vasculitis|nephropathy", "면역(자가면역·이식)"),
+    (r"asthma|copd|chronic obstructive", "천식·COPD"), (r"migraine|pain", "통증·편두통"),
+    (r"epilep|seizure", "뇌전증"), (r"schizophren|bipolar|depress|insomnia|anxiety|adhd|attention deficit", "정신·수면"),
+    (r"alzheimer|parkinson|amyotrophic|huntington|multiple sclerosis|neuromyelitis|spinal muscular|duchenne", "신경"),
+    (r"osteoporosis|bone", "골질환"), (r"anemia|hemophilia|thrombocytopenia|sickle|thalassemia|hemoglobinuria|bleeding", "혈액"),
+    (r"obesity|weight", "비만"), (r"deficiency|lysosomal|fabry|gaucher|pompe|mucopolysacchar|urea cycle|phenylketon|amyloid", "희귀 대사질환"),
+    (r"kidney|renal", "신장"), (r"macular|glaucoma|ocular|ophthalm|retin|eye", "안과"),
+    (r"imaging|diagnos|contrast", "진단"), (r"contracept|menopaus|endometriosis|fibroid", "부인과·성호르몬"),
+    (r"overactive bladder|prostat|erectile", "비뇨기")]
+
+
+def disease_group(t, ind):
+    codes = [c for x in t for c in ATC_BY.get(x, ())]
+    if codes:
+        c2 = Counter(c[:3] for c in codes).most_common(1)[0][0]
+        return f"{ATC1.get(c2[0], c2[0])} › {ATC2.get(c2, c2)} (ATC {c2})"
+    for rx, g in KW_GROUP:
+        if ind and re.search(rx, ind, re.I):
+            return f"{g} (적응증 문구로 분류)"
+    return ""
 
 
 def gsrs():
@@ -54,6 +104,9 @@ def gsrs():
                         continue
                     grp = next(((rel.get("related_substance") or {}).get("unii") for rel in r.get("relationships") or []
                                 if rel.get("type") == "SALT/SOLVATE->PARENT"), None) or u
+                    for cd in r.get("codes") or []:
+                        if (cd.get("codeSystem") or "").upper() == "WHO-ATC" and cd.get("code"):
+                            ATC[grp].add(cd["code"].strip().upper())
                     for nm in r.get("names") or []:
                         raw = nm.get("name") or ""
                         tag = OFFICIAL.search(raw)
@@ -76,6 +129,10 @@ def gsrs():
     U2I.update({u: next(iter(i)) for u, i in pairs.items() if len(i) == 1})
     print(f"미국 이름 → 국제 이름 짝 {len(U2I):,}개 · 예 {list(U2I.items())[:12]}")
     print(f"성분 {n:,}개 · 공식 이름 {len(syn):,}개 · 대표 이름 있는 묶음 {len(rep):,} · {time.time() - t0:.0f}초")
+    for g, codes in ATC.items():
+        if rep.get(g):
+            ATC_BY[rep[g]] |= codes
+    print(f"WHO ATC 분류가 있는 대표 성분 {len(ATC_BY):,}개")
     return syn, rep
 
 
@@ -178,6 +235,56 @@ def korea_trials(k, canon, split, wanted):
                 how[h] += 1
     print(f"후보 성분에 연결된 임상 {sum(len(v) for v in out.values()):,}건 · 성분 {len(out):,}개 · 연결 방법 {dict(how)}")
     print("   한글 발음 대조 예:", [(k_, v[0][3][:20]) for k_, v in list(out.items())[:0]])
+    return out
+
+
+def fda_indications(apps_wanted):
+    """openFDA 라벨 전체 파일 → {신청번호: 적응증 문구 앞부분}"""
+    head("미국 FDA 라벨 적응증 (openFDA 라벨 전체 파일)")
+    import ijson
+    idx = json.loads(get("https://api.fda.gov/download.json", timeout=60))
+    parts = idx["results"]["drug"]["label"]["partitions"]
+    print(f"라벨 파일 {len(parts)}개 · {sum(float(p.get('size_mb') or 0) for p in parts):,.0f}MB")
+    out, t0 = {}, time.time()
+    for p in parts:
+        z = zipfile.ZipFile(io.BytesIO(get(p["file"], timeout=900)))
+        for fn in z.namelist():
+            with z.open(fn) as fp:
+                for r in ijson.items(fp, "results.item"):
+                    apps = (r.get("openfda") or {}).get("application_number") or []
+                    hit = [a for a in apps if a in apps_wanted and a not in out]
+                    if not hit:
+                        continue
+                    txt = " ".join(r.get("indications_and_usage") or [])
+                    txt = re.sub(r"\s+", " ", re.sub(r"^\s*\d*\.?\s*INDICATIONS?\s*(AND|&)\s*USAGE\s*", "", txt, flags=re.I)).strip()
+                    if txt:
+                        for a in hit:
+                            out[a] = txt[:400]
+    print(f"적응증 찾은 신청 {len(out):,} / {len(apps_wanted):,} · {time.time() - t0:.0f}초")
+    return out
+
+
+def ctgov_korea(names):
+    """ClinicalTrials.gov 에서 한국 기관이 참여하고 아직 진행 중인 임상 (성분 이름별)"""
+    head("ClinicalTrials.gov — 한국 참여 진행 중 임상")
+    import urllib.parse
+    out, t0, fail = {}, time.time(), 0
+    for nm in sorted(names):
+        q = urllib.parse.urlencode({"query.intr": nm, "query.locn": "Korea",
+                                    "filter.overallStatus": "RECRUITING,NOT_YET_RECRUITING,ACTIVE_NOT_RECRUITING,ENROLLING_BY_INVITATION",
+                                    "fields": "NCTId,Phase,OverallStatus,LeadSponsorName", "countTotal": "true", "pageSize": "20"})
+        try:
+            j = json.loads(get("https://clinicaltrials.gov/api/v2/studies?" + q, timeout=40))
+        except Exception:
+            fail += 1
+            continue
+        st = j.get("studies") or []
+        if st:
+            ph = Counter(",".join(s["protocolSection"].get("designModule", {}).get("phases") or ["?"]) for s in st)
+            out[nm] = (j.get("totalCount", len(st)), ph.most_common(3), st[0]["protocolSection"]["identificationModule"]["nctId"],
+                       (st[0]["protocolSection"].get("sponsorCollaboratorsModule", {}).get("leadSponsor") or {}).get("name", ""))
+        time.sleep(0.25)
+    print(f"성분 {len(names):,}개 조회 · 한국 진행 중 임상 있는 성분 {len(out):,} · 실패 {fail} · {time.time() - t0:.0f}초")
     return out
 
 
@@ -303,6 +410,18 @@ def main():
     except Exception as e:
         print("임상 목록 실패:", type(e).__name__, str(e)[:200])
         trials = {}
+    gset = set(gap)
+    gap_apps = {a for t, kd, a in zip(us["keys"], us["kind"], us["app"]) if t in gset and kd != "ANDA"}
+    try:
+        ind_by_app = fda_indications(gap_apps)
+    except Exception as e:
+        print("라벨 적응증 실패:", type(e).__name__, str(e)[:200])
+        ind_by_app = {}
+    try:
+        ct = ctgov_korea({x for t in gap for x in t if len(t) <= 2})
+    except Exception as e:
+        print("ClinicalTrials.gov 실패:", type(e).__name__, str(e)[:200])
+        ct = {}
     ttx = lambda t, f=None: " ; ".join(filter(None, (trial_txt(trials.get(x, []), f) and f"{x}: {trial_txt(trials.get(x, []), f)}" if len(t) > 1 else trial_txt(trials.get(x, []), f) for x in t)))  # noqa: E731
     print(f"   국내 성분 없음 후보 중 국내 임상 있음: {sum(1 for t in gap if any(trials.get(x) for x in t))}가지"
           f" · 제형 없음 후보 중 같은 성분 국내 임상 있음: {sum(1 for t, _ in gap_form if any(trials.get(x) for x in t))}가지")
@@ -318,12 +437,18 @@ def main():
             x["anda"].add(app)
         if isinstance(f, str):
             x["forms"].add(f)
-    print("   [목록] 구분 | 주성분 | 미국 첫 허가 | 상표 | 오리지널 허가 수 | 제네릭 허가 수 | 제형 | 비고")
+        if kd != "ANDA" and app in ind_by_app and (not x.get("ind") or (d and d <= x.get("ind_d", "9"))):
+            x["ind"], x["ind_d"] = ind_by_app[app], d or "9"
+    print("   [목록] 구분 | 주성분 | 미국 첫 허가 | 상표 | 오리지널 허가 수 | 제네릭 허가 수 | 제형 | 비고 | 국내 임상(식약처) | 질환군 | 미국 적응증 | 한국 참여 진행 중 임상(CT.gov)")
+    ctx = lambda t: " ; ".join(f"{x}: {ct[x][0]}건 {'/'.join(p for p, _ in ct[x][1])} 예 {ct[x][2]} {ct[x][3][:25]}" for x in t if x in ct)  # noqa: E731
+    print(f"   질환군 붙은 '국내 없음' 후보 {sum(1 for t in gap if disease_group(t, info[t].get('ind', '')))} / {len(gap)}"
+          f" · 적응증 문구 붙은 것 {sum(1 for t in gap if info[t].get('ind'))} · 한국 진행 중 임상 있는 것 {sum(1 for t in gap if ctx(t))}")
     for t in gap:
         x = info[t]
         print(f"   [목록] 국내 성분 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {', '.join(sorted(x['forms']))} | "
-              f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''} | {ttx(t)}")
+              f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''} | {ttx(t)} | "
+              f"{disease_group(t, x.get('ind', ''))} | {x.get('ind', '').replace('|', '/')} | {ctx(t)}")
     print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지 (단일제 {sum(1 for t, _ in gap_form if len(t) == 1):,})")
     kforms = defaultdict(set)
     for t, f in kr_set:
