@@ -72,7 +72,8 @@ def en_moiety(name, syn=True):
     n = unicodedata.normalize("NFKC", name or "").lower()
     n = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", n)
     n = re.sub(r"[^a-z0-9 \-]", " ", n)
-    n = re.sub(r"\b\d+(\.\d+)?\b", " ", n)
+    n = re.sub(r"-[a-z]{4}\b(?=\s|$)", " ", n)           # 바이오 이름 꼬리 (erenumab-aooe)
+    n = re.sub(r"\b\d+(\.\d+)?\b", " ", n).replace("-", " ")
     full = re.sub(r"\s+", " ", n).strip()
     m = EN_NOISE_RE.sub(" ", full)
     m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", m)).strip(" -")
@@ -344,10 +345,11 @@ def ja_en_map():
       ?item rdfs:label ?en FILTER(lang(?en)="en")
       { ?item rdfs:label ?ja FILTER(lang(?ja)="ja") } UNION { ?item skos:altLabel ?ja FILTER(lang(?ja)="ja") }
     }"""
-    q = """SELECT ?ja ?en WHERE {
+    q = """SELECT ?item ?l ?lab WHERE {
       { ?item wdt:P267 ?atc } UNION { ?item wdt:P2275 ?inn }
-      ?item rdfs:label ?en FILTER(lang(?en)="en")
-      ?item rdfs:label ?ja FILTER(lang(?ja)="ja")
+      { ?item rdfs:label ?l } UNION { ?item skos:altLabel ?l }
+      FILTER(lang(?l) = "en" || lang(?l) = "ja")
+      ?item rdfs:label ?lab FILTER(lang(?lab) = "en")
     }"""
     m = {}
     try:
@@ -365,11 +367,19 @@ def ja_en_map():
         if res is None:
             raise RuntimeError("4번 모두 실패")
         for r in res:
-            ja = ja_moiety(r["ja"]["value"])
-            en = en_moiety(r["en"]["value"])
-            if ja and en:
-                m.setdefault(ja, en)
-        print(f"위키데이터: 약 이름 일본어↔영문 {len(res):,}쌍 → 일본 모체 {len(m):,}개")
+            qid = r["item"]["value"].rsplit("/", 1)[-1]
+            main = en_moiety(r["lab"]["value"], syn=False)
+            lab = r["l"]["value"]
+            if r["l"].get("xml:lang") == "ja":
+                ja = ja_moiety(lab)
+                if ja:
+                    m.setdefault(ja, main)
+            else:
+                k = en_moiety(lab, syn=False)
+                if k:
+                    EN_Q.setdefault(k, set()).add(qid)
+                    Q_EN.setdefault(qid, main)
+        print(f"위키데이터: {len(res):,}줄 → 일본 모체 {len(m):,}개 · 영문 이름(별칭 포함) {len(EN_Q):,}개 · 약 {len(Q_EN):,}개")
     except Exception as e:
         print("위키데이터 못 읽음:", str(e)[:200])
     for url in ["https://jpdb.nihs.go.jp/jan/", "https://www.pmda.go.jp/english/review-services/reviews/approved-information/drugs/0001.html"]:
@@ -482,6 +492,21 @@ def kana_map(ja_names, en_names):
     return out, amb
 
 
+EN_Q, Q_EN = {}, {}
+
+
+def canon(x):
+    """영문 모체 이름 → 위키데이터 대표 영문 이름 (미국식·국제 이름 차이 흡수). 하나로 정해질 때만."""
+    q = EN_Q.get(x) or EN_Q.get(en_moiety(x, syn=False))
+    if q and len(q) == 1:
+        return Q_EN[next(iter(q))]
+    return x
+
+
+def canon_set(t):
+    return tuple(sorted({canon(x) for x in t})) if t else t
+
+
 # ═══════════════ E. 맞추기 ═══════════════
 def match(us, jp, m, kr):
     head("E. 맞추기")
@@ -516,6 +541,10 @@ def match(us, jp, m, kr):
         jp["moi_en"] = jp["moi_ja"].map(lambda t: tuple(sorted(m[x] for x in t)) if all(x in m for x in t) else None)
     if us is None or jp is None:
         return
+    us["moi"] = [canon_set(tuple(en_moiety(x, syn=False) for x in t)) for t in us["ings"]]
+    jp["moi_en"] = jp["moi_en"].map(lambda t: canon_set(t) if t else t)
+    print(f"   위키데이터 대표 이름으로 바뀐 미국 성분: {sum(1 for t in us['ings'] for x in t if canon(en_moiety(x, syn=False)) != en_moiety(x, syn=False)):,}개 표기"
+          f" · 예 {[(en_moiety(x, syn=False), canon(en_moiety(x, syn=False))) for x in ['INDOMETHACIN', 'LEUPROLIDE ACETATE', 'SUCCINYLCHOLINE CHLORIDE', 'URSODIOL', 'ACETAMINOPHEN', 'POVIDONE-IODINE', 'METHYLERGONOVINE MALEATE']]}")
     us_set = {(mo, f) for mo, f in zip(us["moi"], us["fg"]) if isinstance(f, str)}
     jp_set = {(mo, f) for mo, f in zip(jp["moi_en"], jp["fg"]) if mo and isinstance(f, str)}
     us_moi = {mo for mo, _ in us_set}
@@ -535,7 +564,8 @@ def match(us, jp, m, kr):
     k = kr[kr[st_c].eq("정상")] if st_c else kr
     k = k[k[gb_c].astype(str).str.contains("전문|일반")] if gb_c else k
     k = k.copy()
-    k["moi"] = k[eng_c].map(lambda s: en_set(re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", str(s))) if str(s).strip() else None)
+    k["moi"] = k[eng_c].map(lambda s: canon_set(tuple(sorted({en_moiety(x, syn=False) for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", str(s)) if x.strip()})))
+                            if str(s).strip() else None)
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
         "", str(s)), FORM_KO))
