@@ -45,7 +45,7 @@ EN_SALT = ["hydrochloride", "dihydrochloride", "trihydrochloride", "hydrobromide
            "benzathine", "procaine", "hydrate", "monohydrate", "dihydrate", "trihydrate", "tetrahydrate",
            "pentahydrate", "hemihydrate", "sesquihydrate", "anhydrous", "hemipentahydrate", "solvate",
            "ethanolate", "acid"]
-EN_NOISE_RE = re.compile(r"\b(\w*hydrate|micronized|micronised|trimer|solution|concentrate|powder|granules?|sterile|"
+EN_NOISE_RE = re.compile(r"\b(\w*hydrate|diluted?|micronized|micronised|trimer|solution|concentrate|powder|granules?|sterile|"
                          r"crystalline|crystal|purified|dried|lyophilized|for injection|injection|mixture|amorphous|"
                          r"form [a-z]|type [a-z]|salt|base|free|equivalent|as|usp|ep|jp|kp)\b", re.I)
 EN_SALT_RE = re.compile(r"\b(" + "|".join(sorted(map(re.escape, EN_SALT), key=len, reverse=True)) + r")\b", re.I)
@@ -72,11 +72,11 @@ def en_moiety(name, syn=True):
     n = unicodedata.normalize("NFKC", name or "").lower()
     n = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", n)
     n = re.sub(r"[^a-z0-9 \-]", " ", n)
+    n = re.sub(r"hydro\s*ch?l?\w{0,3}ride", "hydrochloride", n)   # 원자료 오타 (Hydrochrloride 등)
     n = re.sub(r"-[a-z]{4}\b(?=\s|$)", " ", n)           # 바이오 이름 꼬리 (erenumab-aooe)
     n = re.sub(r"\b\d+(\.\d+)?\b", " ", n).replace("-", " ")
-    full = re.sub(r"\s+", " ", n).strip()
-    m = EN_NOISE_RE.sub(" ", full)
-    m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", m)).strip(" -")
+    full = re.sub(r"\s+", " ", EN_NOISE_RE.sub(" ", n)).strip() or re.sub(r"\s+", " ", n).strip()
+    m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", full)).strip(" -")
     if not m or m in ("oxide", "hydroxide", "peroxide", "trisilicate", "subsalicylate"):
         m = full
     for a, b in (EN_SYN.items() if syn else ()):

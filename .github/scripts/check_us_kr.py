@@ -31,6 +31,9 @@ def norm(n):
 OFFICIAL = re.compile(r"\[(INN|USAN|JAN|BAN|WHO-DD|USP|MI|EP|JP|DCF|MART\.|VANDF|HSDB)[^\]]*\]\s*$", re.I)
 
 
+U2I = {}
+
+
 def gsrs():
     """공식 이름(INN·USAN·JAN·USP 등 꼬리표가 붙은 이름)만 모아, 같은 성분(염은 모체로 모음)끼리 묶는다.
     반환: 이름(염 뗀 소문자) → {묶음}, 묶음 → 대표 이름(INN 우선)"""
@@ -66,6 +69,12 @@ def gsrs():
                         elif t == "USAN":
                             usan.setdefault(grp, k)
     rep = {g: inn.get(g) or usan.get(g) for g in set(inn) | set(usan)}
+    pairs = defaultdict(set)                     # 미국 이름(USAN) → 국제 이름(INN), FDA 가 한 성분에 함께 적어 둔 짝
+    for g in set(inn) & set(usan):
+        if inn[g] != usan[g]:
+            pairs[usan[g]].add(inn[g])
+    U2I.update({u: next(iter(i)) for u, i in pairs.items() if len(i) == 1})
+    print(f"미국 이름 → 국제 이름 짝 {len(U2I):,}개 · 예 {list(U2I.items())[:12]}")
     print(f"성분 {n:,}개 · 공식 이름 {len(syn):,}개 · 대표 이름 있는 묶음 {len(rep):,} · {time.time() - t0:.0f}초")
     return syn, rep
 
@@ -104,6 +113,10 @@ def main():
 
     def canon(x):
         k = en_moiety(x, syn=False)
+        if k in U2I:
+            changed[k] = U2I[k]
+            stats["미국 이름 → 국제 이름"] += 1
+            return U2I[k]
         g = syn.get(k)
         if g and len(g) == 1:
             c = rep.get(next(iter(g)))
