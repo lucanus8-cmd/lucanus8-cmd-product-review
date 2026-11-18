@@ -462,7 +462,7 @@ def main():
         print("라벨 적응증 실패:", type(e).__name__, str(e)[:200])
         ind_by_app = {}
     try:
-        ct = ctgov_korea({t[0] for t in gap if len(t) == 1})
+        ct = ctgov_korea({t[0] for t in gap if len(t) == 1}) if os.environ.get("USE_CTGOV") == "1" else {}   # 한국 임상은 식약처 승인현황으로 본다
     except Exception as e:
         print("ClinicalTrials.gov 실패:", type(e).__name__, str(e)[:200])
         ct = {}
