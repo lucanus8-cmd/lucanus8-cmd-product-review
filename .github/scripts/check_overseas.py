@@ -268,16 +268,36 @@ def ja_moiety(n):
 def japan():
     head("C. 일본 후생노동성 약가 등재 목록")
     page = "https://www.mhlw.go.jp/topics/2025/04/tp20250401-01.html"
-    t = get(page, timeout=60).decode("utf-8", "ignore")
+    b = get(page, timeout=60)
+    enc = "utf-8"
+    mm = re.search(rb'charset=["\']?([A-Za-z0-9_\-]+)', b[:3000])
+    if mm:
+        enc = mm.group(1).decode()
+    try:
+        t = b.decode(enc, "ignore")
+    except LookupError:
+        t = b.decode("cp932", "ignore")
+    if "薬価" not in t:
+        t = b.decode("cp932", "ignore")
     title = re.search(r"<title>(.*?)</title>", t, re.S)
     print("화면:", (title.group(1).strip() if title else "")[:120])
-    links = re.findall(r'href="([^"]+\.(?:xlsx|xls))"[^>]*>(.*?)</a>', t, re.S)
-    links = [(urllib.parse.urljoin(page, h), re.sub(r"<[^>]+>|\s+", " ", x).strip()) for h, x in links]
-    print(f"엑셀 링크 {len(links)}개:", [x[1][:30] for x in links][:12])
-    frames = []
-    for url, txt in links:
-        if not re.search(r"内用|注射|外用|歯科|薬価", txt + url):
+    links = []
+    for mo in re.finditer(r'href="([^"]+\.(?:xlsx|xls))"', t):
+        ctx = re.sub(r"<[^>]+>|\s+", " ", t[max(0, mo.start() - 400):mo.start()])
+        cat = None
+        for kw in ("内用薬", "注射薬", "外用薬", "歯科用薬剤"):
+            pos = ctx.rfind(kw)
+            if pos >= 0 and (cat is None or pos > cat[1]):
+                cat = (kw, pos)
+        links.append((urllib.parse.urljoin(page, mo.group(1)), cat[0] if cat else "", ctx[-80:]))
+    print(f"엑셀 링크 {len(links)}개 · 분류:", Counter(c for _, c, _ in links))
+    for u, c, x in links[:8]:
+        print("   ", c or "?", u.split("/")[-1], "|", x[-60:])
+    frames, seen = [], set()
+    for url, txt, _ in links:
+        if not txt or txt in seen:
             continue
+        seen.add(txt)
         try:
             b = get(url, timeout=180)
             x = pd.read_excel(io.BytesIO(b), dtype=str, header=None)
@@ -317,10 +337,17 @@ def ja_en_map():
       ?item rdfs:label ?en FILTER(lang(?en)="en")
       { ?item rdfs:label ?ja FILTER(lang(?ja)="ja") } UNION { ?item skos:altLabel ?ja FILTER(lang(?ja)="ja") }
     }"""
+    q = """SELECT ?ja ?en WHERE {
+      { ?item wdt:P267 ?atc } UNION { ?item wdt:P2275 ?inn }
+      ?item rdfs:label ?en FILTER(lang(?en)="en")
+      ?item rdfs:label ?ja FILTER(lang(?ja)="ja")
+    }"""
     m = {}
     try:
+        time.sleep(65)
         b = get("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q), timeout=180,
-                headers={"Accept": "application/sparql-results+json"})
+                headers={"Accept": "application/sparql-results+json",
+                         "User-Agent": "product-review-feasibility/1.0 (one-off check)"})
         res = json.loads(b)["results"]["bindings"]
         for r in res:
             ja = ja_moiety(r["ja"]["value"])
@@ -349,11 +376,90 @@ def ja_en_map():
     return m
 
 
+# 가타카나 → 로마자 → 자음 뼈대 (영문 성분명과 비교용)
+_KANA = {}
+for row in """ア a イ i ウ u エ e オ o カ ka キ ki ク ku ケ ke コ ko ガ ga ギ gi グ gu ゲ ge ゴ go
+サ sa シ shi ス su セ se ソ so ザ za ジ ji ズ zu ゼ ze ゾ zo タ ta チ chi ツ tsu テ te ト to
+ダ da ヂ ji ヅ zu デ de ド do ナ na ニ ni ヌ nu ネ ne ノ no ハ ha ヒ hi フ fu ヘ he ホ ho
+バ ba ビ bi ブ bu ベ be ボ bo パ pa ピ pi プ pu ペ pe ポ po マ ma ミ mi ム mu メ me モ mo
+ヤ ya ユ yu ヨ yo ラ ra リ ri ル ru レ re ロ ro ワ wa ヲ o ン n ヴ vu ァ a ィ i ゥ u ェ e ォ o
+ャ ya ュ yu ョ yo ヮ wa""".split("\n"):
+    p = row.split()
+    for i in range(0, len(p), 2):
+        _KANA[p[i]] = p[i + 1]
+
+
+def kana_romaji(s):
+    out = []
+    for ch in s:
+        if ch in "ャュョ" and out:
+            prev = out[-1]
+            v = _KANA[ch][1]
+            out[-1] = (prev[:-1] + "y" + v) if not prev.endswith(("shi", "chi", "ji")) else prev[:-1] + v
+        elif ch in "ァィゥェォ" and out:
+            out[-1] = out[-1][:-1] + _KANA[ch]
+        elif ch in "ッー":
+            continue
+        elif ch in _KANA:
+            out.append(_KANA[ch])
+        elif ch in "-・ ":
+            out.append(" ")
+        else:
+            return None            # 한자 등이 섞이면 못 바꿈
+    return "".join(out)
+
+
+def skel(s, ja=False):
+    s = s.lower()
+    if ja:
+        s = s.replace("shi", "si").replace("chi", "ti").replace("tsu", "tu").replace("ji", "di").replace("fu", "f")
+        s = re.sub(r"n(?=[bpm])", "m", s).replace("w", "")
+    else:
+        s = (s.replace("ph", "f").replace("th", "t").replace("qu", "kw").replace("x", "ks").replace("ch", "k")
+             .replace("y", "i").replace("w", ""))
+        s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k").replace("j", "d")
+    s = s.replace("l", "r").replace("v", "b").replace("z", "d").replace("y", "").replace("h", "").replace("f", "")
+    s = re.sub(r"[aeiou\s\-]", "", s)
+    return re.sub(r"(.)\1+", r"\1", s)
+
+
+def kana_map(ja_names, en_names):
+    """일본 모체 이름(가타카나) → 영문 후보 중 자음 뼈대가 같은 것. 하나로 정해질 때만."""
+    by = defaultdict(set)
+    for e in en_names:
+        if e and re.fullmatch(r"[a-z0-9 \-]+", e):
+            by[skel(e)].add(e)
+    out, amb = {}, 0
+    for j in ja_names:
+        r = kana_romaji(j)
+        if not r or " " in r:
+            continue
+        c = by.get(skel(r, True))
+        if c and len(c) == 1:
+            out[j] = next(iter(c))
+        elif c:
+            amb += 1
+    return out, amb
+
+
 # ═══════════════ E. 맞추기 ═══════════════
 def match(us, jp, m, kr):
     head("E. 맞추기")
+    en_pool = set()
+    if us is not None:
+        en_pool |= {x for t in us["moi"] for x in t}
+    kk = None
+    if kr is not None and "주성분(영문)" in kr.columns:
+        en_pool |= {en_moiety(p) for s in kr["주성분(영문)"] for p in re.split(r"/|;|\+", str(s)) if p.strip()}
     if jp is not None:
         jp_names = Counter(x for t in jp["moi_ja"] for x in t)
+        wk = sum(1 for n in jp_names if n in m)
+        km, amb = kana_map(list(jp_names), en_pool)
+        print(f"위키데이터로 바뀐 일본 이름 {wk:,} · 가타카나 뼈대로 바뀐 것 {len(km):,} (후보 여럿이라 못 정한 것 {amb})"
+              f" · 둘이 같이 바꾼 {sum(1 for n in km if n in m):,}개 중 결과 일치 {sum(1 for n in km if n in m and m[n] == km[n]):,}")
+        print("   가타카나 뼈대 예:", [(j, kana_romaji(j), e) for j, e in list(km.items())[:25]])
+        for j, e in km.items():
+            m.setdefault(j, e)
         hit = {n: m[n] for n in jp_names if n in m}
         print(f"일본 모체 이름 {len(jp_names):,}개 중 영문으로 바뀐 것 {len(hit):,}개 ({100 * len(hit) / max(1, len(jp_names)):.1f}%)"
               f" · 행 기준 {100 * sum(c for n, c in jp_names.items() if n in m) / max(1, sum(jp_names.values())):.1f}%")
