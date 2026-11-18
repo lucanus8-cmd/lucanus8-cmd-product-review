@@ -114,7 +114,19 @@ def main():
                 return c
             stats["공식 이름 있음(대표 없음)"] += 1
             return k
-        stats["여러 성분에 걸림" if g else "공식 이름 아님"] += 1
+        if g:
+            reps = {rep[x] for x in g if rep.get(x)}
+            if k in reps:                       # 그 이름 자체가 어느 묶음의 대표 이름
+                stats["여러 묶음 · 대표 이름과 같음"] += 1
+                return k
+            if len(reps) == 1:                  # 묶음은 여럿이지만 대표 이름은 하나 (라세미체·수화물 등)
+                c = next(iter(reps))
+                changed[k] = c
+                stats["여러 묶음 · 대표 이름 하나"] += 1
+                return c
+            stats["여러 성분에 걸림"] += 1
+            return k
+        stats["공식 이름 아님"] += 1
         return k
 
     split_us = lambda t: [y for x in t for y in re.split(r"\s+AND\s+|;", x) if y.strip()]  # noqa: E731
@@ -154,9 +166,32 @@ def main():
     print(f"\n미국 (주성분+제형) {len(us_set):,} · 국내 {len(kr_set):,} · 미국 주성분 {len(us_keys):,} · 국내 주성분 {len(kr_keys):,}")
     print(f"▶ 미국에 있고 국내에 성분이 없음: {len(gap):,}가지 (단일제 {len(gap_single):,} · 국내에 취하·만료 품목은 있었음 {sum(1 for t in gap if past[t]):,}"
           f" · 이름을 사전에서 못 찾은 것 {len(unknown):,})")
-    print("   단일제 전부:", [lab(t) + (" (국내 과거 허가)" if past[t] else "") + (" (공식 이름 아님)" if t in unknown else "") for t in gap_single])
+    info = defaultdict(lambda: {"date": "9", "brands": Counter(), "anda": set(), "nda": set(), "forms": set()})
+    for t, f, br, d, kd, app in zip(us["keys"], us["fg"], us["brand"], us["date"], us["kind"], us["app"]):
+        x = info[t]
+        if kd != "ANDA" and d and d < x["date"]:
+            x["date"] = d
+        if kd != "ANDA":
+            x["brands"][br] += 1
+            x["nda"].add(app)
+        else:
+            x["anda"].add(app)
+        if isinstance(f, str):
+            x["forms"].add(f)
+    print("   [목록] 구분 | 주성분 | 미국 첫 허가 | 상표 | 오리지널 허가 수 | 제네릭 허가 수 | 제형 | 비고")
+    for t in gap:
+        x = info[t]
+        print(f"   [목록] 국내 성분 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
+              f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {', '.join(sorted(x['forms']))} | "
+              f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''}")
     print(f"▶ 국내에 성분은 있고 그 제형이 없음: {len(gap_form):,}가지 (단일제 {sum(1 for t, _ in gap_form if len(t) == 1):,})")
-    print("   단일제 전부:", [f"{lab(t)} [{f}]" for t, f in gap_form if len(t) == 1])
+    kforms = defaultdict(set)
+    for t, f in kr_set:
+        kforms[t].add(f)
+    for t, f in gap_form:
+        x = info[t]
+        print(f"   [목록] 국내 이 제형 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
+              f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {f} | 국내 제형: {', '.join(sorted(kforms[t]))}")
     return 0
 
 
