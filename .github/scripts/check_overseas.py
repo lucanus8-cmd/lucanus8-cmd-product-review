@@ -411,18 +411,27 @@ def kana_romaji(s):
     return "".join(out)
 
 
-def skel(s, ja=False):
-    s = s.lower()
+def skel(s, ja=False, z="d"):
+    s = re.sub(r"[\s\-]", "", s.lower())
     if ja:
         s = s.replace("shi", "si").replace("chi", "ti").replace("tsu", "tu").replace("ji", "di").replace("fu", "f")
-        s = re.sub(r"n(?=[bpm])", "m", s).replace("w", "")
+        s = s.replace("w", "").replace("z", z)
     else:
         s = (s.replace("ph", "f").replace("th", "t").replace("qu", "kw").replace("x", "ks").replace("ch", "k")
              .replace("y", "i").replace("w", ""))
-        s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k").replace("j", "d")
-    s = s.replace("l", "r").replace("v", "b").replace("z", "d").replace("y", "").replace("h", "").replace("f", "")
-    s = re.sub(r"[aeiou\s\-]", "", s)
+        s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k").replace("j", "d").replace("z", "d")
+    s = re.sub(r"n(?=[bpm])", "m", s)
+    s = s.replace("l", "r").replace("v", "b").replace("y", "").replace("h", "").replace("f", "")
+    s = re.sub(r"[aeiou]", "", s)
     return re.sub(r"(.)\1+", r"\1", s)
+
+
+def _ja_cands(by, r):
+    """일본 쪽 ザ행은 영문 z 일 때도, s 일 때도 있다(フルチカゾン = fluticasone) → 두 가지로 찾아 본다."""
+    c = set(by.get(skel(r, True, "d"), set()))
+    if not c:
+        c = set(by.get(skel(r, True, "s"), set()))
+    return c
 
 
 JA_ESTER = [("ジプロピオン酸エステル", "dipropionate"), ("酪酸プロピオン酸エステル", "butyrate propionate"),
@@ -445,14 +454,14 @@ def kana_map(ja_names, en_names):
         suf = next(((k, v) for k, v in JA_ESTER if j.endswith(k)), None)
         if suf:
             base = kana_romaji(j[: -len(suf[0])])
-            c = by.get(skel(base + " " + suf[1], True)) if base else None
+            c = _ja_cands(by, base + " " + suf[1]) if base else None
             if c and len(c) == 1:
                 out[j] = next(iter(c))
             continue
         r = kana_romaji(j)
         if not r or " " in r:
             continue
-        c = by.get(skel(r, True))
+        c = _ja_cands(by, r)
         if c and len(c) == 1:
             out[j] = next(iter(c))
         elif c:
