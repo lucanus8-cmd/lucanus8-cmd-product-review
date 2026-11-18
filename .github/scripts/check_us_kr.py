@@ -144,6 +144,16 @@ def main():
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
         "", str(s)), FORM_KO))
     print("국내 성분 이름:", dict(stats))
+    for probe in ("salbutamol", "albuterol", "cefalexin", "cephalexin", "nilotinib", "betamethasone", "miconazole",
+                  "sevoflurane", "nitroglycerin", "glyceryl", "magnesium sulfate", "efavirenz", "citalopram", "terbutaline"):
+        h = kr[kr[eng_c].astype(str).str.lower().str.contains(probe)]
+        ex = [(str(e)[:70], st, gb[:2], tuple(sorted({canon(x) for x in split(e)}))) for e, st, gb in
+              zip(h[eng_c], h[st_c], h[gb_c])][:4]
+        print(f"   [국내 표기] {probe}: {len(h)}품목 · 정상 {int((h[st_c] == '정상').sum())} · {ex}")
+    for nm in ("ALBUTEROL SULFATE", "CEPHALEXIN", "NILOTINIB HYDROCHLORIDE", "BETAMETHASONE VALERATE", "MICONAZOLE NITRATE",
+               "SEVOFLURANE", "NITROGLYCERIN", "EFAVIRENZ", "CITALOPRAM HYDROBROMIDE"):
+        k0 = en_moiety(nm, syn=False)
+        print(f"   [미국 표기] {nm} → {k0} → 묶음 {len(syn.get(k0, ()))}개 · 대표 {[rep.get(g) for g in list(syn.get(k0, ()))[:4]]} → {canon(nm)}")
     print("   표기 차이가 공식 이름으로 정리된 예:", list(changed.items())[:40])
 
     lab = lambda t: " + ".join(t)  # noqa: E731
