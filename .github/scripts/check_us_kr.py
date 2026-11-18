@@ -32,6 +32,11 @@ OFFICIAL = re.compile(r"\[(INN|USAN|JAN|BAN|WHO-DD|USP|MI|EP|JP|DCF|MART\.|VANDF
 
 
 U2I = {}
+# 사람이 정한 예외 (나중에 구글시트 '예외' 탭으로 옮긴다): 정규식 → 비교에 쓸 이름
+EXCEPT = [(r"^\w*botulinumtoxin ?a$|^(clostridium )?botulinum (neuro)?toxin (type )?a\b.*", "botulinum toxin type a"),
+          (r"^\w*botulinumtoxin ?b$|^(clostridium )?botulinum (neuro)?toxin (type )?b\b.*", "botulinum toxin type b"),
+          (r"^(epoetin alfa|recombinant human erythropoietin|human erythropoietin)$", "epoetin alfa"),
+          (r"^(estrogens conjugated|conjugated estrogens?)$", "conjugated estrogens")]
 ATC = defaultdict(set)
 CODE_SYS = Counter()
 ATC_BY = defaultdict(set)
@@ -144,7 +149,8 @@ def gsrs():
     return syn, rep
 
 
-NOISE_US = re.compile(r"technetium|tc 99m|\bkit\b|\bf 18\b|\bga 68\b|\bin 111\b|\bi 123\b|\bi 131\b|rubidium|thallous|"
+NOISE_US = re.compile(r"technetium|tc[- ]?99m|\bkit\b|\bf[- ]?18\b|\bga[- ]?68\b|\bin[- ]?111\b|\bi[- ]?12[345]\b|\bi[- ]?131\b|"
+                      r"\bc[- ]?11\b|\bn[- ]?13\b|\bcu[- ]?64\b|\blu[- ]?177\b|\bzr[- ]?89\b|\bra[- ]?223\b|\by[- ]?90\b|rubidium|thallous|"
                       r"\bnitrogen\b|\boxygen\b|\bhelium\b|nitrous oxide|carbon dioxide|\bxenon\b|\bkrypton\b|"
                       r"fludeoxyglucose|\bammonia n 13\b|allergenic|pollen|venom|\bmold\b|\bdander\b", re.I)
 
@@ -334,8 +340,30 @@ def main():
     stats = Counter()
     changed = {}
 
+    tok_idx = defaultdict(set)              # 단어 순서와 상관없이 찾기
+    for nm in syn:
+        tok_idx[" ".join(sorted(nm.split()))].add(nm)
+
     def canon(x):
-        k = en_moiety(x, syn=False)
+        k0 = en_moiety(x, syn=False)
+        for rx, to in EXCEPT:
+            if re.search(rx, k0):
+                stats["예외표"] += 1
+                return to
+        r = _canon(k0)
+        if r == k0 and k0 not in syn:
+            alt = re.sub(r"^(d|l|dl|r|s)\s+", "", k0)           # 'd penicillamine' → 'penicillamine'
+            if alt != k0 and alt in syn:
+                stats["앞글자(D-·L-) 떼고 찾음"] += 1
+                return _canon(alt)
+            same = tok_idx.get(" ".join(sorted(k0.split())), set())
+            if len(same) == 1:
+                stats["단어 순서 달라도 찾음"] += 1
+                return _canon(next(iter(same)))
+        return r
+
+    def _canon(x):
+        k = x
         if k in U2I:
             changed[k] = U2I[k]
             stats["미국 이름 → 국제 이름"] += 1
