@@ -33,6 +33,7 @@ OFFICIAL = re.compile(r"\[(INN|USAN|JAN|BAN|WHO-DD|USP|MI|EP|JP|DCF|MART\.|VANDF
 
 U2I = {}
 ATC = defaultdict(set)
+CODE_SYS = Counter()
 ATC_BY = defaultdict(set)
 
 ATC1 = {"A": "소화기·대사", "B": "혈액", "C": "심혈관", "D": "피부", "G": "비뇨생식·성호르몬", "H": "호르몬",
@@ -67,7 +68,7 @@ KW_GROUP = [
     (r"epilep|seizure", "뇌전증"), (r"schizophren|bipolar|depress|insomnia|anxiety|adhd|attention deficit", "정신·수면"),
     (r"alzheimer|parkinson|amyotrophic|huntington|multiple sclerosis|neuromyelitis|spinal muscular|duchenne", "신경"),
     (r"osteoporosis|bone", "골질환"), (r"anemia|hemophilia|thrombocytopenia|sickle|thalassemia|hemoglobinuria|bleeding", "혈액"),
-    (r"obesity|weight", "비만"), (r"deficiency|lysosomal|fabry|gaucher|pompe|mucopolysacchar|urea cycle|phenylketon|amyloid", "희귀 대사질환"),
+    (r"obesity|weight", "비만"), (r"enzyme replacement|lysosomal|hypophosphatasia|fabry|gaucher|pompe|mucopolysacchar|urea cycle|phenylketon|amyloid", "희귀 대사질환"),
     (r"kidney|renal", "신장"), (r"macular|glaucoma|ocular|ophthalm|retin|eye", "안과"),
     (r"imaging|diagnos|contrast", "진단"), (r"contracept|menopaus|endometriosis|fibroid", "부인과·성호르몬"),
     (r"overactive bladder|prostat|erectile", "비뇨기")]
@@ -105,8 +106,13 @@ def gsrs():
                     grp = next(((rel.get("related_substance") or {}).get("unii") for rel in r.get("relationships") or []
                                 if rel.get("type") == "SALT/SOLVATE->PARENT"), None) or u
                     for cd in r.get("codes") or []:
-                        if (cd.get("codeSystem") or "").upper() == "WHO-ATC" and cd.get("code"):
-                            ATC[grp].add(cd["code"].strip().upper())
+                        cs = (cd.get("code_system") or cd.get("codeSystem") or "")
+                        if n < 3000:
+                            CODE_SYS[cs] += 1
+                        if "ATC" in cs.upper() and cd.get("code"):
+                            c0 = cd["code"].strip().upper()
+                            if re.fullmatch(r"[A-Z]\d\d[A-Z]{0,2}\d{0,2}", c0):
+                                ATC[grp].add(c0)
                     for nm in r.get("names") or []:
                         raw = nm.get("name") or ""
                         tag = OFFICIAL.search(raw)
@@ -132,7 +138,9 @@ def gsrs():
     for g, codes in ATC.items():
         if rep.get(g):
             ATC_BY[rep[g]] |= codes
-    print(f"WHO ATC 분류가 있는 대표 성분 {len(ATC_BY):,}개")
+    print(f"WHO ATC 분류가 있는 대표 성분 {len(ATC_BY):,}개 · 코드 체계 (앞 3천 성분) {CODE_SYS.most_common(25)}")
+    if n:
+        pass
     return syn, rep
 
 
@@ -410,6 +418,14 @@ def main():
     except Exception as e:
         print("임상 목록 실패:", type(e).__name__, str(e)[:200])
         trials = {}
+    FLUID = re.compile(r"^(dextrose|glucose|sodium chloride|potassium chloride|calcium chloride|magnesium chloride|"
+                       r"magnesium sulfate|sodium lactate|sodium acetate|acetate|dibasic|monobasic|amino acids|"
+                       r"sodium bicarbonate|sodium gluconate|soybean oil|fish oil|olive oil|lipid|glycerophosphate|"
+                       r"sterile water|water|electrolytes?|trometamol|potassium phosphate|sodium phosphate|zinc chloride|"
+                       r"cupric|chromic|manganese|selenious|sodium citrate|citric|potassium acetate|ammonium)$")
+    fluid = {t for t in gap if any(FLUID.match(x) for x in t) and (len(t) > 1 or FLUID.match(t[0]))}
+    print(f"   수액·영양·전해질로 따로 뺀 '국내 없음' 후보 {len(fluid)}가지")
+    gap = [t for t in gap if t not in fluid]
     gset = set(gap)
     gap_apps = {a for t, kd, a in zip(us["keys"], us["kind"], us["app"]) if t in gset and kd != "ANDA"}
     try:
@@ -418,7 +434,7 @@ def main():
         print("라벨 적응증 실패:", type(e).__name__, str(e)[:200])
         ind_by_app = {}
     try:
-        ct = ctgov_korea({x for t in gap for x in t if len(t) <= 2})
+        ct = ctgov_korea({t[0] for t in gap if len(t) == 1})
     except Exception as e:
         print("ClinicalTrials.gov 실패:", type(e).__name__, str(e)[:200])
         ct = {}
