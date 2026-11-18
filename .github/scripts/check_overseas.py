@@ -351,11 +351,19 @@ def ja_en_map():
     }"""
     m = {}
     try:
-        time.sleep(65)
-        b = get("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q), timeout=180,
-                headers={"Accept": "application/sparql-results+json",
-                         "User-Agent": "product-review-feasibility/1.0 (one-off check)"})
-        res = json.loads(b)["results"]["bindings"]
+        res = None
+        for attempt in range(4):
+            time.sleep(70)
+            try:
+                b = get("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q), timeout=180,
+                        headers={"Accept": "application/sparql-results+json",
+                                 "User-Agent": "product-review-feasibility/1.0 (one-off check)"})
+                res = json.loads(b)["results"]["bindings"]
+                break
+            except Exception as e:
+                print(f"   위키데이터 {attempt + 1}번째 실패: {str(e)[:80]}")
+        if res is None:
+            raise RuntimeError("4번 모두 실패")
         for r in res:
             ja = ja_moiety(r["ja"]["value"])
             en = en_moiety(r["en"]["value"])
@@ -556,6 +564,11 @@ def match(us, jp, m, kr):
             h = allk[allk[eng_c].astype(str).str.lower().str.contains(re.escape(mo[0].split()[0]))]
             if len(h):
                 gone[mo] = dict(Counter(h[st_c]))
+    for mo, g in gone.items():
+        if g.get("정상"):
+            h = allk[allk[eng_c].astype(str).str.lower().str.contains(re.escape(mo[0].split()[0]))]
+            print(f"   [정상인데 못 맞춤] {mo[0]}: " + " | ".join(
+                f"{r[eng_c]!r} {r[st_c]} {r[gb_c]} → {en_set(re.split(r'/|;|[+]', str(r[eng_c])))}" for _, r in h.head(3).iterrows()))
     print(f"   '국내 없음' 중 국내에 정상 아닌 품목(취하·만료 등)만 있는 것 {len(gone)}가지: {[(m[0], g) for m, g in list(gone.items())[:30]]}")
     gap_form = sorted({(mo, f) for mo, f in both if mo in kr_moi and (mo, f) not in kr_set})
     print(f"\n▶ 미국·일본 둘 다 있고 국내에 성분이 없음: {len(gap_moi):,}가지 (단일제 {sum(len(x) == 1 for x in gap_moi)})")
