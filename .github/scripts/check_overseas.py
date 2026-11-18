@@ -45,6 +45,9 @@ EN_SALT = ["hydrochloride", "dihydrochloride", "trihydrochloride", "hydrobromide
            "benzathine", "procaine", "hydrate", "monohydrate", "dihydrate", "trihydrate", "tetrahydrate",
            "pentahydrate", "hemihydrate", "sesquihydrate", "anhydrous", "hemipentahydrate", "solvate",
            "ethanolate", "acid"]
+EN_NOISE_RE = re.compile(r"\b(\w*hydrate|micronized|micronised|trimer|solution|concentrate|powder|granules?|sterile|"
+                         r"crystalline|crystal|purified|dried|lyophilized|for injection|injection|mixture|amorphous|"
+                         r"form [a-z]|type [a-z]|salt|base|free|equivalent|as|usp|ep|jp|kp)\b", re.I)
 EN_SALT_RE = re.compile(r"\b(" + "|".join(sorted(map(re.escape, EN_SALT), key=len, reverse=True)) + r")\b", re.I)
 EN_SYN = {"acetaminophen": "paracetamol", "albuterol": "salbutamol", "epinephrine": "adrenaline",
           "norepinephrine": "noradrenaline", "glyburide": "glibenclamide", "meperidine": "pethidine",
@@ -69,8 +72,10 @@ def en_moiety(name, syn=True):
     n = unicodedata.normalize("NFKC", name or "").lower()
     n = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", n)
     n = re.sub(r"[^a-z0-9 \-]", " ", n)
+    n = re.sub(r"\b\d+(\.\d+)?\b", " ", n)
     full = re.sub(r"\s+", " ", n).strip()
-    m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", full)).strip(" -")
+    m = EN_NOISE_RE.sub(" ", full)
+    m = re.sub(r"\s+", " ", EN_SALT_RE.sub(" ", m)).strip(" -")
     if not m or m in ("oxide", "hydroxide", "peroxide", "trisilicate", "subsalicylate"):
         m = full
     for a, b in (EN_SYN.items() if syn else ()):
@@ -532,9 +537,26 @@ def match(us, jp, m, kr):
         print(f"   국내 '{probe}': {len(hit)}품목 · 영문 표기 {list(hit[eng_c].astype(str).unique()[:3])} → 모체 {list(hit['moi'].astype(str).unique()[:3])}")
     print(f"국내 정상 전문+일반 {len(k):,}품목 · 영문 성분명 있음 {k['moi'].notna().mean() * 100:.1f}% · 제형 판독 {k['fg'].notna().mean() * 100:.1f}%")
     print("   못 읽은 제형 예:", Counter(str(n)[-12:] for n, g in zip(k[name_c], k["fg"]) if not g).most_common(12))
-    kr_set = {(mo, f) for mo, f in zip(k["moi"], k["fg"]) if mo and f}
+    kr_set = {(mo, f) for mo, f in zip(k["moi"], k["fg"]) if mo and isinstance(f, str)}
     kr_moi = {mo for mo in k["moi"] if mo}
+    first_words = {x.split()[0] for mo in kr_moi for x in mo if x}           # 느슨한 확인용 (첫 낱말)
     gap_moi = sorted({mo for mo, f in both if mo not in kr_moi})
+    loose = [mo for mo in gap_moi if all(x.split()[0] in first_words for x in mo)]
+    print(f"   '국내 없음' {len(gap_moi)}가지 중 첫 낱말이 국내에 있는 것(표기 차이 의심) {len(loose)}가지: {[' + '.join(x) for x in loose][:40]}")
+    gap_moi = [mo for mo in gap_moi if mo not in loose]
+    allk = kr.copy()
+    for probe in ("sorafenib", "ibrutinib", "pemetrexed", "lactulose", "dolutegravir", "desloratadine", "macitentan",
+                  "fluvoxamine", "posaconazole", "miconazole", "canagliflozin", "aliskiren"):
+        hit = allk[allk[eng_c].astype(str).str.lower().str.contains(probe)]
+        print(f"   [{probe}] 국내 전체 {len(hit)}품목 · 상태 {dict(Counter(hit[st_c]))} · 표기 {list(hit[eng_c].astype(str).unique()[:2])}"
+              f" → {[en_set(re.split(r'/', x)) for x in hit[eng_c].astype(str).unique()[:2]]}")
+    gone = {}
+    for mo in gap_moi:
+        if len(mo) == 1:
+            h = allk[allk[eng_c].astype(str).str.lower().str.contains(re.escape(mo[0].split()[0]))]
+            if len(h):
+                gone[mo] = dict(Counter(h[st_c]))
+    print(f"   '국내 없음' 중 국내에 정상 아닌 품목(취하·만료 등)만 있는 것 {len(gone)}가지: {[(m[0], g) for m, g in list(gone.items())[:30]]}")
     gap_form = sorted({(mo, f) for mo, f in both if mo in kr_moi and (mo, f) not in kr_set})
     print(f"\n▶ 미국·일본 둘 다 있고 국내에 성분이 없음: {len(gap_moi):,}가지 (단일제 {sum(len(x) == 1 for x in gap_moi)})")
     print("   전부:", [" + ".join(x) for x in gap_moi])
