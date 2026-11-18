@@ -223,14 +223,20 @@ def candidates(study, kind, out_kw, week):
 # 같은 척도·같은 방식(변화량/변화율/최종값)·같은 시점끼리만 한 묶음으로 합친다.
 # 척도 사전은 위에서부터 먼저 맞는 것을 쓴다(구체적인 것을 위에 둔다).
 _SCALES = [
-    ("DAS28-CRP", r"das\s*-?\s*28.{0,25}crp|disease activity score.{0,45}crp|crp.{0,12}das\s*-?\s*28"),
-    ("DAS28-ESR", r"das\s*-?\s*28.{0,25}esr|disease activity score.{0,45}(esr|erythrocyte)|esr.{0,12}das\s*-?\s*28"),
+    ("DAS28-CRP", r"das\s*-?\s*28.{0,30}(crp|c-?\s*reactive)|disease activity score.{0,90}(crp|c-?\s*reactive)"
+                  r"|crp.{0,12}das\s*-?\s*28"),
+    ("DAS28-ESR", r"das\s*-?\s*28.{0,30}(esr|erythrocyte)|disease activity score.{0,90}(esr|erythrocyte)"
+                  r"|esr.{0,12}das\s*-?\s*28"),
     ("DAS28 (CRP·ESR 미표기)", r"das\s*-?\s*28|disease activity score\s*-?\s*28"),
-    ("CDAI (류마티스)", r"clinical disease activity index"),
     ("CDAI (크론병)", r"crohn'?s disease activity index"),
-    ("CDAI", r"\bcdai\b"),
+    ("CDAI", r"\bcdai\b|clinical disease activity index"),
     ("SDAI", r"\bsdai\b|simplified disease activity"),
     ("HAQ-DI", r"\bhaq\b|haq-?di|health assessment questionnaire"),
+    ("mTSS (관절 손상)", r"\bmtss\b|modified total sharp|sharp score"),
+    ("SF-36", r"sf-?\s*36|short[- ]form.{0,8}36|36-item short"),
+    ("아침 강직", r"morning (joint )?stiffness"),
+    ("피로", r"fatigue|tiredness|facit"),
+    ("환자 전반 평가", r"patient'?s?\s+global assessment|\bptga\b|\bpatga\b"),
     ("ACR20 반응", r"\bacr\s*-?\s*20\b|american college of rheumatology.{0,40}\b20\b"),
     ("ACR50 반응", r"\bacr\s*-?\s*50\b|american college of rheumatology.{0,40}\b50\b"),
     ("ACR70 반응", r"\bacr\s*-?\s*70\b|american college of rheumatology.{0,40}\b70\b"),
@@ -272,7 +278,7 @@ _SCALES = [
     ("sPGA", r"\bspga\b|static physician"),
     ("IGA", r"\biga\b|investigator'?s? global assessment"),
     ("DLQI", r"dlqi|dermatology life quality"),
-    ("가려움", r"itch|prurit"),
+    ("가려움", r"\bitch|prurit"),
     ("MADRS", r"madrs|montgomery"),
     ("HAM-A", r"ham-?a\b|hamilton anxiety"),
     ("HAM-D", r"ham-?d\b|hamd|hamilton (rating scale for )?depression"),
@@ -310,6 +316,8 @@ _SCALES = [
     ("SVR12", r"\bsvr\s*-?\s*12|sustained virolog"),
     ("HIV RNA", r"hiv-?1?\s*rna"),
     ("안면홍조", r"hot flash|hot flush|vasomotor"),
+    ("의사 전반 평가", r"physician'?s?\s+global assessment|\bphga\b"),
+    ("CRP", r"\bhs-?crp\b|\bcrp\b|c-?\s*reactive protein"),
 ]
 _SCALES_RE = [(lab, re.compile(rx, re.I)) for lab, rx in _SCALES]
 _TIME_RE = re.compile(r"(?:(\d+(?:\.\d+)?)\s*-?\s*(weeks?|wks?|months?|years?|days?)\b"
@@ -325,9 +333,13 @@ _EP_STOP = {"in", "the", "of", "at", "to", "a", "an", "and", "with", "on", "for"
             "levels", "value", "values", "measured", "as", "during", "period", "treatment", "versus", "vs"}
 
 
+_RECALL_RE = re.compile(r"\b(?:prior|past|previous|last|preceding|over the)\s+\d+\s*-?\s*(?:days?|weeks?|hours?)", re.I)
+
+
 def weeks_of(text):
-    """'12 weeks'·'Week 12'·'Month 6' → 주. 여러 개면 마지막 값. 못 읽으면 None."""
-    hits = _TIME_RE.findall(text or "")
+    """'12 weeks'·'Week 12'·'Month 6' → 주. 여러 개면 마지막 값. 못 읽으면 None.
+    'in the prior 7 days' 같은 회상 기간은 시점이 아니므로 뺀다."""
+    hits = _TIME_RE.findall(_RECALL_RE.sub(" ", text or ""))
     if not hits:
         return None
     n1, u1, u2, n2 = hits[-1]
