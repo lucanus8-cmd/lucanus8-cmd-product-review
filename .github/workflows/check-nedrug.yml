@@ -227,11 +227,11 @@ jobs:
         if: inputs.what == 'indhead'
         run: |
           python -m pip install --quiet pandas ijson pyarrow
-          python .github/scripts/check_ind_headings.py
+          MEDRT="${{ inputs.words == 'medrt' && '1' || '0' }}" python .github/scripts/check_ind_headings.py
           if [ "${{ inputs.detail }}" = "1" ]; then
             git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git fetch -q --depth=1 origin data && git worktree add -q rv FETCH_HEAD && cd rv && git checkout -q -B data
-            mkdir -p review && cp ../out/ind_evidence.csv review/ && git add review
+            mkdir -p review && cp ../out/ind_*.csv review/ && git add review
             git diff --cached --quiet || git commit -qm "검토용 적응증 근거 표" && git push -q origin data && echo "검토 표 저장"
           fi
 

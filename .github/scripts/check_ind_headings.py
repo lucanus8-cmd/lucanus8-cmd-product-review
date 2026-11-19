@@ -193,6 +193,91 @@ def hit(texts, terms, excl=()):
     return ""
 
 
+# ── MED-RT (미국 보훈부·국립의학도서관): 성분 → '치료함/예방함' 질병 (검증용) ──
+MEDRT_KEY = {   # 질병: (MED-RT 질병 이름에서 찾을 말들, 빼고 볼 말들)
+    "고혈압": (["hypertension"], ["pulmonary", "ocular", "intracranial", "portal", "renovascular hypertension, malignant"]),
+    "이상지질혈증": (["hyperlipid", "hypercholesterol", "dyslipid", "hypertriglycerid", "lipoprotein", "hyperlipoprotein"], []),
+    "당뇨병": (["diabetes mellitus"], ["insipidus"]), "비만": (["obesity", "overweight"], []),
+    "심부전": (["heart failure"], []), "협심증": (["angina"], []), "심근경색": (["myocardial infarction"], []),
+    "심방세동": (["atrial fibrillation"], []), "뇌졸중": (["stroke"], []),
+    "심부정맥혈전증": (["venous thrombosis", "thromboembolism", "venous thromboembolism", "pulmonary embolism"], []),
+    "폐동맥고혈압": (["pulmonary arterial hypertension", "hypertension, pulmonary"], []),
+    "만성신장병": (["renal insufficiency, chronic", "kidney failure, chronic", "chronic kidney"], []),
+    "천식": (["asthma"], []), "COPD": (["pulmonary disease, chronic obstructive", "emphysema", "bronchitis, chronic"], []),
+    "알레르기비염": (["rhinitis, allergic", "allergic rhinitis"], []), "특발성폐섬유증": (["idiopathic pulmonary fibrosis"], []),
+    "위식도역류질환": (["gastroesophageal reflux", "esophagitis"], []),
+    "소화성궤양": (["peptic ulcer", "duodenal ulcer", "stomach ulcer"], []), "크론병": (["crohn"], []),
+    "궤양성대장염": (["colitis, ulcerative"], []), "과민성대장증후군": (["irritable bowel"], []),
+    "변비": (["constipation"], []), "구역·구토": (["vomiting", "nausea"], []),
+    "C형간염": (["hepatitis c"], []), "B형간염": (["hepatitis b"], []), "HIV": (["hiv infections", "hiv-1", "hiv"], []),
+    "대상포진": (["herpes zoster"], []), "인플루엔자": (["influenza, human", "influenza"], ["haemophilus"]),
+    "요로감염": (["urinary tract infections"], []), "결핵": (["tuberculosis"], []),
+    "류마티스관절염": (["arthritis, rheumatoid"], []), "골관절염": (["osteoarthritis"], []),
+    "골다공증": (["osteoporosis"], []), "통풍": (["gout"], []), "강직성척추염": (["spondylitis, ankylosing"], []),
+    "건선": (["psoriasis", "arthritis, psoriatic"], []), "아토피피부염": (["dermatitis, atopic"], []),
+    "여드름": (["acne"], []), "루푸스": (["lupus"], []), "다발성경화증": (["multiple sclerosis"], []),
+    "우울증": (["depressive disorder", "depression"], []), "조현병": (["schizophrenia"], []),
+    "양극성장애": (["bipolar"], []), "불안장애": (["anxiety"], []), "불면증": (["sleep initiation", "insomnia"], []),
+    "ADHD": (["attention deficit"], []), "알츠하이머병": (["alzheimer"], []), "파킨슨병": (["parkinson"], []),
+    "뇌전증": (["epilep", "seizure"], []), "편두통": (["migraine"], []), "신경병증성통증": (["neuralgia", "neuropath"], []),
+    "전립선비대증": (["prostatic hyperplasia"], []), "과민성방광": (["urinary bladder, overactive"], []),
+    "발기부전": (["erectile dysfunction"], []), "녹내장": (["glaucoma", "ocular hypertension"], []),
+    "황반변성": (["macular degeneration"], []), "갑상선기능저하증": (["hypothyroidism"], []),
+    "빈혈": (["anemia"], []), "혈우병": (["hemophilia"], []), "유방암": (["breast neoplasms"], []),
+    "폐암": (["lung neoplasms", "non-small-cell lung", "small cell lung"], []),
+    "대장암": (["colorectal neoplasms", "colonic neoplasms", "rectal neoplasms"], []),
+    "전립선암": (["prostatic neoplasms"], []), "다발골수종": (["multiple myeloma"], []),
+    "만성림프구성백혈병": (["leukemia, lymphocytic, chronic"], []),
+    "간세포암": (["carcinoma, hepatocellular", "liver neoplasms"], []),
+}
+KNOWN_BAD = [("비만", "gemfibrozil"), ("심근경색", "azilsartan medoxomil"), ("심근경색", "hydrochlorothiazide + valsartan"),
+             ("뇌졸중", "eplerenone"), ("폐동맥고혈압", "sepiapterin"), ("구역·구토", "carbidopa"),
+             ("B형간염", "berahyaluronidase alfa + pembrolizumab"), ("HIV", "desloratadine"), ("인플루엔자", "cefuroxime"),
+             ("인플루엔자", "dexamethasone + neomycin + polymyxin b"), ("인플루엔자", "gatifloxacin"), ("불면증", "buspirone"),
+             ("뇌전증", "clozapine"), ("빈혈", "cedazuridine + decitabine"), ("유방암", "dexrazoxane")]
+
+
+def medrt(names):
+    """성분 이름 → {(MED-RT 질병 이름, 관계)}. RxNav(미국 국립의학도서관) 공개 API."""
+    from concurrent.futures import ThreadPoolExecutor
+    import urllib.parse
+    try:
+        pairs = pd.read_csv(io.BytesIO(get(RAW.replace("fda_site/", "fda/fda_usan_inn_pairs.csv"))), dtype=str)
+        i2u = dict(zip(pairs.iloc[:, 1].str.lower(), pairs.iloc[:, 0].str.lower()))
+    except Exception:
+        i2u = {}
+    i2u.update({"paracetamol": "acetaminophen", "salbutamol": "albuterol", "glibenclamide": "glyburide",
+                "colestyramine": "cholestyramine", "chlortalidone": "chlorthalidone", "indometacin": "indomethacin",
+                "valproic": "valproic acid", "zoledronic": "zoledronic acid", "risedronic": "risedronate",
+                "ibandronic": "ibandronate", "alendronic": "alendronate", "tranexamic": "tranexamic acid",
+                "meclofenamic": "meclofenamate", "dicycloverine": "dicyclomine", "etacrynic": "ethacrynic acid",
+                "metamfetamine": "methamphetamine", "amfetamine": "amphetamine", "dexamfetamine": "dextroamphetamine",
+                "cromoglicic": "cromolyn", "orciprenaline": "metaproterenol", "isoprenaline": "isoproterenol",
+                "benzfetamine": "benzphetamine", "tiotixene": "thiothixene", "torasemide": "torsemide"})
+
+    def one(nm):
+        out = set()
+        for q in dict.fromkeys([i2u.get(nm, nm), nm]):
+            try:
+                j = json.loads(get("https://rxnav.nlm.nih.gov/REST/rxclass/class/byDrugName.json?"
+                                   + urllib.parse.urlencode({"drugName": q, "relaSource": "MEDRT"}), timeout=40))
+            except Exception:
+                continue
+            for it in ((j.get("rxclassDrugInfoList") or {}).get("rxclassDrugInfo") or []):
+                rel = it.get("rela", "")
+                c = (it.get("rxclassMinConceptItem") or {})
+                if rel in ("may_treat", "may_prevent") and c.get("classType", "DISEASE") == "DISEASE":
+                    out.add((c.get("className", ""), rel))
+            if out:
+                break
+        return nm, out
+    t0 = time.time()
+    with ThreadPoolExecutor(6) as ex:
+        res = dict(ex.map(one, names))
+    print(f"MED-RT 조회 {len(names):,}개 성분 · 질병 연결 있는 성분 {sum(1 for v in res.values() if v):,} · {time.time() - t0:.0f}초")
+    return res
+
+
 def main():
     prod = pd.read_parquet(io.BytesIO(get(RAW + "prod.parquet")))
     ing = pd.read_parquet(io.BytesIO(get(RAW + "ing.parquet")))
@@ -258,7 +343,68 @@ def main():
     for x in summ:
         print("  ", x)
     os.makedirs("out", exist_ok=True)
-    pd.DataFrame(ev_rows).to_csv("out/ind_evidence.csv", index=False, encoding="utf-8-sig")
+    ev = pd.DataFrame(ev_rows)
+    if os.environ.get("MEDRT") == "1":
+        comps = sorted({x.strip() for n in set(ev["성분"]) | set(prod["주성분"]) for x in str(n).split(" + ") if x.strip()})
+        try:
+            r0 = get("https://rxnav.nlm.nih.gov/REST/rxclass/class/byDrugName.json?drugName=atorvastatin&relaSource=MEDRT", 40)
+            print("MED-RT 응답 예 (atorvastatin):", r0[:500])
+        except Exception as e:
+            print("MED-RT 접속 실패:", type(e).__name__, str(e)[:120])
+        md = medrt(comps)
+        first = ing.set_index("주성분")["미국 첫 허가"].astype(str)
+
+        def med_for(n):
+            return {c for x in str(n).split(" + ") for c in md.get(x.strip(), set())}
+
+        def in_med(n, ko):
+            keys, excl = MEDRT_KEY[ko]
+            for c, _ in med_for(n):
+                cl = c.lower()
+                if any(e in cl for e in excl):
+                    continue
+                if any(k in cl for k in keys):
+                    return c
+            return ""
+        has_med = {n: bool(med_for(n)) for n in set(ev["성분"])}
+        print(f"\n■ FDA 결과에 나온 성분 중 MED-RT 자료가 아예 있는 성분 {sum(has_med.values())}/{len(has_med)}")
+        out = []
+        tot = Counter()
+        for _, r in ev.iterrows():
+            n, ko = r["성분"], r["질병"]
+            m = in_med(n, ko)
+            yr = first.get(n, "")[:4]
+            if m:
+                cls = "✅ 일치"
+            elif not has_med.get(n):
+                cls = "⚪ MED-RT에 성분 없음"
+            elif yr >= "2024":
+                cls = "⚪ 최근 승인(2024~)"
+            elif " + " in n:
+                cls = "⚪ 복합제"
+            else:
+                cls = "⚠️ FDA 라벨에만"
+            tot[cls] += 1
+            out.append({**r.to_dict(), "MED-RT 일치 병명": m, "판정": cls})
+        o = pd.DataFrame(out)
+        o.to_csv("out/ind_medrt.csv", index=False, encoding="utf-8-sig")
+        print("■ 판정 합계:", dict(tot), f"· 일치율 {tot['✅ 일치'] / max(1, len(o)):.0%}")
+        print("■ 질병별 (✅ / ⚠️ / ⚪):")
+        for ko, g in o.groupby("질병", sort=False):
+            c = g["판정"].value_counts()
+            print(f"   {ko}: {c.get('✅ 일치', 0)} / {c.get('⚠️ FDA 라벨에만', 0)} / {len(g) - c.get('✅ 일치', 0) - c.get('⚠️ FDA 라벨에만', 0)}"
+                  f" · ⚠️ {list(g.loc[g['판정'] == '⚠️ FDA 라벨에만', '성분'])[:12]}")
+        print("\n■ 제가 직접 틀렸다고 본 15쌍은 어떻게 판정됐나:")
+        for ko, n in KNOWN_BAD:
+            x = o[(o["질병"] == ko) & (o["성분"] == n)]
+            print(f"   {ko} · {n}: {x['판정'].iloc[0] if len(x) else '(이번엔 안 잡힘)'} {x['MED-RT 일치 병명'].iloc[0] if len(x) else ''}")
+        # MED-RT 에만 있는 것 (FDA 라벨 방식이 놓쳤을 수 있는 것)
+        print("\n■ MED-RT에는 그 병이 있는데 FDA 라벨 방식이 안 잡은 성분 (질병별 예):")
+        got = set(zip(o["질병"], o["성분"]))
+        for ko in TESTS:
+            miss = [n for n in sorted(set(prod["주성분"])) if (ko, n) not in got and in_med(n, ko)]
+            print(f"   {ko}: {len(miss)} · {miss[:15]}")
+    ev.to_csv("out/ind_evidence.csv", index=False, encoding="utf-8-sig")
     os.makedirs("out", exist_ok=True)
     df.assign(소제목=df["소제목"].map(" | ".join), 허가문장=df["허가문장"].map(" | ".join)).drop(
         columns=["적응증 글"]).to_csv("out/ind_headings.csv", index=False, encoding="utf-8-sig")
