@@ -26,6 +26,7 @@ import check_ind_headings as ih      # noqa: E402
 UA = {"User-Agent": "Mozilla/5.0 (product-review feasibility check)"}
 RAW = "https://raw.githubusercontent.com/lucanus8-cmd/lucanus8-cmd-product-review/data/"
 OUT = "out"
+BUDGET = 150          # 분. 넘으면 받기를 멈추고 받은 것으로 평가한다
 
 
 def get(url, timeout=60):
@@ -276,7 +277,11 @@ def main():
             print(f"   [{r['구분']}] {r['成分名'][:22]} ({r['주성분'][:25]}) {r['品名'][:18]} → {txt[:220] or memo}")
         if (i + 1) % 200 == 0:
             print(f"   … {i + 1:,}/{len(todo):,} · {time.time() - t0:.0f}초 · 오류 {err}", flush=True)
-        time.sleep(1.0)
+            pd.DataFrame([{"YJ": k, **v} for k, v in done.items()]).to_csv(f"{OUT}/jp_labels_part.csv", index=False)
+        if time.time() - t0 > BUDGET * 60:
+            print(f"   시간 한도({BUDGET}분) — 여기까지 받은 것으로 평가, 다음에 이어 받음")
+            break
+        time.sleep(0.7)
     sel["효능"] = sel["YJ"].map(lambda y: done.get(y, {}).get("효능", ""))
     sel["주소"] = sel["YJ"].map(lambda y: done.get(y, {}).get("주소", ""))
     sel["메모"] = sel["YJ"].map(lambda y: done.get(y, {}).get("메모", ""))
