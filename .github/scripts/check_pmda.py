@@ -408,6 +408,28 @@ def probe_update2():
         err = re.findall(r"(?:エラー|入力してください|正しく|指定してください)[^。]{0,60}", txt)[:3]
         print(f"\n{fr}~{to} ({fmt}) · {len(tt):,}자 · 건수 {n.group(0) if n else '?'} · 문서 링크 {len(links)}개 · 오류글 {err}")
         print("   링크 예:", sorted(set(links))[:8])
+        for pat in (r"\b\d{4}[0-9A-Z]{3}[A-Z]\d{4}\b", r"lnkStrHTML\s*=", r"lnkStrPDF\s*=", r"var\s+\w*(?:result|Result|data|Data)\w*\s*=",
+                    r"ResultDataSet", r"iyakuDetail"):
+            ms = list(re.finditer(pat, tt))
+            print(f"   [{pat}] {len(ms)}개")
+            for mm in ms[:2]:
+                print("      …", re.sub(r"\s+", " ", tt[max(0, mm.start() - 250):mm.start() + 450]))
+        try:
+            import http.cookiejar
+            cj = http.cookiejar.CookieJar()
+            op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+            op.addheaders = list(UA.items())
+            op.open("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/", timeout=60).read()
+            op.open(urllib.request.Request("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/",
+                                           data=urllib.parse.urlencode(d).encode()), timeout=90).read()
+            with op.open(urllib.request.Request("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/exportSearchResult/csv",
+                                                data=urllib.parse.urlencode({"searchNameTitle": ""}).encode()), timeout=90) as r:
+                cb, cct = r.read(), r.headers.get("Content-Type", "")
+            ctext = dec(cb, cct) if "utf" in cct.lower() else cb.decode("cp932", "ignore")
+            print(f"   CSV 내보내기 · {cct} · {len(cb):,}바이트 · 줄 {ctext.count(chr(10))}")
+            print("      ", ctext[:1500])
+        except Exception as e:
+            print("   CSV 내보내기 실패", type(e).__name__, str(e)[:120])
         hr = sorted(set(re.findall(r'href="([^"]+)"', tt)))
         print("   모든 링크(검색 관련):", [h for h in hr if "Pmda" in h or "pmda" in h or "/" not in h[:1]][:40])
         trs = re.findall(r"<tr[^>]*>(.*?)</tr>", tt, re.S | re.I)
