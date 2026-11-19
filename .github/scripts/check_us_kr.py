@@ -66,7 +66,7 @@ KW_GROUP = [
     (r"pulmonary arterial hypertension", "폐동맥고혈압"), (r"heart failure|cardiomyopathy|atrial fibrillation|angina", "심장"),
     (r"hyperlipid|cholesterol|\bldl\b|triglycerid", "이상지질혈증"),
     (r"\bhiv\b|hepatitis|influenza|covid|cytomegalovirus|herpes|viral", "바이러스 감염"),
-    (r"bacterial|infection|pneumonia", "세균 감염"), (r"fungal|candid|aspergill", "진균 감염"),
+    (r"bacterial|infection|pneumonia", "세균 감염"), (r"fungal|\bcandid(a|iasis|emia)\b|aspergill", "진균 감염"),
     (r"psoriasis|atopic dermatitis|eczema|acne|alopecia|vitiligo|hidradenitis|urticaria", "피부"),
     (r"rheumatoid|lupus|myasthenia|transplant|arthritis|crohn|ulcerative colitis|spondylitis|vasculitis|nephropathy", "면역(자가면역·이식)"),
     (r"asthma|copd|chronic obstructive", "천식·COPD"), (r"migraine|pain", "통증·편두통"),
@@ -82,7 +82,9 @@ KW_GROUP = [
 def disease_group(t, ind):
     codes = [c for x in t for c in ATC_BY.get(x, ())]
     if codes:
-        c2 = Counter(c[:3] for c in codes).most_common(1)[0][0]
+        prio = "LNCJHBMRGAPDSV"                  # 전신 치료 분류를 먼저 (예: prednisone A07·H02 → H02)
+        cnt = Counter(c[:3] for c in codes)
+        c2 = min(cnt, key=lambda c: (-cnt[c], prio.find(c[0]) if c[0] in prio else 99, c))
         return f"{ATC1.get(c2[0], c2[0])} › {ATC2.get(c2, c2)} (ATC {c2})"
     for rx, g in KW_GROUP:
         if ind and re.search(rx, ind, re.I):
@@ -430,6 +432,10 @@ def main():
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
         "", str(s)), FORM_KO))
+    if "성상" in k.columns:                      # 품목명으로 못 읽으면 성상 글(예: '흰색 필름코팅정')로
+        miss = k["fg"].isna()
+        k.loc[miss, "fg"] = k.loc[miss, "성상"].map(lambda s: form_of(str(s), FORM_KO))
+        print(f"   국내 제형: 품목명으로 {(~miss).sum():,} · 성상으로 더 {int(k.loc[miss, 'fg'].notna().sum()):,} · 못 읽음 {int(k['fg'].isna().sum()):,}")
     print("국내 성분 이름:", dict(stats))
     for probe in ("salbutamol", "albuterol", "cefalexin", "cephalexin", "nilotinib", "betamethasone", "miconazole",
                   "sevoflurane", "nitroglycerin", "glyceryl", "magnesium sulfate", "efavirenz", "citalopram", "terbutaline"):
@@ -511,6 +517,37 @@ def main():
     ctx = lambda t: " ; ".join(f"{x}: {ct[x][0]}건 {'/'.join(p for p, _ in ct[x][1])} 예 {ct[x][2]} {ct[x][3][:25]}" for x in t if x in ct)  # noqa: E731
     print(f"   질환군 붙은 '국내 없음' 후보 {sum(1 for t in gap if disease_group(t, info[t].get('ind', '')))} / {len(gap)}"
           f" · 적응증 문구 붙은 것 {sum(1 for t in gap if info[t].get('ind'))} · 한국 진행 중 임상 있는 것 {sum(1 for t in gap if ctx(t))}")
+    # 제형별 미국 허가 수 (④ 표에 씀)
+    pf = defaultdict(lambda: {"anda": set(), "nda": set(), "brands": Counter()})
+    for t, f, br, kd, app in zip(us["keys"], us["fg"], us["brand"], us["kind"], us["app"]):
+        if isinstance(f, str):
+            y = pf[(t, f)]
+            (y["anda"] if kd == "ANDA" else y["nda"]).add(app)
+            if kd != "ANDA":
+                y["brands"][br] += 1
+    # 국내 제형을 못 읽은 품목이 있는 성분 (제형 없음 판정이 틀릴 수 있음)
+    kr_unread = {t for t, f in zip(k["keys"], k["fg"]) if t and not isinstance(f, str)}
+    # 점검: '국내 성분 없음' 을 한글 성분명 발음으로 다시 확인 (국내 정상 품목에 비슷한 한글명이 있으면 확인 필요)
+    ko_idx = defaultdict(set)
+    for kor in k["주성분"]:
+        for part in str(kor).split("/"):
+            core = ko_core(part)
+            sk = ko_skel(core) if core else None
+            if sk and len(sk) >= 5:
+                ko_idx[sk].add(core)
+    suspect = {}
+    for t in gap:
+        hits = []
+        for x in t:
+            for cand in {x, x.split()[0]}:
+                sk = en_skel_ko(cand)
+                if len(sk) >= 5 and sk in ko_idx:
+                    hits += sorted(ko_idx[sk])[:2]
+        if hits and (len(t) == 1 or len(set(hits)) >= len(t)):
+            suspect[t] = sorted(set(hits))[:3]
+    print(f"   [점검] '국내 성분 없음' 중 국내 정상 품목에 발음이 같은 한글 성분명이 있는 것 {len(suspect)}가지:")
+    for t, h in list(suspect.items())[:120]:
+        print(f"      {lab(t)} ↔ {', '.join(h)}")
     res = []
     for t in gap:
         x = info[t]
@@ -521,7 +558,8 @@ def main():
                     "미국 제형": ", ".join(sorted(x["forms"])), "국내에 있는 제형": "",
                     "질환군": disease_group(t, x.get("ind", "")), "미국 적응증": x.get("ind", ""),
                     "국내 임상시험 승인": ttx(t),
-                    "국내 상황 메모": ("국내 취하·만료 품목 있음" if past[t] else "")})
+                    "국내 상황 메모": " · ".join(filter(None, ["국내 취하·만료 품목 있음" if past[t] else "",
+                                                          f"확인 필요: 국내에 '{', '.join(suspect[t])}' 품목 있음" if t in suspect else ""]))})
         print(f"   [목록] 국내 성분 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {', '.join(sorted(x['forms']))} | "
               f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''} | {ttx(t)} | "
@@ -532,13 +570,15 @@ def main():
         kforms[t].add(f)
     for t, f in gap_form:
         x = info[t]
+        y = pf[(t, f)]
         res.append({"구분": "국내에 이 제형 없음", "주성분": lab(t), "단일/복합": "복합" if len(t) > 1 else "단일",
                     "미국 첫 허가": x["date"][:4] if x["date"] != "9" else "",
-                    "미국 상표": ", ".join(b for b, _ in x["brands"].most_common(3)),
-                    "오리지널 허가 수": len(x["nda"]), "제네릭 허가 수": len(x["anda"]),
+                    "미국 상표": ", ".join(b for b, _ in (y["brands"] or x["brands"]).most_common(3)),
+                    "오리지널 허가 수": len(y["nda"]), "제네릭 허가 수": len(y["anda"]),
                     "미국 제형": f, "국내에 있는 제형": ", ".join(sorted(kforms[t])),
                     "질환군": disease_group(t, x.get("ind", "")), "미국 적응증": x.get("ind", ""),
-                    "국내 임상시험 승인": ttx(t, f), "국내 상황 메모": ""})
+                    "국내 임상시험 승인": ttx(t, f),
+                    "국내 상황 메모": "확인 필요: 국내 품목 중 제형을 못 읽은 것 있음" if t in kr_unread else ""})
         print(f"   [목록] 국내 이 제형 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {f} | 국내 제형: {', '.join(sorted(kforms[t]))} | {ttx(t, f)}")
     od = os.environ.get("USKR_OUT", "out/uskr")
