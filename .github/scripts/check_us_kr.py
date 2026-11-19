@@ -230,13 +230,18 @@ def en_roman(e):
     return re.sub(r"(.)\1+", r"\1", re.sub(r"e$", "", s))
 
 
+_TRIAL_SHEET = {}
+
+
 def korea_trials(k, canon, split, wanted):
     """국내 임상시험 승인 목록 → {주성분 키: [(승인일, 단계, 의뢰사, 제품명, 제형)]} (wanted 성분만)"""
     head("국내 임상시험 승인 목록")
     sid = "1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE"
     import gsheet
-    c = None
-    if gsheet.available():
+    c = _TRIAL_SHEET.get("c")
+    if c is not None:
+        c = c.copy()
+    elif gsheet.available():
         try:
             c = gsheet.read_sheet(sid)
             print("임상 시트를 서비스 계정 키로 읽음")
@@ -250,6 +255,7 @@ def korea_trials(k, canon, split, wanted):
         c = pd.read_csv(io.BytesIO(raw), dtype=str, low_memory=False).fillna("")
         print("임상 시트를 공개 링크로 읽음")
     c.columns = [str(x).split("\n")[0].strip() for x in c.columns]
+    _TRIAL_SHEET["c"] = c.copy()
     if len(c) < 7000:
         raise RuntimeError(f"임상 자료가 {len(c):,}행뿐 — 갱신이 덜 끝난 것으로 봄")
     print(f"{len(c):,}행 · 칸 {list(c.columns)} · 상태 {Counter(c.get('STATUS', pd.Series(dtype=str))).most_common(5)}")
@@ -409,7 +415,10 @@ def main():
                 continue
             rows.append({"app": no, "brand": pr.get("brand_name", ""), "ings": [x.get("name", "") for x in pr.get("active_ingredients") or []],
                          "fg": form_of(f"{pr.get('dosage_form', '')} {pr.get('route', '')}", FORM_EN),
-                         "date": min(orig) if orig else "", "kind": "ANDA" if no.startswith("ANDA") else no[:3]})
+                         "date": min(orig) if orig else "", "kind": "ANDA" if no.startswith("ANDA") else no[:3],
+                         "sponsor": a.get("sponsor_name", ""), "status": pr.get("marketing_status", ""),
+                         "strength": "; ".join(str(x.get("strength", "")) for x in pr.get("active_ingredients") or []),
+                         "form_raw": f"{pr.get('dosage_form', '')} · {pr.get('route', '')}"})
     us = pd.DataFrame(rows)
     print(f"판매 중 제품 {len(us):,}개")
 
@@ -663,7 +672,82 @@ def main():
     os.makedirs(od, exist_ok=True)
     pd.DataFrame(res).to_csv(f"{od}/국내비교.csv", index=False, encoding="utf-8-sig")
     print(f"결과 저장: {od}/국내비교.csv ({len(res):,}줄)")
+    try:
+        site_tables(od, us, k, gap, fluid, gap_form, kr_keys, kr_set, mk, lab, info, kr_unread, past, suspect,
+                    lambda w: korea_trials(k, canon, split, w))
+    except Exception as e:                       # 사이트용 표는 덤 — 실패해도 위 결과(시트용)는 그대로
+        print("사이트용 성분 요약 실패:", type(e).__name__, str(e)[:200])
     return 0
+
+
+def site_tables(od, us, k, gap, fluid, gap_form, kr_keys, kr_set, mk, lab, info, kr_unread, past, suspect, get_trials):
+    """사이트 'FDA 비교' 화면용: 미국 판매 중 성분 전부의 국내 상황 요약 + 판매 중 제품 목록."""
+    head("사이트용 성분 요약")
+    us_keys = sorted({t for t in us["keys"] if t})
+    trials = get_trials({x for t in us_keys for x in t})
+    gset, fset = set(gap), set(fluid)
+    miss_form = defaultdict(set)
+    for t, f in gap_form:
+        miss_form[t].add(f)
+    kforms_all = defaultdict(set)
+    for t, f in kr_set:
+        kforms_all[t].add(f)
+    kname, kcount = defaultdict(Counter), Counter()
+    for t, kor in zip(k["keys"], k["주성분"]):
+        if t:
+            kname[mk(t)][re.sub(r"\s+", "", str(kor))] += 1
+            kcount[mk(t)] += 1
+    ONG = ONGOING
+    rows = []
+    for t in us_keys:
+        x = info[t]
+        if t in gset:
+            stt = "국내 성분 없음"
+        elif t in fset:
+            stt = "비교 제외 (수액·영양)"
+        elif mk(t) in kr_keys:
+            stt = "일부 제형 없음" if miss_form.get(t) else "국내에도 있음"
+        else:
+            stt = "국내 성분 없음"
+        tl = trials_for(trials, t)
+        memo = []
+        if past[mk(t)] and stt == "국내 성분 없음":
+            memo.append("국내 취하·만료 품목 있음")
+        if t in suspect:
+            memo.append(f"확인 필요: 국내에 '{', '.join(suspect[t])}' 품목 있음")
+        if miss_form.get(t) and mk(t) in kr_unread:
+            memo.append("확인 필요: 국내 품목 중 제형을 못 읽은 것 있음")
+        rows.append({
+            "주성분": lab(t), "단일/복합": "복합" if len(t) > 1 else "단일", "국내 상황": stt,
+            "한글명": (kname[mk(t)].most_common(1)[0][0] if kname.get(mk(t)) else ""),
+            "미국 상표": ", ".join(b for b, _ in x["brands"].most_common(4)),
+            "미국 첫 허가": (f"{x['date'][:4]}-{x['date'][4:6]}-{x['date'][6:8]}" if len(x["date"]) == 8 else ""),
+            "오리지널 허가 수": len(x["nda"]), "제네릭 허가 수": len(x["anda"]),
+            "미국 제형": ", ".join(sorted(x["forms"])),
+            "국내에 없는 미국 제형": ", ".join(sorted(miss_form.get(t, ()))),
+            "국내 제형": ", ".join(sorted(kforms_all.get(mk(t), ()))),
+            "국내 품목 수": kcount.get(mk(t), 0),
+            "질환군": disease_group(t, x.get("ind", "")),
+            "국내 임상 승인 수": len(tl), "국내 임상 진행 중": sum(1 for y in tl if y[6] in ONG),
+            "국내 임상시험 승인": trial_txt(tl),
+            "국내 임상 목록": " | ".join(f"{y[1]} {y[2]} {y[6]} · {str(y[4])[:40]} · {str(y[3])[:25]}"
+                                      for y in sorted(tl, key=lambda y: y[1], reverse=True)[:12]),
+            "국내 상황 메모": " · ".join(memo),
+            "신청번호": " ".join(sorted(x["nda"])),
+        })
+    ing = pd.DataFrame(rows)
+    ing.to_csv(f"{od}/site_ingredients.csv", index=False, encoding="utf-8-sig")
+    print(f"   성분 {len(ing):,}개 · 국내 상황 {dict(Counter(ing['국내 상황']))}"
+          f" · 국내 임상 승인 있는 성분 {(ing['국내 임상 승인 수'] > 0).sum():,}")
+    prod = pd.DataFrame({
+        "주성분": us["keys"].map(lambda t: lab(t) if t else ""), "신청번호": us["app"], "구분": us["kind"],
+        "상표": us["brand"], "회사": us["sponsor"], "함량": us["strength"], "제형": us["fg"].fillna(""),
+        "제형(원문)": us["form_raw"], "판매": us["status"].map({"Prescription": "전문", "Over-the-counter": "일반"}).fillna(""),
+        "첫 허가": us["date"].map(lambda d: f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(str(d)) == 8 else ""),
+    })
+    prod = prod[prod["주성분"] != ""]
+    prod.to_csv(f"{od}/site_products.csv", index=False, encoding="utf-8-sig")
+    print(f"   판매 중 제품 {len(prod):,}개")
 
 
 if __name__ == "__main__":

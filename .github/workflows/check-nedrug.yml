@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -197,6 +197,22 @@ jobs:
           OUT_DIR=out/fda PREV_DIR=none python .github/scripts/build_fda_tables.py
           USKR_OUT=out/uskr python .github/scripts/check_us_kr.py
           OUT_DIR=out/fda USKR_OUT=out/uskr python .github/scripts/write_fda_sheet.py
+
+      - name: FDA 매일 갱신 전체 시험 (fda-daily 와 같은 스크립트, detail=1 이면 data 가지 fda_site/ 저장)
+        if: inputs.what == 'fdasite'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          SAVE: ${{ inputs.detail }}
+        run: bash .github/scripts/fda_daily.sh
+
+      - name: FDA 사이트용 파일 남기기
+        if: always() && inputs.what == 'fdasite'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fda-site
+          path: out/fda_site/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 특허 시트가 늘어난 이유 보기 (읽기만)
         if: inputs.what == 'patentcheck'
