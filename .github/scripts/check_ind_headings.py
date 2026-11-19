@@ -82,6 +82,17 @@ def refs(t):
     return list(dict.fromkeys(out))
 
 
+CAUTION = re.compile(r"\b(not indicated|consider|potential for|not been established|not recommended|not approved|"
+                     r"should not|warning|precaution|monitor)\b", re.I)
+
+
+def clauses(t):
+    """소제목이 없는 라벨: '사용 제한(Limitations of Use)' 앞까지에서, 주의 문장을 뺀 '허가 문장'만"""
+    t = re.split(r"\bLimitations? of Use\b|\bImportant Limitations?\b", t, flags=re.I)[0]
+    parts = [p.strip() for p in re.split(r"(?<=[.])\s+(?=[A-Z])|•", t) if p.strip()]
+    return [p for p in parts if not CAUTION.search(p)]
+
+
 TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자)
     "이상지질혈증": (["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "lipid",
                  "ldl", "chylomicronemia", "lipoprotein", "sitosterolemia"], "이상지질혈증"),
@@ -130,7 +141,9 @@ def main():
     rows = []
     for a, (et, txt, br, gn) in lab.items():
         h, rf = headings(txt, br, gn), refs(txt)
+        c = [] if h else clauses(txt)
         rows.append({"신청번호": a, "주성분": a2i.get(a, ""), "상표": ", ".join(br[:2]), "소제목": " | ".join(h),
+                     "허가문장": " | ".join(c),
                      "요약구절": " | ".join(rf), "적응증 글": txt})
     df = pd.DataFrame(rows)
     has_h, has_r = df["소제목"] != "", df["요약구절"] != ""
@@ -154,6 +167,15 @@ def main():
         H = {n for n, x in g if hit(x["소제목"].str.split(" \\| ").sum(), terms)}
         R = {n for n, x in g if hit(x["요약구절"].str.split(" \\| ").sum(), terms)}
         T = {n for n, x in g if hit(x["적응증 글"], terms)}
+        C = {n for n, x in g if hit(x["허가문장"].str.split(" \\| ").sum(), terms)}
+        HC = H | C
+        print(f"   ▶ 소제목+허가문장(소제목 없을 때만) {len(HC)}" + (f" · ATC 성분 중 잡힘 {len(A & HC)}/{len(A)}" if atc else "")
+              + f" · olanzapine {'포함' if 'olanzapine' in HC else '없음'}")
+        if atc:
+            print("     ATC인데 못 잡음:", sorted(A - HC)[:20])
+            print("     잡혔는데 ATC 다름:", [(n, str(ing_grp.get(n, ''))[:20]) for n in sorted(HC - A)[:25]])
+        else:
+            print("     글 전체엔 있는데 못 잡음:", sorted(T - HC)[:20], "· 새로 잡힌 것:", sorted(HC - T)[:10])
         A = set(ing.loc[ing["질환군"].str.contains(atc, regex=False), "주성분"]) if atc else set()
         print(f"\n◆ {ko}: 소제목 {len(H)} · 소제목+요약구절 {len(H | R)} · 글 전체 {len(T)}"
               + (f" · ATC '{atc}' 성분 {len(A)} (그중 소제목으로 잡힘 {len(A & H)}, +요약구절 {len(A & (H | R))})" if atc else ""))
