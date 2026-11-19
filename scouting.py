@@ -3614,9 +3614,9 @@ if PAGE == "sugg":
     a, b, c = st.columns([1, 1, 1.5])
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
-    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "🇺🇸 FDA 비교"],
+    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "FDA 비교"],
                         horizontal=True, key="sugg_view")
-    if sugg_view.startswith("🇺🇸"):
+    if sugg_view == "FDA 비교":
         # FDA 비교는 로봇이 매일 만든 작은 표만 읽는다(매출 자료 필요 없음)
         import fda_view
         fda_view.render()

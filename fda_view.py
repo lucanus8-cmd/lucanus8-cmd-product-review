@@ -1,4 +1,4 @@
-"""제품 제안 › 🇺🇸 FDA 비교 보기.
+"""제품 제안 › FDA 비교 보기.
 
 로봇(GitHub fda-daily, 매일 아침 6시쯤)이 FDA 공개 자료를 국내 허가(정상 품목)·식약처 임상 승인과
 맞춰 본 결과를 이 저장소 'data' 가지 fda_site/ 에 작은 파일로 둔다. 이 화면은 그 파일만 읽는다
@@ -200,14 +200,14 @@ def _view_ing(d):
             jd = "국내 성분 없음"
         else:
             jd = "국내에 이 제형 없음" if f in miss or f not in kr_forms else "국내에도 있음"
-        rows.append({"제형": f, "🇺🇸 미국 (상표 · 함량 · 제네릭)": us_txt,
-                     "🇰🇷 국내": "있음" if f in kr_forms else "없음", "판정": jd})
+        rows.append({"제형": f, "미국 (상표 · 함량 · 제네릭)": us_txt,
+                     "국내": "있음" if f in kr_forms else "없음", "판정": jd})
     for f in kr_forms:
         if f not in us_forms:
-            rows.append({"제형": f, "🇺🇸 미국 (상표 · 함량 · 제네릭)": "—", "🇰🇷 국내": "있음", "판정": "국내에만 있음"})
+            rows.append({"제형": f, "미국 (상표 · 함량 · 제네릭)": "—", "국내": "있음", "판정": "국내에만 있음"})
     if rows:
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True,
-                     column_config={"🇺🇸 미국 (상표 · 함량 · 제네릭)": st.column_config.TextColumn(width="large")})
+                     column_config={"미국 (상표 · 함량 · 제네릭)": st.column_config.TextColumn(width="large")})
 
     c1, c2 = st.columns(2)
     with c1:
@@ -348,7 +348,7 @@ def _view_list(d):
 
 
 def render():
-    st.markdown("#### 🇺🇸 FDA 비교")
+    st.markdown("#### FDA 비교")
     try:
         d = load()
     except Exception as e:
