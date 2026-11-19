@@ -389,8 +389,7 @@ def probe_update2():
         base.setdefault(m.group(1), (sel.group(1) or sel.group(2)) if sel else (first.group(1) if first else ""))
     print("기본 칸 수", len(base), "· 날짜 칸 기본값", {k: base.get(k) for k in ("updateDocFrDt", "updateDocToDt", "ListRows")})
     today = dt.date(2026, 11, 19)
-    for fr, to, fmt in ((today - dt.timedelta(days=1), today, "%Y%m%d"), (today - dt.timedelta(days=1), today, "%Y/%m/%d"),
-                        (today - dt.timedelta(days=7), today, "%Y%m%d")):
+    for fr, to, fmt in ((today - dt.timedelta(days=1), today, "%Y%m%d"),):
         d = dict(base)
         d.update({"updateDocFrDt": fr.strftime(fmt), "updateDocToDt": to.strftime(fmt), "ListRows": "100"})
         for k in ("btnA.x", "btnA.y"):
@@ -409,8 +408,15 @@ def probe_update2():
         err = re.findall(r"(?:エラー|入力してください|正しく|指定してください)[^。]{0,60}", txt)[:3]
         print(f"\n{fr}~{to} ({fmt}) · {len(tt):,}자 · 건수 {n.group(0) if n else '?'} · 문서 링크 {len(links)}개 · 오류글 {err}")
         print("   링크 예:", sorted(set(links))[:8])
-        i = txt.find("件")
-        print("   글:", txt[max(0, i - 300):i + 900])
+        hr = sorted(set(re.findall(r'href="([^"]+)"', tt)))
+        print("   모든 링크(검색 관련):", [h for h in hr if "Pmda" in h or "pmda" in h or "/" not in h[:1]][:40])
+        trs = re.findall(r"<tr[^>]*>(.*?)</tr>", tt, re.S | re.I)
+        rows = [cells(x) for x in trs]
+        rows = [r for r in rows if any(r)]
+        print(f"   표 줄 {len(rows)}개")
+        for r_, raw in list(zip(rows, [x for x in trs if any(cells(x))]))[:6]:
+            print("     ", r_[:10])
+            print("        HTML:", re.sub(r"\s+", " ", raw)[:700])
         time.sleep(3)
 
 
