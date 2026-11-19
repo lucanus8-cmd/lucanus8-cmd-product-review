@@ -322,8 +322,52 @@ def probe_label():
         print("검색(POST) 실패", str(e)[:100])
 
 
+def probe_update():
+    """매일 '바뀐 첨부문서만' 받을 길 찾기: 검색 화면의 갱신일 칸 · PMDA 새 소식(RSS) 주소. 몇 개만 요청한다."""
+    head("갱신일로 찾기 · 새 소식 주소 찾기")
+    for u in ("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/", "https://www.pmda.go.jp/",
+              "https://www.pmda.go.jp/rss/", "https://www.pmda.go.jp/safety/info-services/drugs/0001.html"):
+        try:
+            b, ct = get(u, timeout=60)
+            t = dec(b, ct)
+        except Exception as e:
+            print(u, "실패", str(e)[:80])
+            continue
+        print(f"\n▶ {u} · {len(t):,}자")
+        rss = sorted(set(re.findall(r'href="([^"]*(?:rss|RSS|\.xml|atom)[^"]*)"', t)))
+        print("   새 소식(RSS) 링크:", rss[:20])
+        if "iyakuSearch" in u:
+            for m in re.finditer(r"<(input|select)[^>]*name=\"([^\"]+)\"[^>]*>", t):
+                tag, nm = m.group(1), m.group(2)
+                around = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t[max(0, m.start() - 300):m.start()]))[-60:]
+                if re.search(r"date|Date|day|Day|year|Year|update|Update|kaitei|Kaitei|kousin|koushin|from|to", nm) \
+                        or re.search(r"更新|改訂|日付|期間|年月日", around):
+                    opts = re.findall(r"<option[^>]*value=\"([^\"]*)\"[^>]*>([^<]*)", t[m.start():m.start() + 3000])[:8] \
+                        if tag == "select" else []
+                    print(f"   칸 {tag} {nm} · 앞 글 …{around.strip()} · 고르기 {opts}")
+            for k in ("更新日", "改訂", "新着", "最新", "期間"):
+                i = t.find(k)
+                if i >= 0:
+                    print(f"   '{k}' 주변:", re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t[i - 200:i + 400]))[:300])
+            forms = re.findall(r"<form[^>]*>", t)
+            print("   form:", forms[:4])
+        time.sleep(1.5)
+    for u in ("https://www.pmda.go.jp/rss_008.xml", "https://www.pmda.go.jp/rss_015.xml", "https://www.pmda.go.jp/rss_001.xml"):
+        try:
+            b, ct = get(u, timeout=40)
+            t = dec(b, ct)
+            items = re.findall(r"<title>(.*?)</title>", t, re.S)
+            print(f"\n{u} · {len(t):,}자 · 제목 {len(items)}개 · 예 {[html.unescape(x)[:60] for x in items[:6]]}")
+        except Exception as e:
+            print(u, "실패", str(e)[:60])
+        time.sleep(1.5)
+
+
 def main():
     import os
+    if os.environ.get("PROBE") == "update":
+        probe_update()
+        return 0
     if os.environ.get("PROBE") in ("1", "probe"):
         probe()
         return 0
