@@ -65,6 +65,16 @@ def main():
     new = norm(read_tab(NEW_ID, "특허정보"))
     print("머리글:", list(new.columns))
     profile(new, "지금 특허 시트")
+    keep = ["ITEM_SEQ", "ITEM_NAME", "ENTP_NAME", "INGR_ENG_NAME", "INGR_NAME", "DOMESTIC_PATENT_STATUS",
+            "PATENT_GB_CODE", "PATENTEE", "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE", "PAGE_GB_NM"]
+    mb = lambda d: d.memory_usage(deep=True).sum() / 1e6
+    print(f"\n==== 메모리: 18칸 전부 {mb(new):.0f}MB · 사이트가 쓰는 11칸만 {mb(new[keep]):.0f}MB"
+          f" · 12.6만 줄일 때(비례) 약 {mb(new) * 125789 / len(new):.0f}MB")
+    import io
+    for nm, d in (("전부", new), ("11칸", new[keep])):
+        b = io.BytesIO(); d.to_parquet(b, index=False); print(f"   parquet 크기({nm}): {len(b.getvalue()) / 1e6:.1f}MB")
+    dead = new["DOMESTIC_PATENT_STATUS"].str.contains("거절|취하|포기|무효", na=False)
+    print(f"   거절·취하·포기·무효 줄 {dead.sum():,} (그중 제품특허 {(dead & new['PAGE_GB_NM'].str.contains('제품', na=False)).sum():,})")
     try:
         old = norm(read_tab(CTRL_ID, "_stg_특허정보"))
         profile(old, "옛 수집분 (_stg_특허정보, 9월)")
