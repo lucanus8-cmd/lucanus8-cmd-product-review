@@ -25,7 +25,11 @@ def _info():
         pass
     import tomllib
     d = tomllib.loads(raw if raw.lstrip().startswith("[") else "[gcp_service_account]\n" + raw)
-    return d.get("gcp_service_account") or d
+    x = d.get("gcp_service_account") or d
+    b64 = (x.get("gcp_service_account_b64") if isinstance(x, dict) else None) or d.get("gcp_service_account_b64")
+    if b64:                                   # Streamlit Secrets 의 gcp_service_account_b64 = "…" 한 줄 (사이트와 같은 모양)
+        return json.loads(base64.b64decode("".join(str(b64).split())).decode("utf-8"))
+    return x
 
 
 def diagnose():
