@@ -204,11 +204,21 @@ def korea_trials(k, canon, split, wanted):
     """국내 임상시험 승인 목록 → {주성분 키: [(승인일, 단계, 의뢰사, 제품명, 제형)]} (wanted 성분만)"""
     head("국내 임상시험 승인 목록")
     sid = "1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE"
-    raw = get(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv", timeout=300)
-    if raw[:15].lstrip().lower().startswith(b"<!doctype") or raw[:6].lower() == b"<html":
-        print("임상 시트가 공개 링크로 열리지 않음")
-        return {}
-    c = pd.read_csv(io.BytesIO(raw), dtype=str, low_memory=False).fillna("")
+    import gsheet
+    c = None
+    if gsheet.available():
+        try:
+            c = gsheet.read_sheet(sid)
+            print("임상 시트를 서비스 계정 키로 읽음")
+        except Exception as e:
+            print("키로 임상 시트 읽기 실패:", type(e).__name__, str(e)[:150])
+    if c is None:
+        raw = get(f"https://docs.google.com/spreadsheets/d/{sid}/export?format=csv", timeout=300)
+        if raw[:15].lstrip().lower().startswith(b"<!doctype") or raw[:6].lower() == b"<html":
+            print("임상 시트가 공개 링크로 열리지 않음")
+            return []
+        c = pd.read_csv(io.BytesIO(raw), dtype=str, low_memory=False).fillna("")
+        print("임상 시트를 공개 링크로 읽음")
     c.columns = [str(x).split("\n")[0].strip() for x in c.columns]
     print(f"{len(c):,}행 · 칸 {list(c.columns)} · 상태 {Counter(c.get('STATUS', pd.Series(dtype=str))).most_common(5)}")
     print("   단계:", Counter(c.get("CLINIC_STEP_NM", pd.Series(dtype=str))).most_common(10))
@@ -501,8 +511,17 @@ def main():
     ctx = lambda t: " ; ".join(f"{x}: {ct[x][0]}건 {'/'.join(p for p, _ in ct[x][1])} 예 {ct[x][2]} {ct[x][3][:25]}" for x in t if x in ct)  # noqa: E731
     print(f"   질환군 붙은 '국내 없음' 후보 {sum(1 for t in gap if disease_group(t, info[t].get('ind', '')))} / {len(gap)}"
           f" · 적응증 문구 붙은 것 {sum(1 for t in gap if info[t].get('ind'))} · 한국 진행 중 임상 있는 것 {sum(1 for t in gap if ctx(t))}")
+    res = []
     for t in gap:
         x = info[t]
+        res.append({"구분": "국내 성분 없음", "주성분": lab(t), "단일/복합": "복합" if len(t) > 1 else "단일",
+                    "미국 첫 허가": x["date"][:4] if x["date"] != "9" else "",
+                    "미국 상표": ", ".join(b for b, _ in x["brands"].most_common(3)),
+                    "오리지널 허가 수": len(x["nda"]), "제네릭 허가 수": len(x["anda"]),
+                    "미국 제형": ", ".join(sorted(x["forms"])), "국내에 있는 제형": "",
+                    "질환군": disease_group(t, x.get("ind", "")), "미국 적응증": x.get("ind", ""),
+                    "국내 임상시험 승인": ttx(t),
+                    "국내 상황 메모": ("국내 취하·만료 품목 있음" if past[t] else "")})
         print(f"   [목록] 국내 성분 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {', '.join(sorted(x['forms']))} | "
               f"{'국내 과거 허가' if past[t] else ''}{' · 공식 이름 아님' if t in unknown else ''} | {ttx(t)} | "
@@ -513,8 +532,19 @@ def main():
         kforms[t].add(f)
     for t, f in gap_form:
         x = info[t]
+        res.append({"구분": "국내에 이 제형 없음", "주성분": lab(t), "단일/복합": "복합" if len(t) > 1 else "단일",
+                    "미국 첫 허가": x["date"][:4] if x["date"] != "9" else "",
+                    "미국 상표": ", ".join(b for b, _ in x["brands"].most_common(3)),
+                    "오리지널 허가 수": len(x["nda"]), "제네릭 허가 수": len(x["anda"]),
+                    "미국 제형": f, "국내에 있는 제형": ", ".join(sorted(kforms[t])),
+                    "질환군": disease_group(t, x.get("ind", "")), "미국 적응증": x.get("ind", ""),
+                    "국내 임상시험 승인": ttx(t, f), "국내 상황 메모": ""})
         print(f"   [목록] 국내 이 제형 없음 | {lab(t)} | {x['date'][:4] if x['date'] != '9' else ''} | "
               f"{', '.join(b for b, _ in x['brands'].most_common(2))} | {len(x['nda'])} | {len(x['anda'])} | {f} | 국내 제형: {', '.join(sorted(kforms[t]))} | {ttx(t, f)}")
+    od = os.environ.get("USKR_OUT", "out/uskr")
+    os.makedirs(od, exist_ok=True)
+    pd.DataFrame(res).to_csv(f"{od}/국내비교.csv", index=False, encoding="utf-8-sig")
+    print(f"결과 저장: {od}/국내비교.csv ({len(res):,}줄)")
     return 0
 
 
