@@ -442,8 +442,49 @@ def probe_update2():
         time.sleep(3)
 
 
+def probe_update3():
+    """갱신일 검색 결과를 실제 브라우저(Playwright)로 열어 표를 읽는다. 검색 1번 + 결과 화면 1번."""
+    head("갱신일 검색 — 브라우저로 결과 표 읽기")
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        br = p.chromium.launch()
+        pg = br.new_page(user_agent=UA["User-Agent"])
+        ajax = []
+        pg.on("request", lambda r: ajax.append(f"{r.method} {r.url[:160]}") if "PmdaSearch" in r.url and not re.search(
+            r"\.(css|js|png|gif|jpg)", r.url) else None)
+        pg.goto("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/", timeout=90000)
+        pg.fill("input[name=updateDocFrDt]", "20261118")
+        pg.fill("input[name=updateDocToDt]", "20261119")
+        try:
+            pg.select_option("select[name=ListRows]", "100")
+        except Exception as e:
+            print("   ListRows 고르기 실패", str(e)[:80])
+        btn = pg.locator("input[name='btnA'], input[type=image][alt*='検索'], input[type=submit][value*='検索']").first
+        with pg.expect_popup(timeout=60000) as pop:
+            btn.click()
+        rp = pop.value
+        rp.wait_for_load_state("networkidle", timeout=90000)
+        time.sleep(3)
+        print("   결과 화면:", rp.url[:150])
+        txt = rp.inner_text("body")
+        m = re.search(r"(\d[\d,]*)\s*件", txt)
+        print("   건수:", m.group(0) if m else "?")
+        rows = rp.eval_on_selector_all("table tr", "els => els.map(e => [e.innerText.replace(/\\s+/g,' ').slice(0,200), "
+                                       "Array.from(e.querySelectorAll('a')).map(a => (a.getAttribute('href')||'') + ' | ' + (a.getAttribute('onclick')||'')).join(' || ').slice(0,400)])")
+        rows = [r for r in rows if r[0].strip()]
+        print(f"   표 줄 {len(rows)}개")
+        for r in rows[:14]:
+            print("     ", r[0][:200])
+            print("        링크:", r[1][:400])
+        print("   요청들:", ajax[:20])
+        br.close()
+
+
 def main():
     import os
+    if os.environ.get("PROBE") == "update3":
+        probe_update3()
+        return 0
     if os.environ.get("PROBE") == "update2":
         probe_update2()
         return 0
