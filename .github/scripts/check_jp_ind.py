@@ -87,7 +87,8 @@ def pick(jp, jmap):
             continue
         g = g.sort_values("_sen", ascending=False)
         r = g.iloc[0]
-        rows.append({"成分名": nm, "구분": f, "주성분": " + ".join(sorted(set(en))), "YJ": str(r[code_c]).strip(),
+        alt = " ".join(dict.fromkeys(str(x).strip() for x in g[code_c].iloc[1:4]))
+        rows.append({"成分名": nm, "구분": f, "주성분": " + ".join(sorted(set(en))), "YJ": str(r[code_c]).strip(), "다른 YJ": alt,
                      "品名": str(r[item_c]).strip(), "오리지널": bool(r["_sen"]), "제품 수": len(g)})
     return pd.DataFrame(rows)
 
@@ -260,11 +261,16 @@ def main():
     print(f"새로 받을 것 {len(todo):,}개 (약 {len(todo) * 2.3 / 60:.0f}분)")
     t0, err = time.time(), 0
     for i, (_, r) in enumerate(todo.iterrows()):
-        try:
-            txt, u, memo = fetch_label(r["YJ"])
-        except Exception as e:
-            txt, u, memo = "", "", f"{type(e).__name__}"
-            err += 1
+        txt, u, memo = "", "", ""
+        for y in [r["YJ"]] + [x for x in str(r.get("다른 YJ", "")).split() if x]:
+            try:
+                txt, u, memo = fetch_label(y)
+            except Exception as e:
+                txt, u, memo = "", "", f"{type(e).__name__}"
+                err += 1
+            if txt:
+                break
+            time.sleep(1.0)
         done[r["YJ"]] = {"효능": txt, "주소": u, "메모": memo}
         if N and i < 40:
             print(f"   [{r['구분']}] {r['成分名'][:22]} ({r['주성분'][:25]}) {r['品名'][:18]} → {txt[:220] or memo}")
