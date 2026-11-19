@@ -214,6 +214,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: 특허 11칸 줄이기 시험 (예전 코드와 사이트 계산 결과 비교, 사이트에는 쓰지 않음)
+        if: inputs.what == 'pattrim'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet -r requirements.txt requests
+          git fetch -q --depth=1 origin main:refs/remotes/origin/main
+          python .github/scripts/check_patent_trim.py
+
       - name: 특허 시트가 늘어난 이유 보기 (읽기만)
         if: inputs.what == 'patentcheck'
         env:

@@ -486,6 +486,13 @@ def _do_build(include_sales=False, force=False, only=None):
             keep = [c for c in APPROVAL_KEEP if c in df.columns]
             if len(keep) >= 8:          # 핵심 열이 다 보일 때만 줄인다(이름이 바뀌면 그대로 둔다)
                 df = df[keep].copy()
+        elif n == "patent":
+            # 특허 시트는 18칸인데 화면이 쓰는 건 11칸뿐(scout_sources._PATENT_COLS).
+            # 11칸이 모두 보일 때만 줄인다 — 하나라도 이름이 다르면 예전처럼 전부 둔다.
+            import scout_sources as _ss0
+            keep = [c for c in _ss0._PATENT_COLS if c in df.columns]
+            if len(keep) == len(_ss0._PATENT_COLS):
+                df = df[keep].copy()
         try:
             if n == "approval":
                 _ss.enrich_approval(df)

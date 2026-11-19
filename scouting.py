@@ -188,7 +188,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-18-b"
+BUILD = "2026-11-19-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -3614,7 +3614,14 @@ if PAGE == "sugg":
     a, b, c = st.columns([1, 1, 1.5])
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
-    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출"], horizontal=True, key="sugg_view")
+    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "🇺🇸 FDA 비교"],
+                        horizontal=True, key="sugg_view")
+    if sugg_view.startswith("🇺🇸"):
+        # FDA 비교는 로봇이 매일 만든 작은 표만 읽는다(매출 자료 필요 없음)
+        import fda_view
+        fda_view.render()
+        ss.release_memory()
+        st.stop()
     if sugg_view.startswith("🧬"):
         # 약물 재창출은 매출 자료 없이도 돈다(매출은 오른쪽 칸에 있을 때만 덧붙인다)
         _repurpose_view(src2)
