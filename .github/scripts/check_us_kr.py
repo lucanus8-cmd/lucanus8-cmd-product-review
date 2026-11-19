@@ -36,7 +36,9 @@ U2I = {}
 EXCEPT = [(r"^\w*botulinumtoxin ?a$|^(clostridium )?botulinum (neuro)?toxin (type )?a\b.*", "botulinum toxin type a"),
           (r"^\w*botulinumtoxin ?b$|^(clostridium )?botulinum (neuro)?toxin (type )?b\b.*", "botulinum toxin type b"),
           (r"^(epoetin alfa|recombinant human erythropoietin|human erythropoietin)$", "epoetin alfa"),
-          (r"^(estrogens conjugated|conjugated estrogens?)$", "conjugated estrogens")]
+          (r"^(estrogens conjugated|conjugated estrogens?)$", "conjugated estrogens"),
+          (r"^sulfur hexafluoride\b", "sulfur hexafluoride"),
+          (r"^(diatrizo|amidotrizo)\w*$", "amidotrizoate")]
 ATC = defaultdict(set)
 CODE_SYS = Counter()
 ATC_BY = defaultdict(set)
@@ -156,7 +158,7 @@ def gsrs():
 NOISE_US = re.compile(r"technetium|tc[- ]?99m|\bkit\b|\bf[- ]?18\b|\bga[- ]?68\b|\bin[- ]?111\b|\bi[- ]?12[345]\b|\bi[- ]?131\b|"
                       r"\bga[- ]?67\b|\btl[- ]?201\b|\bxe[- ]?133\b|\bsm[- ]?153\b|\bsr[- ]?89\b|\bc[- ]?11\b|\bn[- ]?13\b|\bcu[- ]?64\b|\blu[- ]?177\b|\bzr[- ]?89\b|\bra[- ]?223\b|\by[- ]?90\b|rubidium|thallous|"
                       r"\bnitrogen\b|\boxygen\b|\bhelium\b|nitrous oxide|carbon dioxide|\bxenon\b|\bkrypton\b|"
-                      r"fludeoxyglucose|\bammonia n 13\b|allergenic|pollen|venom|\bmold\b|\bdander\b", re.I)
+                      r"fludeoxyglucose|^air$|\bmedical air\b|\bammonia n 13\b|allergenic|pollen|venom|\bmold\b|\bdander\b", re.I)
 
 
 
@@ -397,6 +399,7 @@ def main():
 
     def canon(x):
         k0 = en_moiety(x, syn=False)
+        k0 = " ".join(dict.fromkeys(k0.split()))          # 'ampicillin ampicillin' → 'ampicillin'
         for rx, to in EXCEPT:
             if re.search(rx, k0):
                 stats["예외표"] += 1
@@ -548,7 +551,8 @@ def main():
                        r"magnesium sulfate|sodium lactate|sodium acetate|acetate|dibasic|monobasic|amino acids|"
                        r"sodium bicarbonate|sodium gluconate|soybean oil|fish oil|olive oil|lipid|glycerophosphate|"
                        r"sterile water|water|electrolytes?|trometamol|potassium phosphate|sodium phosphate|zinc chloride|"
-                       r"cupric|chromic|manganese|selenious|sodium citrate|citric|potassium acetate|ammonium)$")
+                       r"cupric|chromic|manganese|selenious|sodium citrate|citric|potassium acetate|ammonium|glycine|sorbitol|mannitol|"
+                       r"sorbitol mannitol|lactated ringer|ringer)$")
     fluid = {t for t in gap if any(FLUID.match(x) for x in t) and (len(t) > 1 or FLUID.match(t[0]))}
     print(f"   수액·영양·전해질로 따로 뺀 '국내 없음' 후보 {len(fluid)}가지")
     gap = [t for t in gap if t not in fluid]
