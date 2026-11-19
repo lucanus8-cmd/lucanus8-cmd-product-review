@@ -85,7 +85,8 @@ def refs(t):
 CAUTION = re.compile(r"\b(not indicated|consider|potential for|not been established|not recommended|not approved|"
                      r"should not|should be part of|risk management|as appropriate|caution|contraindicat\w*|absolute benefit|"
                      r"independent of their|expected to benefit|for example, patients with|"
-                     r"warning|precaution|monitor)\b", re.I)
+                     r"warning|precaution|monitor|not effective|not of value|not been shown|not been demonstrated|"
+                     r"because of the risks?|substantial risk|primarily strokes and myocardial|permit the administration of lower)\b", re.I)
 
 
 def clauses(t):
@@ -113,7 +114,7 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     "심방세동": (["atrial fibrillation"], "", []),
     "뇌졸중": (["stroke"], "", []),
     "심부정맥혈전증": (["deep vein thrombosis", "venous thromboembolism"], "", []),
-    "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], "", []),
+    "폐동맥고혈압": (["pulmonary arterial hypertension"], "", []),
     "만성신장병": (["chronic kidney disease"], "", []),
     # 호흡기
     "천식": (["asthma"], "천식", []),
@@ -131,9 +132,10 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     # 감염
     "C형간염": (["hepatitis c", "hcv"], "", []),
     "B형간염": (["hepatitis b", "hbv"], "", []),
-    "HIV": (["hiv"], "", []),
+    "HIV": (["treatment of hiv", "treatment of human immunodeficiency", "other antiretroviral", "antiretroviral agents",
+             "sexually acquired hiv", "hiv 1 pre exposure", "pre exposure prophylaxis"], "", []),
     "대상포진": (["herpes zoster", "shingles"], "", []),
-    "인플루엔자": (["influenza"], "", []),
+    "인플루엔자": (["influenza"], "", ["haemophilus influenzae", "h influenzae", "hemophilus influenzae", "influenzae"]),
     "요로감염": (["urinary tract infection"], "", []),
     "결핵": (["tuberculosis"], "결핵", []),
     # 근골격·피부·면역
@@ -148,7 +150,11 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     "루푸스": (["lupus"], "", []),
     "다발성경화증": (["multiple sclerosis"], "", []),
     # 정신·신경
-    "우울증": (["depressive disorder", "depression"], "", []),
+    "우울증": (["depressive disorder", "depression"], "", ["respiratory depression", "cns depression", "nervous system depression",
+                                                     "depression of the central nervous", "myocardial depression",
+                                                     "bone marrow depression", "respiratory and or central nervous system depression",
+                                                     "opioid depression", "narcotic depression", "postanesthesia",
+                                                     "drug induced depression", "depression of respiration"]),
     "조현병": (["schizophrenia"], "", []),
     "양극성장애": (["bipolar"], "", []),
     "불안장애": (["anxiety"], "", []),
@@ -166,7 +172,7 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     "녹내장": (["glaucoma", "ocular hypertension"], "", []),
     "황반변성": (["macular degeneration"], "", []),
     "갑상선기능저하증": (["hypothyroidism"], "", []),
-    "빈혈": (["anemia"], "", []),
+    "빈혈": (["anemia"], "", ["refractory anemia", "aplastic anemia and or liver failure"]),
     "혈우병": (["hemophilia"], "", []),
     # 암
     "유방암": (["breast cancer"], "", []),
@@ -188,7 +194,7 @@ def hit(texts, terms, excl=()):
         n = norm(_EG.sub(" ", str(x)))
         for e in excl:
             n = n.replace(norm(e), " ")
-        if any(w in n for w in terms):
+        if any((re.search(r"\b" + re.escape(w) + r"\b", n) if len(w) <= 4 else w in n) for w in terms):
             return str(x)
     return ""
 
