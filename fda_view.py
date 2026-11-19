@@ -45,6 +45,33 @@ LABEL_WORD = {
 }
 
 
+# 같은 병을 FDA 라벨에서 다르게 쓰는 표현들 (사전의 영문 이름 → 라벨에서 찾을 말들)
+_LIPID = ["dyslipidemia", "hyperlipidemia", "hypercholesterolemia", "hypertriglyceridemia", "ldl-c",
+          "chylomicronemia", "lipoprotein"]
+LABEL_TERMS = {
+    "dyslipidemia": _LIPID, "hyperlipidemia": _LIPID, "hypercholesterolemia": _LIPID,
+    "type 2 diabetes mellitus": ["type 2 diabetes", "glycemic control"],
+    "type 1 diabetes mellitus": ["type 1 diabetes", "glycemic control"],
+    "obesity": ["obesity", "weight management", "weight reduction", "chronic weight"],
+    "gout": ["gout", "hyperuricemia"], "hyperuricemia": ["hyperuricemia", "gout"],
+    "epilepsy": ["epilep", "seizure"], "major depressive disorder": ["depressi"],
+    "chronic obstructive pulmonary disease": ["chronic obstructive pulmonary", "copd"],
+    "attention deficit hyperactivity disorder": ["attention deficit", "adhd"],
+    "chronic kidney disease": ["chronic kidney disease", "ckd"],
+    "atopic eczema": ["atopic dermatitis"], "insomnia": ["insomnia", "sleep onset", "sleep maintenance"],
+    "overactive bladder": ["overactive bladder", "urge urinary incontinence"],
+    "erectile dysfunction": ["erectile dysfunction"], "osteoporosis": ["osteoporosis"],
+}
+# 질환군(③ 목록과 같은 분류)에서 찾을 말 (영문 이름·한글 병명 → 질환군 글자)
+GROUP_KEY = {
+    "dyslipidemia": "이상지질혈증", "hyperlipidemia": "이상지질혈증", "hypercholesterolemia": "이상지질혈증",
+    "type 2 diabetes mellitus": "당뇨병", "type 1 diabetes mellitus": "당뇨병", "hypertension": "고혈압",
+    "asthma": "천식", "chronic obstructive pulmonary disease": "copd", "epilepsy": "뇌전증", "gout": "통풍",
+    "osteoporosis": "골다공증", "parkinson disease": "파킨슨", "tuberculosis": "결핵", "acne": "여드름",
+    "constipation": "변비", "vomiting": "구토", "nausea": "구토",
+}   # 편두통·치매·부정맥처럼 여러 병이 한 묶음인 질환군은 넣지 않는다 (진통제 전체 등이 섞임)
+
+
 def _get(name, timeout=30):
     if BASE.startswith("http"):
         req = urllib.request.Request(BASE + name, headers={"User-Agent": "product-review-app"})
@@ -252,27 +279,42 @@ def _view_ind(d):
     if not en:
         st.info("사전에 없는 한글 병명입니다. 영문으로 넣어 주세요 (예: gout, pulmonary arterial hypertension).")
         return
-    term = _lab_norm(LABEL_WORD.get(en.lower(), en))
-    if len(term) < 3:
+    el = en.lower()
+    terms = [_lab_norm(x) for x in LABEL_TERMS.get(el, [LABEL_WORD.get(el, en)])]
+    terms = [x for x in dict.fromkeys(terms) if len(x) >= 3]
+    if not terms:
         st.info("검색어가 너무 짧습니다.")
         return
-    hit = ind[ind["_t"].str.contains(term, regex=False)]
-    st.caption(f"→ FDA 라벨 적응증 문구에서 '{term}' 을(를) 찾음" + (f" (한글 '{q.strip()}' → 영문 '{en}')" if en != q.strip() else ""))
-    if hit.empty:
-        st.info("이 적응증으로 판매 중인 미국 신약(NDA·BLA)을 찾지 못했습니다. 다른 표현(영문)으로도 찾아 보세요.")
-        return
+    # ⓐ 라벨 적응증 문구에서 찾기 (같은 병의 다른 표현도 함께)
+    hit = ind[ind["_t"].map(lambda x: any(w in x for w in terms))]
     hit = hit.assign(주성분=hit["신청번호"].map(d["app2ing"]).fillna(""))
     hit = hit[hit["주성분"] != ""]
+    # ⓑ 질환군(ATC·문구 분류)으로 찾기 — ③ 목록의 '질환군'과 같은 기준
+    gk = GROUP_KEY.get(el, "")
+    gm = ing[ing["질환군"].map(_norm).str.contains(_norm(gk), regex=False)] if gk else ing.iloc[0:0]
+    st.caption(f"→ FDA 라벨 적응증 문구에서 {', '.join(repr(x) for x in terms[:6])} 을(를) 찾고"
+               + (f", 질환군에 '{gk}' 이(가) 든 성분을 더함" if gk else "")
+               + (f" (한글 '{q.strip()}' → 영문 '{en}')" if en != q.strip() else ""))
+    if hit.empty and gm.empty:
+        st.info("이 적응증으로 판매 중인 미국 신약(NDA·BLA)을 찾지 못했습니다. 다른 표현(영문)으로도 찾아 보세요.")
+        return
 
     def snip(t):
         t = str(t)
-        i = _lab_norm(t).find(term)
-        lo = max(0, int(i * len(t) / max(1, len(_lab_norm(t)))) - 60) if i >= 0 else 0
+        n = _lab_norm(t)
+        i = min([n.find(w) for w in terms if n.find(w) >= 0] or [-1])
+        lo = max(0, int(i * len(t) / max(1, len(n))) - 60) if i >= 0 else 0
         return ("…" if lo else "") + t[lo:lo + 180] + "…"
 
     g = hit.groupby("주성분").agg(상표=("상표", lambda x: ", ".join(dict.fromkeys(x))[:60]),
                                  문구=("적응증", lambda x: snip(x.iloc[0]))).reset_index()
+    extra = sorted(set(gm["주성분"]) - set(g["주성분"]))
+    if extra:
+        g = pd.concat([g, pd.DataFrame({"주성분": extra, "상표": "", "문구": ""})], ignore_index=True)
+    g["찾은 근거"] = [("라벨 문구 + 질환군" if n in set(gm["주성분"]) else "라벨 문구") if c else "질환군"
+                   for n, c in zip(g["주성분"], g["문구"] != "")]
     t = g.merge(ing, on="주성분", how="left", suffixes=("", "_i")).fillna("")
+    t["상표"] = [a or b for a, b in zip(t["상표"], t["미국 상표"])]
     t["_o"] = t["국내 상황"].map(ORDER).fillna(9)
     t = t.sort_values(["_o", "주성분"]).reset_index(drop=True)
     cnt = t["국내 상황"].value_counts()
@@ -284,7 +326,8 @@ def _view_ind(d):
     show = pd.DataFrame({
         "성분": t["주성분"], "국내 상황": t["국내 상황"], "미국 상표 (이 적응증)": t["상표"],
         "미국 제형": t["미국 제형"], "국내에 없는 미국 제형": t["국내에 없는 미국 제형"],
-        "국내 제형": t["국내 제형"], "국내 임상 승인": t["국내 임상시험 승인"], "라벨 문구 (일부)": t["문구"]})
+        "국내 제형": t["국내 제형"], "국내 임상 승인": t["국내 임상시험 승인"], "질환군": t["질환군"],
+        "찾은 근거": t["찾은 근거"], "라벨 문구 (일부)": t["문구"]})
     key = f"fda_tab2_{st.session_state.get('fda_nsel', 0)}"
     i = _selected_row(key)
     if i is not None and i < len(show):
@@ -294,7 +337,8 @@ def _view_ind(d):
                  column_config={"라벨 문구 (일부)": st.column_config.TextColumn(width="large"),
                                 "국내 임상 승인": st.column_config.TextColumn(width="medium")})
     st.caption("줄 왼쪽 칸을 누르면 ① 성분 화면으로 넘어갑니다. 국내에 성분이 있어도 이 적응증으로 허가됐는지는 "
-               "국내 효능·효과를 봐야 합니다 (다음 단계). 라벨 문구는 앞부분(600자)만 찾습니다.")
+               "국내 효능·효과를 봐야 합니다 (다음 단계). 라벨 문구는 앞부분(600자)만 찾으며, 문구에 병명이 "
+               "부작용·주의로만 나온 약이 섞일 수 있어 '찾은 근거'와 문구를 함께 보세요.")
     st.download_button("CSV 받기", show.to_csv(index=False).encode("utf-8-sig"), "fda_적응증.csv", key="fda_csv2")
 
 
