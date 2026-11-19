@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -222,6 +222,21 @@ jobs:
           python -m pip install --quiet -r requirements.txt requests
           git fetch -q --depth=1 origin main:refs/remotes/origin/main
           python .github/scripts/check_patent_trim.py
+
+      - name: FDA 라벨 적응증 소제목으로 질병 찾기 검토 (읽기만)
+        if: inputs.what == 'indhead'
+        run: |
+          python -m pip install --quiet pandas ijson pyarrow
+          python .github/scripts/check_ind_headings.py
+
+      - name: 소제목 표 남기기
+        if: always() && inputs.what == 'indhead'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ind-headings
+          path: out/ind_headings.csv
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 특허 시트가 늘어난 이유 보기 (읽기만)
         if: inputs.what == 'patentcheck'
