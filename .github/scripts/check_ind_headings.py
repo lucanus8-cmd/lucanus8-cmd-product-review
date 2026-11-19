@@ -83,7 +83,8 @@ def refs(t):
 
 
 CAUTION = re.compile(r"\b(not indicated|consider|potential for|not been established|not recommended|not approved|"
-                     r"should not|should be part of|risk management|as appropriate|caution|contraindicat\w*|"
+                     r"should not|should be part of|risk management|as appropriate|caution|contraindicat\w*|absolute benefit|"
+                     r"independent of their|expected to benefit|for example, patients with|"
                      r"warning|precaution|monitor)\b", re.I)
 
 
@@ -100,10 +101,11 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     "이상지질혈증": (["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
                  "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"],
                 "이상지질혈증", []),
-    "고혈압": (["hypertension"], "고혈압", _HTN_X),
+    "고혈압": (["hypertension", "lower blood pressure", "lowering blood pressure"], "고혈압", _HTN_X),
     "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], "", []),
     "통풍": (["gout", "hyperuricemia"], "통풍", []),
-    "당뇨병": (["diabetes", "glycemic control"], "당뇨병", ["diabetes insipidus", "diabetic macular", "diabetic retinopathy",
+    "당뇨병": (["glycemic control", "glycaemic control", "treatment of type 2 diabetes", "treatment of type 1 diabetes",
+             "treatment of diabetes"], "당뇨병", ["diabetes insipidus", "diabetic macular", "diabetic retinopathy",
                                                      "diabetic foot", "diabetic peripheral neuropathy", "diabetic neuropathy"]),
     "편두통": (["migraine"], "", []),
     "류마티스관절염": (["rheumatoid arthritis"], "", []),
