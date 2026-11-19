@@ -146,7 +146,7 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
     "강직성척추염": (["ankylosing spondylitis"], "", []),
     "건선": (["psoriasis", "psoriatic"], "", []),
     "아토피피부염": (["atopic dermatitis"], "", []),
-    "여드름": (["acne"], "여드름", []),
+    "여드름": (["acne"], "여드름", ["propionibacterium acnes", "cutibacterium acnes", "p acnes", "c acnes"]),
     "루푸스": (["lupus"], "", []),
     "다발성경화증": (["multiple sclerosis"], "", []),
     # 정신·신경
@@ -188,13 +188,16 @@ TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 
 _EG = re.compile(r"\((?:e\.?g\.?|for example|such as|including|i\.e\.)[^)]*\)|\b(?:e\.g\.|for example|such as)[^.;:]*", re.I)
 
 
+_ABBR = {"hiv", "copd", "gerd", "bph", "hcv", "hbv", "ldl", "pah", "ckd", "adhd", "ibs", "oab"}   # 약어는 단어 단위로만
+
+
 def hit(texts, terms, excl=()):
     """찾으면 그 문장(근거), 못 찾으면 빈 값. 괄호 속 '예: ○○' 나열과 빼고 볼 말은 지우고 찾는다."""
     for x in texts:
         n = norm(_EG.sub(" ", str(x)))
         for e in excl:
             n = n.replace(norm(e), " ")
-        if any((re.search(r"\b" + re.escape(w) + r"\b", n) if len(w) <= 4 else w in n) for w in terms):
+        if any((re.search(r"\b" + re.escape(w) + r"\b", n) if w in _ABBR else w in n) for w in terms):
             return str(x)
     return ""
 
