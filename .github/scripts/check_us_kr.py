@@ -680,6 +680,13 @@ def main():
     return 0
 
 
+def ko_display(kor):
+    """'[M264293]리바록사반(미분화)|[M…]…' → '리바록사반' (화면·검색용 한글 성분명)."""
+    parts = [re.sub(r"\[[^\]]*\]|\([^)]*\)|\s+", "", x) for x in str(kor).split("|")]
+    parts = list(dict.fromkeys(x for x in parts if x))
+    return "+".join(parts[:4])
+
+
 def site_tables(od, us, k, gap, fluid, gap_form, kr_keys, kr_set, mk, lab, info, kr_unread, past, suspect, get_trials):
     """사이트 'FDA 비교' 화면용: 미국 판매 중 성분 전부의 국내 상황 요약 + 판매 중 제품 목록."""
     head("사이트용 성분 요약")
@@ -695,7 +702,7 @@ def site_tables(od, us, k, gap, fluid, gap_form, kr_keys, kr_set, mk, lab, info,
     kname, kcount = defaultdict(Counter), Counter()
     for t, kor in zip(k["keys"], k["주성분"]):
         if t:
-            kname[mk(t)][re.sub(r"\s+", "", str(kor))] += 1
+            kname[mk(t)][ko_display(kor)] += 1
             kcount[mk(t)] += 1
     ONG = ONGOING
     rows = []
@@ -707,8 +714,8 @@ def site_tables(od, us, k, gap, fluid, gap_form, kr_keys, kr_set, mk, lab, info,
             stt = "비교 제외 (수액·영양)"
         elif mk(t) in kr_keys:
             stt = "일부 제형 없음" if miss_form.get(t) else "국내에도 있음"
-        else:
-            stt = "국내 성분 없음"
+        else:                                    # 미국 제형을 못 읽어 비교에서 빠진 성분
+            stt = "비교 못 함 (제형 미확인)"
         tl = trials_for(trials, t)
         memo = []
         if past[mk(t)] and stt == "국내 성분 없음":

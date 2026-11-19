@@ -19,7 +19,8 @@ import streamlit as st
 BASE = os.environ.get("FDA_SITE_BASE",
                       "https://raw.githubusercontent.com/lucanus8-cmd/lucanus8-cmd-product-review/data/fda_site/")
 MODES = ["① 성분으로 찾기", "② 적응증으로 찾기", "③ 국내에 없는 약 목록"]
-ORDER = {"국내 성분 없음": 0, "일부 제형 없음": 1, "국내에도 있음": 2, "비교 제외 (수액·영양)": 3}
+ORDER = {"국내 성분 없음": 0, "일부 제형 없음": 1, "국내에도 있음": 2, "비교 제외 (수액·영양)": 3,
+         "비교 못 함 (제형 미확인)": 4}
 NEED = {"ing": ["주성분", "국내 상황", "한글명", "미국 상표", "미국 제형", "신청번호"],
         "prod": ["주성분", "신청번호", "구분", "상표", "회사", "함량", "제형", "첫 허가"],
         "ind": ["신청번호", "상표", "적응증"],
@@ -79,6 +80,12 @@ def load():
     except Exception:
         d["meta"] = {}
     ing, prod, ind = d["ing"], d["prod"], d["ind"]
+    # 한글명에 붙은 성분코드·괄호 떼기 ('[M264293]리바록사반(미분화)|…' → '리바록사반')
+    ing["한글명"] = ing["한글명"].map(lambda s: "+".join(list(dict.fromkeys(
+        x for x in (re.sub(r"\[[^\]]*\]|\([^)]*\)|\s+", "", y) for y in str(s).split("|")) if x))[:4]))
+    # '국내 성분 없음' 은 국내 비교 표(cmp)에 있는 것만 — 미국 제형을 못 읽어 비교에서 빠진 성분은 따로 표시
+    gap = set(d["cmp"].loc[d["cmp"]["구분"] == "국내 성분 없음", "주성분"])
+    ing.loc[(ing["국내 상황"] == "국내 성분 없음") & ~ing["주성분"].isin(gap), "국내 상황"] = "비교 못 함 (제형 미확인)"
     for c in ("오리지널 허가 수", "제네릭 허가 수", "국내 품목 수", "국내 임상 승인 수", "국내 임상 진행 중"):
         if c in ing.columns:
             ing[c] = pd.to_numeric(ing[c], errors="coerce").fillna(0).astype(int)
@@ -161,6 +168,8 @@ def _view_ing(d):
         st.info(f"국내에 성분은 있고, 미국 제형 중 **{_md(', '.join(miss))}** 이(가) 국내에 없습니다.")
     elif stt == "국내에도 있음":
         st.success("국내에도 같은 성분·같은 제형 묶음이 있습니다.")
+    elif stt.startswith("비교 못 함"):
+        st.caption("미국 제형을 읽지 못해 국내와 비교하지 못했습니다. 국내 허가 화면에서 직접 확인해 주세요.")
     else:
         st.caption("수액·영양·전해질은 국내 비교에서 뺐습니다.")
     m = st.columns(4)
