@@ -206,7 +206,49 @@ def pmda_labels():
             print(url, "못 받음", str(e)[:80])
 
 
+def probe():
+    """JAN 화면 구조 보기: 첫 화면 링크 전부 · A 목록 줄 HTML · display 값 바꿔 보기 · 상세 화면 하나."""
+    head("JAN 구조 보기")
+    b, ct = get("https://jpdb.nihs.go.jp/jan/")
+    t = dec(b, ct)
+    ln = sorted(set(re.findall(r'href="([^"]+)"', t)))
+    print("첫 화면 링크(일부 생략):", [x for x in ln if "keyword=" not in x or x.endswith(("=A", "=ア", "=あ"))][:60])
+    print("   목록 링크 모양:", sorted({re.sub(r"keyword=[^&]*", "keyword=…", x) for x in ln if "List" in x}))
+    b, ct = get("https://jpdb.nihs.go.jp/jan/SimpleList_ja?submit=all_alp&display=jan_name_e_disp&keyword=A")
+    t = dec(b, ct)
+    trs = re.findall(r"<tr[^>]*>.*?</tr>", t, re.S | re.I)
+    for tr in trs[:3]:
+        print("   A 줄 HTML:", re.sub(r"\s+", " ", tr)[:400])
+    det = re.findall(r'href="([^"]*Detail[^"]*)"', t)
+    print("   상세 링크 예:", det[:3], "· 개수", len(det))
+    sel = re.findall(r"<select.*?</select>|<input[^>]+radio[^>]+>", t, re.S | re.I)
+    print("   선택 칸:", [re.sub(r"\s+", " ", x)[:300] for x in sel[:6]])
+    for disp in ("jan_name_j_disp", "jan_name_disp", "both", "all"):
+        for sub in ("all_alp", "all_kana"):
+            for kw in ("A", "ア"):
+                u = (f"https://jpdb.nihs.go.jp/jan/SimpleList_ja?submit={sub}&display={disp}&keyword="
+                     + urllib.parse.quote(kw))
+                try:
+                    bb, cc = get(u, timeout=40)
+                    tt = dec(bb, cc)
+                    rr = [cells(x) for x in re.findall(r"<tr[^>]*>(.*?)</tr>", tt, re.S | re.I)]
+                    print(f"   {sub} {disp} {kw}: 줄 {len(rr)} · 예 {rr[1:3]}")
+                except Exception as e:
+                    print(f"   {sub} {disp} {kw}: {str(e)[:60]}")
+                time.sleep(0.5)
+    if det:
+        u = urllib.parse.urljoin("https://jpdb.nihs.go.jp/jan/", det[0].replace("&amp;", "&"))
+        bb, cc = get(u)
+        tt = dec(bb, cc)
+        txt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", tt))
+        print("   상세 화면:", u, "·", txt[:900])
+
+
 def main():
+    import os
+    if os.environ.get("PROBE") == "1":
+        probe()
+        return 0
     jn = jp = None
     try:
         jn = jan()
