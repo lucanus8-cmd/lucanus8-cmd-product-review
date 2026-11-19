@@ -91,21 +91,27 @@ def main():
         box.fill("폐동맥고혈압")
         box.press("Enter")
         ok &= wait_text(fr, "이 적응증 미국 판매 성분", 60)
-        print("② 폐동맥고혈압:", "✅" if "selexipag" in text(fr) else "❌", "· 오류", errors(fr))
+        print("② 폐동맥고혈압:", "✅" if "11개" in text(fr) else "❌ (" + text(fr)[-200:] + ")", "· 오류", errors(fr))
         fr.get_by_text("③ 국내에 없는 약 목록").first.click()
         ok &= wait_text(fr, "미국 첫 허가가 최근인 순", 60)
         print("③ 목록:", "✅" if "국내 성분 없음 (" in text(fr) else "❌", "· 오류", errors(fr))
         pg.screenshot(path="fda_live.png")
         for p_ in ("patent", "search"):
             pg.goto(URL + f"/?page={p_}", wait_until="domcontentloaded", timeout=120_000)
-            time.sleep(15)
-            fr = frame(pg)
+            fr = None
+            for _ in range(45):
+                fr = frame(pg)
+                if fr:
+                    break
+                time.sleep(2)
+            time.sleep(5)
             if fr and fr.query_selector("input[type='password']") and PW:
                 fr.query_selector("input[type='password']").fill(PW)
                 fr.query_selector("input[type='password']").press("Enter")
-                time.sleep(10)
+                time.sleep(15)
                 fr = frame(pg)
             e = errors(fr) if fr else -1
+            print(f"   {p_}: 화면 글자 {len(text(fr)) if fr else 0}자")
             print(f"{p_} 화면 오류 {e}")
             ok &= e == 0
         br.close()
