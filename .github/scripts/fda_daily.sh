@@ -12,6 +12,9 @@ USKR_OUT=out/uskr python $S/check_us_kr.py; rc=$?
 if [ $rc -eq 3 ]; then echo "오늘은 건너뜀 — 구글 시트·사이트는 어제 결과 그대로"; exit 0; fi
 if [ $rc -ne 0 ]; then echo "국내 비교 실패"; exit 1; fi
 
+# 적응증 문장(사이트 ② 적응증으로 찾기). 실패해도 나머지는 계속 — 사이트는 어제 파일 또는 예전 방식으로 찾는다
+USKR_OUT=out/uskr python $S/build_fda_ind.py || echo "적응증 문장 만들기 건너뜀 — 어제 파일 유지"
+
 OUT_DIR=out/fda USKR_OUT=out/uskr python $S/write_fda_sheet.py; rc=$?
 if [ $rc -eq 3 ]; then echo "시트 쓰기 건너뜀 — 어제 결과 그대로"; exit 0; fi
 if [ $rc -ne 0 ]; then echo "시트 쓰기 실패"; exit 1; fi

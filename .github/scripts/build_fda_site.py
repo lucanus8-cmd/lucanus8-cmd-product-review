@@ -47,6 +47,19 @@ def main():
     tabs = {"ing": ing, "prod": prod, "ind": ind, "cmp": cmp_}
     for k, df in tabs.items():
         df.to_parquet(f"{OUT}/{k}.parquet", index=False)
+    # 적응증 문장(build_fda_ind.py) — 있고 멀쩡하면 같이 올린다. 없으면 data 가지의 어제 파일이 그대로 남는다
+    ix = f"{USKR}/site_indx.parquet"
+    if os.path.exists(ix):
+        try:
+            d = pd.read_parquet(ix)
+            if {"주성분", "문장", "출처", "_n"} <= set(d.columns) and len(d) >= 8000 and d["주성분"].nunique() >= 1500:
+                d.to_parquet(f"{OUT}/indx.parquet", index=False)
+                n["indx"] = len(d)
+                tabs["indx"] = d
+            else:
+                print("적응증 문장 파일이 이상함 — 올리지 않음")
+        except Exception as e:
+            print("적응증 문장 파일 못 읽음 — 올리지 않음:", type(e).__name__)
     info = {"만든 시각(한국)": time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 9 * 3600)),
             "Drugs@FDA 기준일": meta.get("Drugs@FDA 기준일", ""), "라벨 기준일": meta.get("라벨 기준일", ""),
             "성분 사전 기준일": meta.get("성분 사전 기준일", ""), "줄 수": n}

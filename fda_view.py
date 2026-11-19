@@ -72,6 +72,74 @@ GROUP_KEY = {
 }   # 편두통·치매·부정맥처럼 여러 병이 한 묶음인 질환군은 넣지 않는다 (진통제 전체 등이 섞임)
 
 
+# ── ② 적응증 문장에서 찾을 말 (영문 병명 → (찾을 말, 빼고 볼 말)) ──
+# 2026-11 검토(check_ind_headings.py): 66개 질병 1,632쌍, 무작위 표본 약 94% 정확.
+_HTN_X = ["ocular hypertension", "pulmonary arterial hypertension", "pulmonary hypertension",
+          "intracranial hypertension", "portal hypertension", "intraocular"]
+_LIPIDS = ["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
+           "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"]
+_DM = ["glycemic control", "glycaemic control", "treatment of type 2 diabetes", "treatment of type 1 diabetes",
+       "treatment of diabetes"]
+_HIV = ["treatment of hiv", "treatment of human immunodeficiency", "other antiretroviral", "antiretroviral agents",
+        "sexually acquired hiv", "hiv 1 pre exposure", "pre exposure prophylaxis"]
+_DEP_X = ["respiratory depression", "cns depression", "nervous system depression", "depression of the central nervous",
+          "myocardial depression", "bone marrow depression", "respiratory and or central nervous system depression",
+          "opioid depression", "narcotic depression", "postanesthesia", "drug induced depression",
+          "depression of respiration"]
+_FLU_X = ["haemophilus influenzae", "h influenzae", "hemophilus influenzae", "influenzae", "haemophilus influenza",
+          "hemophilus influenza"]
+DISEASE_TERMS = {
+    "hypertension": (["hypertension", "lower blood pressure", "lowering blood pressure"], _HTN_X),
+    "dyslipidemia": (_LIPIDS, []), "hyperlipidemia": (_LIPIDS, []), "hypercholesterolemia": (_LIPIDS, []),
+    "hypertriglyceridemia": (["hypertriglyceridemia", "triglyceride"], []),
+    "type 2 diabetes mellitus": (_DM, []), "type 1 diabetes mellitus": (_DM, []), "diabetes mellitus": (_DM, []),
+    "obesity": (["obesity", "weight management", "weight reduction", "weight loss"], []),
+    "angina pectoris": (["angina"], []),
+    "deep vein thrombosis": (["deep vein thrombosis", "venous thromboembolism"], []),
+    "venous thromboembolism": (["deep vein thrombosis", "venous thromboembolism"], []),
+    "copd": (["chronic obstructive pulmonary", "copd"], []),
+    "chronic obstructive pulmonary disease": (["chronic obstructive pulmonary", "copd"], []),
+    "gastroesophageal reflux disease": (["gastroesophageal reflux", "gerd", "erosive esophagitis"], []),
+    "peptic ulcer disease": (["duodenal ulcer", "gastric ulcer", "peptic ulcer"], []),
+    "crohn disease": (["crohn"], []), "irritable bowel syndrome": (["irritable bowel"], []),
+    "vomiting": (["nausea and vomiting", "vomiting"], []), "nausea": (["nausea and vomiting", "nausea"], []),
+    "hepatitis c": (["hepatitis c", "hcv"], []), "hepatitis b": (["hepatitis b", "hbv"], []),
+    "hiv": (_HIV, []), "hiv infection": (_HIV, []), "aids": (_HIV, []),
+    "herpes zoster": (["herpes zoster", "shingles"], []),
+    "influenza": (["influenza"], _FLU_X),
+    "gout": (["gout", "hyperuricemia"], []), "hyperuricemia": (["hyperuricemia", "gout"], []),
+    "psoriasis": (["psoriasis", "psoriatic"], []), "atopic eczema": (["atopic dermatitis"], []),
+    "atopic dermatitis": (["atopic dermatitis"], []),
+    "acne": (["acne"], ["propionibacterium acnes", "cutibacterium acnes", "p acnes", "c acnes"]),
+    "systemic lupus erythematosus": (["lupus"], []),
+    "major depressive disorder": (["depressive disorder", "depression"], _DEP_X),
+    "depression": (["depressive disorder", "depression"], _DEP_X),
+    "bipolar disorder": (["bipolar"], []), "anxiety disorder": (["anxiety"], []),
+    "attention deficit hyperactivity disorder": (["attention deficit"], []), "adhd": (["attention deficit"], []),
+    "alzheimer disease": (["alzheimer"], []), "parkinson disease": (["parkinson"], []),
+    "epilepsy": (["epilep", "seizure"], []), "migraine disorder": (["migraine"], []), "migraine": (["migraine"], []),
+    "neuropathic pain": (["neuropathic pain", "postherpetic neuralgia", "diabetic peripheral neuropathy"], []),
+    "benign prostatic hyperplasia": (["benign prostatic hyperplasia", "bph"], []),
+    "glaucoma": (["glaucoma", "ocular hypertension"], []),
+    "age-related macular degeneration": (["macular degeneration"], []),
+    "anemia": (["anemia"], ["refractory anemia", "aplastic anemia and or liver failure"]),
+    "chronic lymphocytic leukemia": (["chronic lymphocytic leukemia"], []),
+}
+_ABBR = {"hiv", "copd", "gerd", "bph", "hcv", "hbv", "ldl", "pah", "ckd", "adhd", "ibs", "oab"}  # 약어는 단어 단위로만
+# 사전(약물 재창출 표)에 없거나 넓게 잡히는 한글 병명
+KO_EXTRA = {"심부정맥혈전증": "deep vein thrombosis", "정맥혈전색전증": "venous thromboembolism",
+            "요로감염": "urinary tract infection", "간세포암": "hepatocellular carcinoma",
+            "에이즈": "hiv", "만성림프구성백혈병": "chronic lymphocytic leukemia", "당뇨병": "diabetes mellitus",
+            "당뇨": "diabetes mellitus", "고중성지방혈증": "hypertriglyceridemia"}
+
+
+def _en_norm(s):
+    """로봇 build_fda_ind.py 의 norm 과 똑같아야 한다 (문장 '_n' 칸과 비교)."""
+    s = str(s).lower().replace("’", "'")
+    s = re.sub(r"'s\b", "", s)
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", s)).strip()
+
+
 def _get(name, timeout=30):
     if BASE.startswith("http"):
         req = urllib.request.Request(BASE + name, headers={"User-Agent": "product-review-app"})
@@ -106,6 +174,13 @@ def load():
         d["meta"] = json.loads(_get("meta.json", timeout=10).decode("utf-8"))
     except Exception:
         d["meta"] = {}
+    # 적응증 문장 (로봇 build_fda_ind.py) — 없거나 이상하면 ② 는 예전 방식으로 찾는다
+    try:
+        ix = pd.read_parquet(io.BytesIO(_get("indx.parquet")), columns=["주성분", "문장", "출처", "_n"]).fillna("")
+        if len(ix) >= 8000 and ix["주성분"].nunique() >= 1500:
+            d["indx"] = ix
+    except Exception:
+        pass
     ing, prod, ind = d["ing"], d["prod"], d["ind"]
     # 한글명에 붙은 성분코드·괄호 떼기 ('[M264293]리바록사반(미분화)|…' → '리바록사반')
     ing["한글명"] = ing["한글명"].map(lambda s: "+".join(list(dict.fromkeys(
@@ -268,7 +343,79 @@ def _view_ing(d):
 
 
 # ───────────────────────── ② 적응증으로 찾기 ─────────────────────────
+def _disease_en(q):
+    import repurpose
+    k = re.sub(r"\s+", "", q.strip())
+    return KO_EXTRA.get(k) or repurpose.ko_disease(q)
+
+
 def _view_ind(d):
+    if "indx" not in d:
+        return _view_ind_old(d)
+    ing, ix = d["ing"], d["indx"]
+    q = st.text_input("적응증 (한글·영문)", key="fda_dq", placeholder="예: 폐동맥고혈압 · pulmonary arterial hypertension")
+    if not q.strip():
+        st.caption("FDA 라벨 '적응증(INDICATIONS AND USAGE)'의 소제목과 허가 문장에서만 찾습니다 — 사용 제한·주의·경고 "
+                   "문장은 뺍니다. 한글 병명은 사전(약물 재창출과 같은 표)으로 영문으로 바꿔 찾습니다.")
+        return
+    en = _disease_en(q)
+    if not en:
+        st.info("사전에 없는 한글 병명입니다. 영문으로 넣어 주세요 (예: gout, pulmonary arterial hypertension).")
+        return
+    el = en.strip().lower()
+    terms, excl = DISEASE_TERMS.get(el, ([LABEL_WORD.get(el, el)], []))
+    terms = [x for x in dict.fromkeys(_en_norm(w) for w in terms) if len(x) >= 3]
+    excl = [x for x in (_en_norm(e) for e in excl) if x]
+    if not terms:
+        st.info("검색어가 너무 짧습니다.")
+        return
+    s = ix["_n"]
+    for e in excl:
+        s = s.str.replace(e, " ", regex=False)
+    m = pd.Series(False, index=ix.index)
+    for w in terms:
+        m |= (s.str.contains(r"\b" + re.escape(w) + r"\b", regex=True) if w in _ABBR
+              else s.str.contains(w, regex=False))
+    hit = ix[m]
+    st.caption(f"→ FDA 라벨 적응증 문장에서 {', '.join(repr(x) for x in terms[:6])}{' …' if len(terms) > 6 else ''} 을(를) 찾음"
+               + (f" (한글 '{q.strip()}' → 영문 '{en}')" if en != q.strip() else ""))
+    if hit.empty:
+        st.info("이 적응증으로 허가된 미국 판매 성분을 찾지 못했습니다. 다른 표현(영문)으로도 찾아 보세요.")
+        return
+    g = hit.groupby("주성분", sort=False).agg(근거=("문장", "first"), 출처=("출처", "first"),
+                                             문장수=("문장", "size")).reset_index()
+    t = g.merge(ing, on="주성분", how="left").fillna("")
+    t["_o"] = t["국내 상황"].map(ORDER).fillna(9)
+    t = t.sort_values(["_o", "주성분"]).reset_index(drop=True)
+    cnt = t["국내 상황"].value_counts()
+    mc = st.columns(4)
+    mc[0].metric("이 적응증 미국 판매 성분", f"{len(t)}개")
+    mc[1].metric("국내 성분 없음", f"{cnt.get('국내 성분 없음', 0)}개")
+    mc[2].metric("국내에 일부 제형 없음", f"{cnt.get('일부 제형 없음', 0)}개")
+    mc[3].metric("국내에도 있음", f"{cnt.get('국내에도 있음', 0)}개")
+    ev = [x[:220] + ("…" if len(x) > 220 else "") + (f"  (+{n - 1}문장)" if n > 1 else "")
+          for x, n in zip(t["근거"], t["문장수"])]
+    show = pd.DataFrame({
+        "성분": t["주성분"], "국내 상황": t["국내 상황"], "미국 상표": t["미국 상표"].str.slice(0, 60),
+        "미국 제형": t["미국 제형"], "국내에 없는 미국 제형": t["국내에 없는 미국 제형"],
+        "국내 제형": t["국내 제형"], "국내 임상 승인": t["국내 임상시험 승인"],
+        "근거 (FDA 라벨 적응증 문장)": ev, "라벨": t["출처"]})
+    key = f"fda_tab2_{st.session_state.get('fda_nsel', 0)}"
+    i = _selected_row(key)
+    if i is not None and i < len(show):
+        _pivot(show.iloc[i]["성분"])
+    st.dataframe(show, key=key, on_select="rerun", selection_mode="single-row", hide_index=True,
+                 use_container_width=True, height=min(35 * len(show) + 38, 520),
+                 column_config={"근거 (FDA 라벨 적응증 문장)": st.column_config.TextColumn(width="large"),
+                                "국내 임상 승인": st.column_config.TextColumn(width="medium")})
+    st.caption("줄 왼쪽 칸을 누르면 ① 성분 화면으로 넘어갑니다. 신약(NDA·BLA) 라벨, 신약이 없으면 제네릭 라벨로 봅니다. "
+               "국내에 성분이 있어도 이 적응증으로 허가됐는지는 국내 효능·효과를 봐야 합니다 (다음 단계). "
+               "라벨 문장으로 찾으므로 드물게 맞지 않는 약이 섞일 수 있어 '근거' 문장을 함께 보세요.")
+    st.download_button("CSV 받기", show.to_csv(index=False).encode("utf-8-sig"), "fda_적응증.csv", key="fda_csv2")
+
+
+def _view_ind_old(d):
+    """적응증 문장 파일이 없을 때(로봇 첫 실행 전 등) 쓰는 예전 방식."""
     import repurpose
     ing, ind = d["ing"], d["ind"]
     q = st.text_input("적응증 (한글·영문)", key="fda_dq", placeholder="예: 폐동맥고혈압 · pulmonary arterial hypertension")
