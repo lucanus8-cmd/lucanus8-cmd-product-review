@@ -89,12 +89,12 @@ def read_sheet(sheet_id):
     """가장 큰 데이터 탭을 표(pandas)로 읽는다 (사이트 bootstrap 과 같은 방식)."""
     import pandas as pd
     api = svc()
-    meta = api.spreadsheets().get(spreadsheetId=sheet_id, fields="properties(title),sheets.properties(title,gridProperties)").execute()
+    meta = _call(api.spreadsheets().get(spreadsheetId=sheet_id, fields="properties(title),sheets.properties(title,gridProperties)"))
     cand = [s for s in meta["sheets"] if not s["properties"]["title"].startswith("_")] or meta["sheets"]
     tab = max(cand, key=lambda s: (s["properties"].get("gridProperties", {}).get("columnCount", 0),
                                    s["properties"].get("gridProperties", {}).get("rowCount", 0)))["properties"]["title"]
-    vals = api.spreadsheets().values().get(spreadsheetId=sheet_id, range=f"'{tab}'",
-                                           valueRenderOption="FORMATTED_VALUE").execute().get("values", [])
+    vals = _call(api.spreadsheets().values().get(spreadsheetId=sheet_id, range=f"'{tab}'",
+                                                 valueRenderOption="FORMATTED_VALUE")).get("values", [])
     if not vals:
         return pd.DataFrame()
     hdr = [str(c).split("\n")[0].strip() for c in vals[0]]
