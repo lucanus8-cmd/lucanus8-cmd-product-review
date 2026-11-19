@@ -363,8 +363,62 @@ def probe_update():
         time.sleep(1.5)
 
 
+def probe_update2():
+    """검색 화면 '更新年月日で検索'(updateDocFrDt~updateDocToDt)으로 최근 바뀐 첨부문서 목록이 나오는지. 몇 번만 요청."""
+    head("갱신일로 검색 시험")
+    import datetime as dt
+    b, ct = get("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/", timeout=60)
+    t = dec(b, ct)
+    # 화면의 기본값 그대로 (숨은 칸 포함) 가져온 뒤 날짜만 바꾼다
+    base = {}
+    for m in re.finditer(r"<input([^>]*)>", t):
+        a = m.group(1)
+        nm = re.search(r'name="([^"]+)"', a)
+        if not nm:
+            continue
+        ty = (re.search(r'type="([^"]+)"', a) or [None, "text"])[1]
+        val = (re.search(r'value="([^"]*)"', a) or [None, ""])[1]
+        if ty in ("radio", "checkbox") and "checked" not in a:
+            continue
+        if ty in ("submit", "button", "image"):
+            continue
+        base.setdefault(nm.group(1), val)
+    for m in re.finditer(r'<select[^>]*name="([^"]+)"[^>]*>(.*?)</select>', t, re.S):
+        sel = re.search(r'<option[^>]*selected[^>]*value="([^"]*)"|<option[^>]*value="([^"]*)"[^>]*selected', m.group(2))
+        first = re.search(r'<option[^>]*value="([^"]*)"', m.group(2))
+        base.setdefault(m.group(1), (sel.group(1) or sel.group(2)) if sel else (first.group(1) if first else ""))
+    print("기본 칸 수", len(base), "· 날짜 칸 기본값", {k: base.get(k) for k in ("updateDocFrDt", "updateDocToDt", "ListRows")})
+    today = dt.date(2026, 11, 19)
+    for fr, to, fmt in ((today - dt.timedelta(days=1), today, "%Y%m%d"), (today - dt.timedelta(days=1), today, "%Y/%m/%d"),
+                        (today - dt.timedelta(days=7), today, "%Y%m%d")):
+        d = dict(base)
+        d.update({"updateDocFrDt": fr.strftime(fmt), "updateDocToDt": to.strftime(fmt), "ListRows": "100"})
+        for k in ("btnA.x", "btnA.y"):
+            d[k] = "1"
+        try:
+            req = urllib.request.Request("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/",
+                                         data=urllib.parse.urlencode(d).encode(), headers=UA)
+            with urllib.request.urlopen(req, timeout=90) as r:
+                tt = dec(r.read(), r.headers.get("Content-Type", ""))
+        except Exception as e:
+            print(fr, to, fmt, "실패", str(e)[:80])
+            continue
+        txt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", tt))
+        n = re.search(r"(\d[\d,]*)\s*件", txt)
+        links = re.findall(r'href="([^"]*iyakuDetail/(?:ResultDataSetPDF|GeneralList|[^"/]*_\d+_\d+)[^"]*)"', tt)
+        err = re.findall(r"(?:エラー|入力してください|正しく|指定してください)[^。]{0,60}", txt)[:3]
+        print(f"\n{fr}~{to} ({fmt}) · {len(tt):,}자 · 건수 {n.group(0) if n else '?'} · 문서 링크 {len(links)}개 · 오류글 {err}")
+        print("   링크 예:", sorted(set(links))[:8])
+        i = txt.find("件")
+        print("   글:", txt[max(0, i - 300):i + 900])
+        time.sleep(3)
+
+
 def main():
     import os
+    if os.environ.get("PROBE") == "update2":
+        probe_update2()
+        return 0
     if os.environ.get("PROBE") == "update":
         probe_update()
         return 0
