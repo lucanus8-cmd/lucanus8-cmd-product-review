@@ -270,10 +270,65 @@ def probe():
         print("   상세 화면:", u, "·", txt[:900])
 
 
+def probe_label():
+    """첨부문서(電子添文)를 약가 코드(YJ)·성분명으로 받을 수 있는 주소 찾기. 몇 개만 요청한다."""
+    head("첨부문서 받는 주소 찾기")
+    jp = ov.japan()
+    code_c = next(c for c in jp.columns if "コード" in c)
+    name_c = next(c for c in jp.columns if "成分名" in c)
+    item_c = next(c for c in jp.columns if "品名" in c)
+    sen_c = next((c for c in jp.columns if c.strip() == "先発医薬品"), None)
+    for nm in ("アムロジピンベシル酸塩", "アトルバスタチンカルシウム水和物", "オランザピン"):
+        x = jp[jp[name_c].astype(str).str.strip() == nm]
+        if sen_c:
+            x = x.sort_values(sen_c, ascending=False, key=lambda s: s.astype(str).str.len())
+        if x.empty:
+            print(nm, "약가 목록에 없음")
+            continue
+        yj, item = str(x.iloc[0][code_c]).strip(), str(x.iloc[0][item_c]).strip()
+        print(f"\n▶ {nm} · YJ {yj} · {item} · 先発 {x.iloc[0][sen_c] if sen_c else ''}")
+        tries = [f"https://www.info.pmda.go.jp/go/pack/{yj}/",
+                 f"https://www.info.pmda.go.jp/go/pack/{yj}_1_01/",
+                 f"https://www.pmda.go.jp/PmdaSearch/iyakuDetail/GeneralList/{yj[:7]}",
+                 f"https://www.pmda.go.jp/PmdaSearch/iyakuDetail/GeneralList/{yj[:9]}",
+                 f"https://www.pmda.go.jp/PmdaSearch/rdSearch/02/{yj}?user=1"]
+        for u in tries:
+            try:
+                req = urllib.request.Request(u, headers=UA)
+                with urllib.request.urlopen(req, timeout=40) as r:
+                    b, fu, ct = r.read(), r.geturl(), r.headers.get("Content-Type", "")
+                t = dec(b, ct)
+                links = sorted(set(re.findall(r'href="([^"]*(?:ResultDataSet|iyakuDetail|pack|PDF|XML)[^"]*)"', t, re.I)))
+                i = t.find("効能")
+                print(f"   {u} → {fu[:110]} · {len(t):,}자 · 効能又は効果 {'効能又は効果' in t or '効能・効果' in t}"
+                      f" · 링크 {links[:6]}")
+                if i >= 0:
+                    print("      글:", re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t[i:i + 1500]))[:400])
+            except Exception as e:
+                print(f"   {u} → {type(e).__name__} {str(e)[:70]}")
+            time.sleep(1.5)
+    # 검색 화면(POST) — 이름으로
+    try:
+        data = urllib.parse.urlencode({"nameWord": "アムロジピン", "iyakuHowtoNameSearchRadioValue": "1",
+                                       "howtoMatchRadioValue": "1", "ListRows": "10", "btnA.x": "1",
+                                       "dispColumnsList[0]": "1", "dispColumnsList[1]": "2"}).encode()
+        req = urllib.request.Request("https://www.pmda.go.jp/PmdaSearch/iyakuSearch/", data=data, headers=UA)
+        with urllib.request.urlopen(req, timeout=60) as r:
+            t = dec(r.read(), r.headers.get("Content-Type", ""))
+        links = sorted(set(re.findall(r'href="([^"]*(?:ResultDataSet|iyakuDetail|GeneralList)[^"]*)"', t)))
+        print(f"\n검색(POST) · {len(t):,}자 · 결과 링크 {len(links)} · 예 {links[:10]}")
+        print("   글:", re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))[2000:2800])
+    except Exception as e:
+        print("검색(POST) 실패", str(e)[:100])
+
+
 def main():
     import os
-    if os.environ.get("PROBE") == "1":
+    if os.environ.get("PROBE") in ("1", "probe"):
         probe()
+        return 0
+    if os.environ.get("PROBE") == "label":
+        probe_label()
         return 0
     jn = jp = None
     try:

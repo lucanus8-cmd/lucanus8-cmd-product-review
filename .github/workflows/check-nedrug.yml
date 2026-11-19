@@ -182,7 +182,7 @@ jobs:
         if: inputs.what == 'pmda'
         run: |
           python -m pip install --quiet pandas openpyxl xlrd pyarrow
-          PROBE="${{ inputs.words == 'probe' && '1' || '0' }}" python .github/scripts/check_pmda.py
+          PROBE="${{ inputs.words }}" python .github/scripts/check_pmda.py
 
       - name: 일본 성분명 공식 영문 자료 찾기
         if: inputs.what == 'jpnames'
