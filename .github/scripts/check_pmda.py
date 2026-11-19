@@ -58,36 +58,54 @@ LATIN = re.compile(r"^[A-Za-z][A-Za-z0-9 ,'\-\(\)\.\[\]/]+$")
 
 
 # ═══════════ A. JAN 전체 목록 ═══════════
+def _jan_list(L, disp):
+    u = f"https://jpdb.nihs.go.jp/jan/SimpleList_ja?submit=all_alp&display={disp}&keyword={L}"
+    b, ct = get(u)
+    t = dec(b, ct)
+    return [" ".join(c) for c in (cells(x) for x in re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S | re.I))]
+
+
 def jan():
+    """영문 보기와 일본어 보기가 같은 순서·같은 줄 수 → 나란히 붙이고, 상세 화면으로 표본 검증."""
     head("A. 일본 공식 일반명 DB (JAN) 전체 목록")
-    base = "https://jpdb.nihs.go.jp/jan/SimpleList_ja?submit=all_alp&display=jan_name_e_disp&keyword="
-    rows, first = [], True
+    try:
+        b, ct = get("https://jpdb.nihs.go.jp/jan/list/index.html")
+        t = dec(b, ct)
+        print("   /jan/list/ 화면:", re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", t))[:300],
+              "· 파일 링크", re.findall(r'href="([^"]+\.(?:xlsx?|csv|pdf|zip|txt))"', t, re.I)[:10])
+    except Exception as e:
+        print("   /jan/list/ 못 받음", str(e)[:80])
+    rows, bad = [], []
     for L in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         try:
-            b, ct = get(base + L)
-        except Exception as e:
-            print(f"   {L}: 못 받음 {type(e).__name__} {str(e)[:80]}")
+            e = _jan_list(L, "jan_name_e_disp")
+            time.sleep(0.7)
+            j = _jan_list(L, "jan_name_j_disp")
+            time.sleep(0.7)
+        except Exception as ex:
+            print(f"   {L}: 못 받음 {str(ex)[:80]}")
             continue
-        t = dec(b, ct)
-        trs = re.findall(r"<tr[^>]*>(.*?)</tr>", t, re.S | re.I)
-        got = []
-        for tr in trs:
-            c = cells(tr)
-            ja = next((x for x in c if KANA.search(x) or re.search(r"[一-龥]", x)), "")
-            en = next((x for x in c if LATIN.match(x) and len(x) > 2), "")
-            if ja and en:
-                got.append((ja, en))
-        if first:
-            print(f"   A 화면 {len(t):,}자 · 줄 {len(trs)} · 짝 {len(got)}")
-            for tr in trs[:4]:
-                print("     줄 예:", cells(tr)[:6])
-            pg = sorted(set(re.findall(r'href="([^"]*(?:page|Page|start|offset)[^"]*)"', t)))[:8]
-            print("     쪽 넘김 링크 예:", pg)
-            first = False
-        rows += got
-        time.sleep(1.0)
-    df = pd.DataFrame(rows, columns=["ja", "en"]).drop_duplicates()
-    print(f"JAN 짝 {len(df):,}개 · 일본어명 {df['ja'].nunique():,} · 예 {df.sample(min(6, len(df)), random_state=1).values.tolist() if len(df) else []}")
+        if len(e) != len(j):
+            bad.append((L, len(e), len(j)))
+            continue
+        rows += [(jj, ee, L) for ee, jj in zip(e, j) if ee and jj]
+    df = pd.DataFrame(rows, columns=["ja", "en", "L"])
+    print(f"JAN 짝 {len(df):,}개 · 줄 수 안 맞은 글자 {bad}")
+    # 표본 검증: 상세 화면의 일본어명이 짝과 같은지
+    smp = df.sample(min(40, len(df)), random_state=7)
+    ok = 0
+    for ja, en, _ in smp.values:
+        try:
+            u = ("https://jpdb.nihs.go.jp/jan/DetailList_ja?submit=all_alp%E6%A4%9C%E7%B4%A2&keyword="
+                 + urllib.parse.quote(en))
+            bb, cc = get(u, timeout=40)
+            tx = unicodedata.normalize("NFKC", re.sub(r"<[^>]+>", " ", dec(bb, cc)))
+            ok += unicodedata.normalize("NFKC", ja) in tx
+        except Exception:
+            pass
+        time.sleep(0.5)
+    print(f"   표본 {len(smp)}개 중 상세 화면과 일치 {ok}개")
+    print("   예:", df.sample(min(8, len(df)), random_state=1)[["ja", "en"]].values.tolist())
     return df
 
 
