@@ -61,7 +61,7 @@ CAUTION = re.compile(
     r"absolute benefit|independent of their|expected to benefit|for example, patients with|"
     r"warning|precaution|monitor|not effective|not of value|not been shown|not been demonstrated|no substantial evidence|"
     r"because of the risks?|substantial risk|primarily strokes and myocardial|"
-    r"has been a reduction in the risk of stroke|permit the administration of lower)\b", re.I)
+    r"has been a reduction in the risk of stroke|permit the administration of lower|ncep|other risk factors)\b", re.I)
 
 
 def headings(t, brands, generics):

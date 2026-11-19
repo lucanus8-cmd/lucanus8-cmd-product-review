@@ -66,8 +66,8 @@ def main():
         t = text(fr)
         ver = next((ln for ln in t.splitlines() if "코드 버전" in ln), "")
         print("상태 화면:", ver or "코드 버전 줄 못 찾음")
-        if "2026-11-19-b" not in t:
-            print("❌ 새 코드(2026-11-19-b)가 아직 안 올라감")
+        if "2026-11-19-c" not in t:
+            print("❌ 새 코드(2026-11-19-c)가 아직 안 올라감")
             ok = False
         btn = fr.get_by_role("button", name="제품 제안")
         btn.first.click()
@@ -91,7 +91,13 @@ def main():
         box.fill("폐동맥고혈압")
         box.press("Enter")
         ok &= wait_text(fr, "이 적응증 미국 판매 성분", 60)
-        print("② 폐동맥고혈압:", "✅" if "11개" in text(fr) else "❌ (" + text(fr)[-200:] + ")", "· 오류", errors(fr))
+        print("② 폐동맥고혈압:", "✅" if "적응증 문장에서" in text(fr) else "❌ (" + text(fr)[-200:] + ")", "· 오류", errors(fr))
+        ok &= "적응증 문장에서" in text(fr)
+        box.fill("이상지질혈증")
+        box.press("Enter")
+        time.sleep(8)
+        print("② 이상지질혈증:", next((ln for ln in text(fr).splitlines() if "적응증 문장에서" in ln), "")[:120],
+              "· 오류", errors(fr))
         fr.get_by_text("③ 국내에 없는 약 목록").first.click()
         ok &= wait_text(fr, "미국 첫 허가가 최근인 순", 60)
         print("③ 목록:", "✅" if "국내 성분 없음 (" in text(fr) else "❌", "· 오류", errors(fr))

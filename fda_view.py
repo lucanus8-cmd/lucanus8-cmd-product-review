@@ -78,6 +78,7 @@ _HTN_X = ["ocular hypertension", "pulmonary arterial hypertension", "pulmonary h
           "intracranial hypertension", "portal hypertension", "intraocular"]
 _LIPIDS = ["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
            "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"]
+_LIPID_X = ["medium chain triglyceride"]       # 트리헵타노인 같은 영양 공급용
 _DM = ["glycemic control", "glycaemic control", "treatment of type 2 diabetes", "treatment of type 1 diabetes",
        "treatment of diabetes"]
 _HIV = ["treatment of hiv", "treatment of human immunodeficiency", "other antiretroviral", "antiretroviral agents",
@@ -90,8 +91,9 @@ _FLU_X = ["haemophilus influenzae", "h influenzae", "hemophilus influenzae", "in
           "hemophilus influenza"]
 DISEASE_TERMS = {
     "hypertension": (["hypertension", "lower blood pressure", "lowering blood pressure"], _HTN_X),
-    "dyslipidemia": (_LIPIDS, []), "hyperlipidemia": (_LIPIDS, []), "hypercholesterolemia": (_LIPIDS, []),
-    "hypertriglyceridemia": (["hypertriglyceridemia", "triglyceride"], []),
+    "dyslipidemia": (_LIPIDS, _LIPID_X), "hyperlipidemia": (_LIPIDS, _LIPID_X),
+    "hypercholesterolemia": (_LIPIDS, _LIPID_X),
+    "hypertriglyceridemia": (["hypertriglyceridemia", "triglyceride"], _LIPID_X),
     "type 2 diabetes mellitus": (_DM, []), "type 1 diabetes mellitus": (_DM, []), "diabetes mellitus": (_DM, []),
     "obesity": (["obesity", "weight management", "weight reduction", "weight loss"], []),
     "angina pectoris": (["angina"], []),
