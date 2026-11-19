@@ -6,6 +6,7 @@ C. 바꾼 영문 성분이 미국(FDA 비교 표)·국내와 몇 개 겹치는�
 D. PMDA 영문 신약 허가 목록 — 표 구조·연도 범위·적응증 칸이 있는지
 E. PMDA 첨부문서(적응증 원문) 일괄 내려받기가 있는지 — 화면 링크만 본다
 """
+import html
 import io
 import re
 import sys
@@ -49,8 +50,12 @@ def head(t):
 
 
 def cells(tr):
-    return [re.sub(r"\s+", " ", unicodedata.normalize("NFKC", re.sub(r"<[^>]+>", " ", c))).strip()
-            for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I)]
+    out = []
+    for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I):
+        c = unicodedata.normalize("NFKC", html.unescape(re.sub(r"<[^>]+>", " ", c)))
+        c = re.sub(r"日局収載|日本薬局方収載", " ", c)        # 일본약국방 수재 표시
+        out.append(re.sub(r"\s+", " ", c).strip())
+    return out
 
 
 KANA = re.compile(r"[ァ-ヴー]")
@@ -99,8 +104,11 @@ def jan():
             u = ("https://jpdb.nihs.go.jp/jan/DetailList_ja?submit=all_alp%E6%A4%9C%E7%B4%A2&keyword="
                  + urllib.parse.quote(en))
             bb, cc = get(u, timeout=40)
-            tx = unicodedata.normalize("NFKC", re.sub(r"<[^>]+>", " ", dec(bb, cc)))
-            ok += unicodedata.normalize("NFKC", ja) in tx
+            tx = re.sub(r"\s+", "", unicodedata.normalize("NFKC", html.unescape(re.sub(r"<[^>]+>", " ", dec(bb, cc)))))
+            good = re.sub(r"\s+", "", ja) in tx
+            ok += good
+            if not good:
+                print("     불일치:", ja, "|", en, "|", tx[tx.find("検索件数"):tx.find("検索件数") + 80])
         except Exception:
             pass
         time.sleep(0.5)
