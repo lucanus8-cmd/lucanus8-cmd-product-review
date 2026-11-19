@@ -250,6 +250,8 @@ def korea_trials(k, canon, split, wanted):
         c = pd.read_csv(io.BytesIO(raw), dtype=str, low_memory=False).fillna("")
         print("임상 시트를 공개 링크로 읽음")
     c.columns = [str(x).split("\n")[0].strip() for x in c.columns]
+    if len(c) < 7000:
+        raise RuntimeError(f"임상 자료가 {len(c):,}행뿐 — 갱신이 덜 끝난 것으로 봄")
     print(f"{len(c):,}행 · 칸 {list(c.columns)} · 상태 {Counter(c.get('STATUS', pd.Series(dtype=str))).most_common(5)}")
     print("   단계:", Counter(c.get("CLINIC_STEP_NM", pd.Series(dtype=str))).most_common(10))
     print("   승인일 범위:", c["CLST_APRV_DT"].min(), "~", c["CLST_APRV_DT"].max())
@@ -366,8 +368,30 @@ def trial_txt(lst, f=None):
             + (f" · 이 제형 임상 {same}건" if f else ""))
 
 
+APPROVAL_ID = "1x0lPMvsH0G-9cOdwi1kZy5yTAhAaz9N5BluK36iS8-Q"
+CLINICAL_ID = "1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE"
+MIN_ROWS = {"허가": 35000, "임상": 7000}
+
+
 def main():
-    kr = korea()
+    import gsheet
+    kr = None
+    if gsheet.available():
+        # 허가·임상 시트는 매일 05:00 부터 갱신된다 → 끝날 때까지(최근 10분 안 바뀜) 기다렸다 읽는다
+        for sid, nm in ((APPROVAL_ID, "허가"), (CLINICAL_ID, "임상")):
+            if not gsheet.wait_quiet(sid, nm):
+                print("원본 시트가 아직 갱신 중 — 오늘 결과는 만들지 않음 (구글 시트에는 전날 결과가 남음)")
+                return 3
+        try:
+            kr = gsheet.read_sheet(APPROVAL_ID)
+            print(f"허가 시트를 서비스 계정 키로 읽음: {len(kr):,}행")
+        except Exception as e:
+            print("키로 허가 시트 읽기 실패:", type(e).__name__, str(e)[:150])
+    if kr is None:
+        kr = korea()
+    if kr is None or len(kr) < MIN_ROWS["허가"]:
+        print(f"허가 자료가 {0 if kr is None else len(kr):,}행뿐 — 갱신이 덜 끝난 것으로 보고 오늘은 만들지 않음")
+        return 3
     head("미국 Drugs@FDA")
     idx = json.loads(get("https://api.fda.gov/download.json", timeout=60))
     apps = []
@@ -545,8 +569,8 @@ def main():
     try:
         trials = korea_trials(k, canon, split, wanted)
     except Exception as e:
-        print("임상 목록 실패:", type(e).__name__, str(e)[:200])
-        trials = []
+        print("임상 목록 실패:", type(e).__name__, str(e)[:200], "— 오늘 결과는 만들지 않음")
+        return 3
     FLUID = re.compile(r"^(dextrose|glucose|sodium chloride|potassium chloride|calcium chloride|magnesium chloride|"
                        r"magnesium sulfate|sodium lactate|sodium acetate|acetate|dibasic|monobasic|amino acids|"
                        r"sodium bicarbonate|sodium gluconate|soybean oil|fish oil|olive oil|lipid|glycerophosphate|"

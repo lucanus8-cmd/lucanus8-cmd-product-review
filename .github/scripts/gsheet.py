@@ -114,31 +114,72 @@ def _call(req, tries=5):
 
 
 def write_tabs(sheet_id, tabs, order=None, chunk=8000):
-    """{탭 이름: 표} 를 시트에 통째로 덮어쓴다. 없는 탭은 만들고, 처음 생긴 빈 탭(시트1)은 지운다."""
+    """{탭 이름: 표} 를 시트에 덮어쓴다. 새 결과는 '이름·새로' 탭에 다 쓴 뒤 한 번에 바꿔 끼운다
+    (쓰는 도중에 사이트가 빈 표·반쯤 찬 표를 읽지 않게). 처음 생긴 빈 탭(시트1)은 지운다."""
     api = svc().spreadsheets()
-    meta = _call(api.get(spreadsheetId=sheet_id, fields="sheets.properties(sheetId,title)"))
-    have = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta["sheets"]}
     names = order or list(tabs)
-    add = [{"addSheet": {"properties": {"title": t}}} for t in names if t not in have]
-    if add:
-        r = _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": add}))
-        for rep in r.get("replies", []):
-            p = rep["addSheet"]["properties"]
-            have[p["title"]] = p["sheetId"]
-    for idx, t in enumerate(names):
+
+    def tabs_now():
+        m = _call(api.get(spreadsheetId=sheet_id, fields="sheets.properties(sheetId,title)"))
+        return {x["properties"]["title"]: x["properties"]["sheetId"] for x in m["sheets"]}
+    have = tabs_now()
+    old_tmp = [have[t + "·새로"] for t in names if t + "·새로" in have]       # 지난번에 끊긴 임시 탭
+    if old_tmp:
+        _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": [{"deleteSheet": {"sheetId": x}} for x in old_tmp]}))
+    tmp = {}
+    for t in names:
         df = tabs[t].astype(str).replace({"nan": "", "None": ""})
         nrow, ncol = len(df) + 1, max(1, df.shape[1])
-        _call(api.values().clear(spreadsheetId=sheet_id, range=f"'{t}'"))
-        _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": [
-            {"updateSheetProperties": {"properties": {"sheetId": have[t], "index": idx,
-                                                      "gridProperties": {"rowCount": nrow + 1, "columnCount": ncol,
-                                                                         "frozenRowCount": 1}},
-                                       "fields": "index,gridProperties(rowCount,columnCount,frozenRowCount)"}}]}))
+        r = _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": [{"addSheet": {"properties": {
+            "title": t + "·새로", "gridProperties": {"rowCount": nrow + 1, "columnCount": ncol, "frozenRowCount": 1}}}}]}))
+        sid = r["replies"][0]["addSheet"]["properties"]["sheetId"]
+        tmp[t] = sid
         values = [list(df.columns)] + df.values.tolist()
-        for s in range(0, len(values), chunk):
-            _call(api.values().update(spreadsheetId=sheet_id, range=f"'{t}'!A{s + 1}", valueInputOption="RAW",
-                                      body={"values": values[s:s + chunk]}))
-        print(f"   탭 '{t}': {len(df):,}행 × {df.shape[1]}칸 씀")
-    extra = [sid for title, sid in have.items() if title not in names and title in ("시트1", "Sheet1")]
-    if extra:
-        _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": [{"deleteSheet": {"sheetId": x}} for x in extra]}))
+        for st in range(0, len(values), chunk):
+            _call(api.values().update(spreadsheetId=sheet_id, range=f"'{t}·새로'!A{st + 1}", valueInputOption="RAW",
+                                      body={"values": values[st:st + chunk]}))
+        print(f"   탭 '{t}': {len(df):,}행 × {df.shape[1]}칸 씀 (임시 탭)")
+    # 한 번의 요청으로: 옛 탭 지우기 → 임시 탭 이름 바꾸기 → 순서 맞추기
+    have = tabs_now()
+    req = [{"deleteSheet": {"sheetId": have[t]}} for t in names if t in have]
+    req += [{"deleteSheet": {"sheetId": sid}} for title, sid in have.items()
+            if title in ("시트1", "Sheet1") and title not in names]
+    req += [{"updateSheetProperties": {"properties": {"sheetId": tmp[t], "title": t, "index": i}, "fields": "title,index"}}
+            for i, t in enumerate(names)]
+    _call(api.batchUpdate(spreadsheetId=sheet_id, body={"requests": req}))
+    print("   새 탭으로 한 번에 바꿔 끼움")
+
+
+def modified_time(sheet_id):
+    """구글 드라이브의 마지막 수정 시각 (UTC, datetime). 못 읽으면 None."""
+    import datetime
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    try:
+        creds = service_account.Credentials.from_service_account_info(
+            _info(), scopes=["https://www.googleapis.com/auth/drive.metadata.readonly"])
+        d = build("drive", "v3", credentials=creds, cache_discovery=False)
+        m = d.files().get(fileId=sheet_id, fields="modifiedTime", supportsAllDrives=True).execute()
+        return datetime.datetime.fromisoformat(m["modifiedTime"].replace("Z", "+00:00"))
+    except Exception as e:
+        print("   수정 시각 못 읽음:", type(e).__name__, str(e)[:120])
+        return None
+
+
+def wait_quiet(sheet_id, name, quiet_min=10, max_wait_min=40):
+    """그 시트가 최근 quiet_min 분 동안 바뀌지 않을 때까지 기다린다 (갱신 중이면 최대 max_wait_min 분)."""
+    import datetime
+    t0 = time.time()
+    while True:
+        mt = modified_time(sheet_id)
+        if mt is None:
+            return True
+        age = (datetime.datetime.now(datetime.timezone.utc) - mt).total_seconds() / 60
+        if age >= quiet_min:
+            print(f"   {name} 시트: 마지막 수정 {age:.0f}분 전 → 읽음")
+            return True
+        if (time.time() - t0) / 60 >= max_wait_min:
+            print(f"   {name} 시트: {max_wait_min}분 기다려도 계속 바뀜 → 오늘은 쓰지 않음")
+            return False
+        print(f"   {name} 시트: {age:.0f}분 전에 바뀜(갱신 중) → 2분 뒤 다시 확인")
+        time.sleep(120)

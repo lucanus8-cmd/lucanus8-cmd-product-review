@@ -33,6 +33,9 @@ def main():
     names = rd(f"{FDA}/fda_substance_names.csv")
     pairs = rd(f"{FDA}/fda_usan_inn_pairs.csv")
     comp = rd(f"{USKR}/국내비교.csv")
+    if len(comp) < 500 or len(prod) < 40000:
+        print(f"결과가 너무 적음 (국내 비교 {len(comp)}줄 · FDA {len(prod)}줄) — 시트는 그대로 둠")
+        return 3
 
     ind = prod[(prod["구분"] != "ANDA") & (prod["미국 적응증(라벨)"] != "")]
     ind = (ind.groupby("신청번호", sort=False)
