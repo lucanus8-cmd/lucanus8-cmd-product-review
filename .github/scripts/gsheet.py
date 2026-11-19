@@ -28,6 +28,36 @@ def _info():
     return d.get("gcp_service_account") or d
 
 
+def diagnose():
+    """비밀값이 어떤 모양인지만 적는다 (값은 절대 적지 않음)."""
+    raw = (os.environ.get("GCP_SERVICE_ACCOUNT") or "").strip()
+    print(f"   비밀값 길이 {len(raw)}자 · 줄 수 {raw.count(chr(10)) + 1} · 첫 글자 {raw[:1]!r}")
+    kind = "알 수 없음"
+    d = None
+    try:
+        d = json.loads(raw)
+        kind = "JSON"
+    except Exception:
+        try:
+            d = json.loads(base64.b64decode(raw).decode("utf-8"))
+            kind = "base64 JSON"
+        except Exception:
+            try:
+                import tomllib
+                d = tomllib.loads(raw if raw.lstrip().startswith("[") else "[gcp_service_account]\n" + raw)
+                kind = "TOML"
+            except Exception as e:
+                print(f"   TOML 로 읽기 실패: {type(e).__name__} · {str(e)[:80]}")
+    print(f"   모양: {kind} · 맨 위 이름들: {list(d.keys())[:8] if isinstance(d, dict) else '-'}")
+    if isinstance(d, dict):
+        x = d.get("gcp_service_account", d)
+        if isinstance(x, dict):
+            pk = str(x.get("private_key", ""))
+            print(f"   칸 이름: {sorted(x.keys())}")
+            print(f"   client_email 있음 {bool(x.get('client_email'))} · private_key 길이 {len(pk)}자"
+                  f" · BEGIN/END 표시 {('BEGIN PRIVATE KEY' in pk, 'END PRIVATE KEY' in pk)} · '…' 견본 글자 {'…' in pk}")
+
+
 def available():
     try:
         i = _info()

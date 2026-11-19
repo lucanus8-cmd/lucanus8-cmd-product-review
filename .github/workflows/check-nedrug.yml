@@ -14,7 +14,7 @@ on:
         required: false
         default: "0"
       what:
-        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기, clinic = 개발코드 생동 찾기, healthkr = 약학정보원 질환정보 구조·약관 보기, ctgov = ClinicalTrials.gov 접속·간이 메타분석 (words 에 약:용량,약:용량), opentargets = Open Targets 구조·질의 시험 (words 에 약;질환), repurpose = 약물 재창출 모듈 시험 (words 에 약;질환), paper = 공개 논문 표 읽기 (words 에 PMC번호·DOI 쉼표), metaref = 메타분석 계산을 R metafor·논문 값과 비교, otcover = FDA 신약의 Open Targets 수록률, overseas = 미국·일본 허가와 국내 허가를 주성분·제형으로 맞출 수 있는지, jpnames = 일본 성분명 공식 영문 자료 찾기, uskr = 미국 FDA와 국내 허가를 FDA 성분 사전으로 맞추기, fdatables = FDA 성분 대조표·허가목록+적응증 만들기 (save=1 이면 data 가지 fda/ 에 저장), fdadaily = FDA 매일 갱신 자료 확인, fdasheet = FDA 국내 비교를 구글 시트에 쓰기"
+        description: "item = 품목 상세, dmf = DMF 목록 화면 찾기, fetch = DMF 목록 전부 받기, price = 심평원 약가 고시 엑셀 받아 보기, clinic = 개발코드 생동 찾기, healthkr = 약학정보원 질환정보 구조·약관 보기, ctgov = ClinicalTrials.gov 접속·간이 메타분석 (words 에 약:용량,약:용량), opentargets = Open Targets 구조·질의 시험 (words 에 약;질환), repurpose = 약물 재창출 모듈 시험 (words 에 약;질환), paper = 공개 논문 표 읽기 (words 에 PMC번호·DOI 쉼표), metaref = 메타분석 계산을 R metafor·논문 값과 비교, otcover = FDA 신약의 Open Targets 수록률, overseas = 미국·일본 허가와 국내 허가를 주성분·제형으로 맞출 수 있는지, jpnames = 일본 성분명 공식 영문 자료 찾기, uskr = 미국 FDA와 국내 허가를 FDA 성분 사전으로 맞추기, fdatables = FDA 성분 대조표·허가목록+적응증 만들기 (save=1 이면 data 가지 fda/ 에 저장), fdadaily = FDA 매일 갱신 자료 확인, fdasheet = FDA 국내 비교를 구글 시트에 쓰기, keycheck = 구글 키 모양만 확인"
         required: false
         default: "item"
       urls:
@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -197,6 +197,26 @@ jobs:
           OUT_DIR=out/fda PREV_DIR=none python .github/scripts/build_fda_tables.py
           USKR_OUT=out/uskr python .github/scripts/check_us_kr.py
           OUT_DIR=out/fda USKR_OUT=out/uskr python .github/scripts/write_fda_sheet.py
+
+      - name: 구글 키 모양 확인 (값은 적지 않음) · 시트 열어 보기
+        if: inputs.what == 'keycheck'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet google-auth google-api-python-client pandas
+          cd .github/scripts && python -c "
+          import gsheet
+          gsheet.diagnose()
+          ok = gsheet.available(); print('키 사용 가능:', ok)
+          if ok:
+              s = gsheet.svc().spreadsheets()
+              for sid, nm in (('1CpIrt1kbGw_yiGFNpQB2gRiOiUWlBovMtsOs-X1gmZs', 'FDA 비교'), ('1iFPo8V-JLFQEkFgkfAH2l8-FtUEia0on6Q8OjtPr6sE', '임상')):
+                  try:
+                      m = s.get(spreadsheetId=sid, fields='properties(title)').execute()
+                      print(nm, '시트 열림:', m['properties']['title'])
+                  except Exception as e:
+                      print(nm, '시트 못 엶:', type(e).__name__, str(e)[:160])
+          "
 
       - name: FDA 매일 갱신 자료 확인 (Drugs@FDA 파일·DailyMed)
         if: inputs.what == 'fdadaily'

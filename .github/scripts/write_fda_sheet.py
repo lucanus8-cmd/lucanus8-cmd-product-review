@@ -25,6 +25,7 @@ def rd(p):
 def main():
     if not gsheet.available():
         print("GitHub 비밀값 GCP_SERVICE_ACCOUNT 를 읽지 못함 (없거나 모양이 다름)")
+        gsheet.diagnose()
         return 1
     print("키 확인됨 · 서비스 계정:", gsheet.account_email())
     meta = json.load(open(f"{FDA}/fda_meta.json"))
