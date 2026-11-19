@@ -3,6 +3,7 @@
 비교 기준: 데이터관리파일에 남아 있는 옛 임시 탭 '_stg_특허정보' (9월 수집분, 12만 줄) — 열 수 있으면.
 """
 import os
+import re
 import sys
 
 import pandas as pd
@@ -15,8 +16,13 @@ CTRL_ID = "1bUOMuziqrD77N-zQ7jQWga7gfICVWklV4S3a-osAmag"
 
 
 def norm(df):
+    """머리글 '품목기준코드\n(ITEM_SEQ)' → 'ITEM_SEQ' (괄호 속 영문 코드)."""
     df = df.copy()
-    df.columns = [str(c).split("\n")[0].strip() for c in df.columns]
+    cols = []
+    for c in df.columns:
+        m = re.search(r"\(([A-Z0-9_]+)\)\s*$", str(c))
+        cols.append(m.group(1) if m else str(c).strip())
+    df.columns = cols
     ren = {"품목기준코드": "ITEM_SEQ", "품목명": "ITEM_NAME", "업체명": "ENTP_NAME"}
     return df.rename(columns=ren)
 
@@ -24,12 +30,16 @@ def norm(df):
 def read_tab(sid, tab):
     api = gsheet.svc().spreadsheets()
     v = api.values().get(spreadsheetId=sid, range=f"'{tab}'").execute().get("values", [])
-    hdr = [str(c).split("\n")[0].strip() for c in v[0]]
+    hdr = [str(c).strip() for c in v[0]]
     rows = [r + [""] * (len(hdr) - len(r)) for r in v[1:]]
     return pd.DataFrame([r[:len(hdr)] for r in rows], columns=hdr)
 
 
 def profile(df, name):
+    for need in ("ITEM_SEQ", "ITEM_NAME", "PAGE_GB_NM", "DOMESTIC_PATENT_NO"):
+        if need not in df.columns:
+            df[need] = ""
+            print(f"   ({name}: '{need}' 칸 없음)")
     print(f"\n==== {name}: {len(df):,}줄 · 열 {df.shape[1]}개")
     print("   열:", list(df.columns))
     print(f"   품목 수 {df['ITEM_SEQ'].nunique():,} · 특허번호 수 {df['DOMESTIC_PATENT_NO'].replace('', pd.NA).nunique():,}")
@@ -49,7 +59,11 @@ def main():
     if not gsheet.available():
         print("키 없음")
         return 1
-    new = norm(gsheet.read_sheet(NEW_ID))
+    tabs = [x["properties"]["title"] for x in gsheet.svc().spreadsheets().get(
+        spreadsheetId=NEW_ID, fields="sheets.properties(title)").execute()["sheets"]]
+    print("특허 파일 탭:", tabs)
+    new = norm(read_tab(NEW_ID, "특허정보"))
+    print("머리글:", list(new.columns))
     profile(new, "지금 특허 시트")
     try:
         old = norm(read_tab(CTRL_ID, "_stg_특허정보"))
