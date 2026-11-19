@@ -234,7 +234,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ind-headings
-          path: out/ind_headings.csv
+          path: out/ind_*.csv
           if-no-files-found: ignore
           retention-days: 7
 

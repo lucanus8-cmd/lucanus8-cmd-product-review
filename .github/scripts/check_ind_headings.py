@@ -97,36 +97,100 @@ def clauses(t):
 
 _HTN_X = ["ocular hypertension", "pulmonary arterial hypertension", "pulmonary hypertension",
           "intracranial hypertension", "portal hypertension", "intraocular"]
+_LIPID = ["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
+          "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"]
+_DM = ["glycemic control", "glycaemic control", "treatment of type 2 diabetes", "treatment of type 1 diabetes",
+       "treatment of diabetes"]
 TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 볼 말들)
-    "이상지질혈증": (["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
-                 "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"],
-                "이상지질혈증", []),
+    # 순환기·대사
     "고혈압": (["hypertension", "lower blood pressure", "lowering blood pressure"], "고혈압", _HTN_X),
-    "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], "", []),
-    "통풍": (["gout", "hyperuricemia"], "통풍", []),
-    "당뇨병": (["glycemic control", "glycaemic control", "treatment of type 2 diabetes", "treatment of type 1 diabetes",
-             "treatment of diabetes"], "당뇨병", ["diabetes insipidus", "diabetic macular", "diabetic retinopathy",
-                                                     "diabetic foot", "diabetic peripheral neuropathy", "diabetic neuropathy"]),
-    "편두통": (["migraine"], "", []),
-    "류마티스관절염": (["rheumatoid arthritis"], "", []),
-    "건선": (["psoriasis", "psoriatic"], "", []),
-    "천식": (["asthma"], "천식", []),
-    "골다공증": (["osteoporosis"], "골다공증", []),
-    "조현병": (["schizophrenia"], "", []),
+    "이상지질혈증": (_LIPID, "이상지질혈증", []),
+    "당뇨병": (_DM, "당뇨병", []),
+    "비만": (["obesity", "weight management", "weight reduction", "weight loss"], "비만", []),
+    "심부전": (["heart failure"], "", []),
+    "협심증": (["angina"], "", []),
+    "심근경색": (["myocardial infarction"], "", []),
     "심방세동": (["atrial fibrillation"], "", []),
-    "뇌전증": (["epilep", "seizure"], "뇌전증", []),
+    "뇌졸중": (["stroke"], "", []),
+    "심부정맥혈전증": (["deep vein thrombosis", "venous thromboembolism"], "", []),
+    "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], "", []),
+    "만성신장병": (["chronic kidney disease"], "", []),
+    # 호흡기
+    "천식": (["asthma"], "천식", []),
+    "COPD": (["chronic obstructive pulmonary", "copd"], "", []),
+    "알레르기비염": (["allergic rhinitis"], "", []),
+    "특발성폐섬유증": (["idiopathic pulmonary fibrosis"], "", []),
+    # 소화기
+    "위식도역류질환": (["gastroesophageal reflux", "gerd", "erosive esophagitis"], "위산", []),
+    "소화성궤양": (["duodenal ulcer", "gastric ulcer", "peptic ulcer"], "", []),
+    "크론병": (["crohn"], "", []),
+    "궤양성대장염": (["ulcerative colitis"], "", []),
+    "과민성대장증후군": (["irritable bowel"], "", []),
+    "변비": (["constipation"], "변비", []),
+    "구역·구토": (["nausea and vomiting", "vomiting"], "구토", []),
+    # 감염
+    "C형간염": (["hepatitis c", "hcv"], "", []),
+    "B형간염": (["hepatitis b", "hbv"], "", []),
+    "HIV": (["hiv"], "", []),
+    "대상포진": (["herpes zoster", "shingles"], "", []),
+    "인플루엔자": (["influenza"], "", []),
+    "요로감염": (["urinary tract infection"], "", []),
+    "결핵": (["tuberculosis"], "결핵", []),
+    # 근골격·피부·면역
+    "류마티스관절염": (["rheumatoid arthritis"], "", []),
+    "골관절염": (["osteoarthritis"], "", []),
+    "골다공증": (["osteoporosis"], "골다공증", []),
+    "통풍": (["gout", "hyperuricemia"], "통풍", []),
+    "강직성척추염": (["ankylosing spondylitis"], "", []),
+    "건선": (["psoriasis", "psoriatic"], "", []),
+    "아토피피부염": (["atopic dermatitis"], "", []),
+    "여드름": (["acne"], "여드름", []),
+    "루푸스": (["lupus"], "", []),
+    "다발성경화증": (["multiple sclerosis"], "", []),
+    # 정신·신경
+    "우울증": (["depressive disorder", "depression"], "", []),
+    "조현병": (["schizophrenia"], "", []),
+    "양극성장애": (["bipolar"], "", []),
+    "불안장애": (["anxiety"], "", []),
+    "불면증": (["insomnia"], "", []),
+    "ADHD": (["attention deficit"], "", []),
+    "알츠하이머병": (["alzheimer"], "", []),
     "파킨슨병": (["parkinson"], "파킨슨", []),
+    "뇌전증": (["epilep", "seizure"], "뇌전증", []),
+    "편두통": (["migraine"], "", []),
+    "신경병증성통증": (["neuropathic pain", "postherpetic neuralgia", "diabetic peripheral neuropathy"], "", []),
+    # 비뇨·안과·내분비·혈액
+    "전립선비대증": (["benign prostatic hyperplasia", "bph"], "", []),
+    "과민성방광": (["overactive bladder"], "", []),
+    "발기부전": (["erectile dysfunction"], "", []),
+    "녹내장": (["glaucoma", "ocular hypertension"], "", []),
+    "황반변성": (["macular degeneration"], "", []),
+    "갑상선기능저하증": (["hypothyroidism"], "", []),
+    "빈혈": (["anemia"], "", []),
+    "혈우병": (["hemophilia"], "", []),
+    # 암
+    "유방암": (["breast cancer"], "", []),
+    "폐암": (["lung cancer"], "", []),
+    "대장암": (["colorectal cancer"], "", []),
+    "전립선암": (["prostate cancer"], "", []),
+    "다발골수종": (["multiple myeloma"], "", []),
+    "만성림프구성백혈병": (["chronic lymphocytic leukemia"], "", []),
+    "간세포암": (["hepatocellular carcinoma"], "", []),
 }
 
 
+_EG = re.compile(r"\((?:e\.?g\.?|for example|such as|including|i\.e\.)[^)]*\)|\b(?:e\.g\.|for example|such as)[^.;:]*", re.I)
+
+
 def hit(texts, terms, excl=()):
+    """찾으면 그 문장(근거), 못 찾으면 빈 값. 괄호 속 '예: ○○' 나열과 빼고 볼 말은 지우고 찾는다."""
     for x in texts:
-        n = norm(x)
+        n = norm(_EG.sub(" ", str(x)))
         for e in excl:
             n = n.replace(norm(e), " ")
         if any(w in n for w in terms):
-            return True
-    return False
+            return str(x)
+    return ""
 
 
 def main():
@@ -172,17 +236,29 @@ def main():
     print("■ 라벨이 없는 성분 예:", sorted(allm - set(via.index))[:25])
     G = {n: (sum(g["소제목"], []) + sum(g["허가문장"], []), list(g["적응증 글"])) for n, g in df.groupby("주성분")}
     ing_grp = ing.set_index("주성분")["질환군"]
+    ev_rows = []
+    summ = []
     for ko, (terms, atc, excl) in TESTS.items():
-        HC = {n for n, (hc, _) in G.items() if hit(hc, terms, excl)}
+        terms = [norm(w) for w in terms]
+        HC = {}
+        for n, (hc, _) in G.items():
+            e = hit(hc, terms, excl)
+            if e:
+                HC[n] = e
         T = {n for n, (_, t) in G.items() if hit(t, terms, excl)}
         A = set(ing.loc[ing["질환군"].str.contains(atc, regex=False), "주성분"]) if atc else set()
-        print(f"\n◆ {ko}: 소제목+허가문장 {len(HC)} (적응증 글 전체로 찾으면 {len(T)})"
-              + (f" · ATC '{atc}' 성분 중 잡힘 {len(A & HC)}/{len(A)}" if atc else "")
-              + f" · olanzapine {'포함' if 'olanzapine' in HC else '없음'}")
-        if atc:
-            print("   ATC인데 못 잡음:", [(n, via.get(n, '라벨 없음')) for n in sorted(A - HC)][:20])
-        print("   ATC 밖에서 잡힌 것(확인용):", [(n, str(ing_grp.get(n, ''))[:16]) for n in sorted(HC - A)][:40])
-        print("   글 전체엔 있는데 빠진 것:", sorted(T - HC)[:15])
+        summ.append((ko, len(HC), len(T), f"{len(A & set(HC))}/{len(A)}" if atc else "-"))
+        print(f"\n◆ {ko}: {len(HC)}개 (글 전체로 찾으면 {len(T)})"
+              + (f" · ATC '{atc}' 중 잡힘 {len(A & set(HC))}/{len(A)} · 못 잡음 {sorted(A - set(HC))[:12]}" if atc else ""))
+        print("   잡힌 성분:", ", ".join(sorted(HC))[:1500])
+        print("   글 전체엔 있는데 뺀 것:", sorted(T - set(HC))[:20])
+        for n, e in HC.items():
+            ev_rows.append({"질병": ko, "성분": n, "질환군": ing_grp.get(n, ""), "근거 문장": e[:400]})
+    print("\n■ 요약 (질병 · 잡힌 성분 · 글 전체로 찾을 때 · ATC 질환군 중 잡힘)")
+    for x in summ:
+        print("  ", x)
+    os.makedirs("out", exist_ok=True)
+    pd.DataFrame(ev_rows).to_csv("out/ind_evidence.csv", index=False, encoding="utf-8-sig")
     os.makedirs("out", exist_ok=True)
     df.assign(소제목=df["소제목"].map(" | ".join), 허가문장=df["허가문장"].map(" | ".join)).drop(
         columns=["적응증 글"]).to_csv("out/ind_headings.csv", index=False, encoding="utf-8-sig")
