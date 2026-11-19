@@ -167,6 +167,7 @@ def main():
         H = {n for n, x in g if hit(x["소제목"].str.split(" \\| ").sum(), terms)}
         R = {n for n, x in g if hit(x["요약구절"].str.split(" \\| ").sum(), terms)}
         T = {n for n, x in g if hit(x["적응증 글"], terms)}
+        A = set(ing.loc[ing["질환군"].str.contains(atc, regex=False), "주성분"]) if atc else set()
         C = {n for n, x in g if hit(x["허가문장"].str.split(" \\| ").sum(), terms)}
         HC = H | C
         print(f"   ▶ 소제목+허가문장(소제목 없을 때만) {len(HC)}" + (f" · ATC 성분 중 잡힘 {len(A & HC)}/{len(A)}" if atc else "")
@@ -176,7 +177,6 @@ def main():
             print("     잡혔는데 ATC 다름:", [(n, str(ing_grp.get(n, ''))[:20]) for n in sorted(HC - A)[:25]])
         else:
             print("     글 전체엔 있는데 못 잡음:", sorted(T - HC)[:20], "· 새로 잡힌 것:", sorted(HC - T)[:10])
-        A = set(ing.loc[ing["질환군"].str.contains(atc, regex=False), "주성분"]) if atc else set()
         print(f"\n◆ {ko}: 소제목 {len(H)} · 소제목+요약구절 {len(H | R)} · 글 전체 {len(T)}"
               + (f" · ATC '{atc}' 성분 {len(A)} (그중 소제목으로 잡힘 {len(A & H)}, +요약구절 {len(A & (H | R))})" if atc else ""))
         print("   글 전체로만 잡히는 것(소제목·요약구절엔 없음):", sorted(T - H - R)[:25])
