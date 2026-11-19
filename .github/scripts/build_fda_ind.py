@@ -131,12 +131,14 @@ def main():
         seen = set()
         for a, kd, et, txt, br, gn, brand in use:
             for s in headings(txt, br, gn) + clauses(txt):
-                s = s.strip()[:400]
+                s = s.strip()[:3000]
                 k = norm(s)
                 if len(k) < 4 or k in seen:
                     continue
                 seen.add(k)
-                rows.append({"주성분": n, "문장": s, "출처": f"{brand} ({a})" if brand else a,
+                # 화면에는 앞 400자만 보이고, 찾기(_n)는 문장 전체로 한다 (긴 문장 뒤쪽 적응증도 잡히게)
+                rows.append({"주성분": n, "문장": s[:400] + ("…" if len(s) > 400 else ""),
+                             "출처": f"{brand} ({a})" if brand else a,
                              "라벨": "제네릭" if kd == "ANDA" else "신약", "_n": norm(EG.sub(" ", s))})
     df = pd.DataFrame(rows)
     nm = df["주성분"].nunique() if len(df) else 0
