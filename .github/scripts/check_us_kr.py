@@ -202,6 +202,30 @@ def en_skel_ko(e):
     return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiou]", "", s))
 
 
+_JUNG = ["a", "e", "a", "e", "o", "e", "o", "e", "o", "a", "e", "e", "o", "u", "o", "e", "i", "u", "", "i", "i"]
+
+
+def ko_roman(s):
+    """한글 → 모음까지 살린 로마자 (영문 성분명과 비교용)"""
+    out = []
+    for ch in s:
+        c = ord(ch) - 0xAC00
+        if not 0 <= c < 11172:
+            return None
+        out += [_CHO[c // 588], _JUNG[(c % 588) // 28], _JONG[c % 28]]
+    return re.sub(r"(.)\1+", r"\1", "".join(out).replace("h", ""))
+
+
+def en_roman(e):
+    s = re.sub(r"[^a-z]", "", e.lower())
+    s = s.replace("ph", "p").replace("th", "t").replace("ch", "k").replace("qu", "k").replace("ck", "k").replace("x", "ks")
+    s = re.sub(r"c(?=[eiy])", "s", s).replace("c", "k")
+    for a, b in (("g", "k"), ("d", "t"), ("b", "p"), ("v", "p"), ("f", "p"), ("z", "j"), ("l", "r"), ("h", ""),
+                 ("w", ""), ("y", "i")):
+        s = s.replace(a, b)
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"e$", "", s))
+
+
 def korea_trials(k, canon, split, wanted):
     """국내 임상시험 승인 목록 → {주성분 키: [(승인일, 단계, 의뢰사, 제품명, 제형)]} (wanted 성분만)"""
     head("국내 임상시험 승인 목록")
@@ -449,6 +473,44 @@ def main():
         print(f"   [미국 표기] {nm} → {k0} → 묶음 {len(syn.get(k0, ()))}개 · 대표 {[rep.get(g) for g in list(syn.get(k0, ()))[:4]]} → {canon(nm)}")
     print("   표기 차이가 공식 이름으로 정리된 예:", list(changed.items())[:40])
 
+    # 영문명이 달라 놓친 국내 품목을 한글 성분명 발음으로 찾아 같은 성분으로 맞춘다 (단일 성분 품목만)
+    import difflib
+    kr_all = {x for t in k["keys"] if t for x in t}
+    cand = sorted({t[0] for t in us["keys"] if len(t) == 1 and t[0] not in kr_all})
+    rom = defaultdict(list)
+    for idx, kor in zip(k.index, k["주성분"]):
+        parts = [x for x in str(kor).split("/") if x.strip()]
+        if len(parts) == 1:
+            r = ko_roman(ko_core(parts[0]))
+            if r and len(r) >= 6:
+                rom[r].append(idx)
+    by_first = defaultdict(list)
+    for r in rom:
+        by_first[r[:2]].append(r)
+    fixed = []
+    for m in cand:
+        r = en_roman(m)
+        if len(r) < 6:
+            continue
+        best, score = None, 0.0
+        if r in rom:
+            best, score = r, 1.0
+        else:
+            for q in by_first.get(r[:2], []):
+                if abs(len(q) - len(r)) <= 2:
+                    sc = difflib.SequenceMatcher(None, q, r).ratio()
+                    if sc > score:
+                        best, score = q, sc
+        if best and score >= 0.95:
+            idxs = rom[best]
+            ex = k.loc[idxs[0]]
+            fixed.append((m, ko_core(str(ex["주성분"])), len(idxs), str(ex[eng_c])[:40], round(score, 2)))
+            for i in idxs:
+                k.at[i, "keys"] = (m,)
+    print(f"   [보정] 한글 성분명 발음으로 국내 품목을 찾아 맞춘 성분 {len(fixed)}가지 (영문 → 한글명 · 품목 수 · 국내 영문 표기 · 일치도):")
+    for f_ in fixed:
+        print("      ", f_)
+
     lab = lambda t: " + ".join(t)  # noqa: E731
 
     us_set = {(t, f) for t, f in zip(us["keys"], us["fg"]) if t and isinstance(f, str)}
@@ -527,27 +589,7 @@ def main():
                 y["brands"][br] += 1
     # 국내 제형을 못 읽은 품목이 있는 성분 (제형 없음 판정이 틀릴 수 있음)
     kr_unread = {t for t, f in zip(k["keys"], k["fg"]) if t and not isinstance(f, str)}
-    # 점검: '국내 성분 없음' 을 한글 성분명 발음으로 다시 확인 (국내 정상 품목에 비슷한 한글명이 있으면 확인 필요)
-    ko_idx = defaultdict(set)
-    for kor in k["주성분"]:
-        for part in str(kor).split("/"):
-            core = ko_core(part)
-            sk = ko_skel(core) if core else None
-            if sk and len(sk) >= 5:
-                ko_idx[sk].add(core)
     suspect = {}
-    for t in gap:
-        hits = []
-        for x in t:
-            for cand in {x, x.split()[0]}:
-                sk = en_skel_ko(cand)
-                if len(sk) >= 5 and sk in ko_idx:
-                    hits += sorted(ko_idx[sk])[:2]
-        if hits and (len(t) == 1 or len(set(hits)) >= len(t)):
-            suspect[t] = sorted(set(hits))[:3]
-    print(f"   [점검] '국내 성분 없음' 중 국내 정상 품목에 발음이 같은 한글 성분명이 있는 것 {len(suspect)}가지:")
-    for t, h in list(suspect.items())[:120]:
-        print(f"      {lab(t)} ↔ {', '.join(h)}")
     res = []
     for t in gap:
         x = info[t]

@@ -38,7 +38,7 @@ EN_SALT = ["hydrochloride", "dihydrochloride", "trihydrochloride", "hydrobromide
            "tartrate", "bitartrate", "hemitartrate", "citrate", "dihydrogen citrate", "sulfate", "bisulfate",
            "hemisulfate", "sulphate", "phosphate", "diphosphate", "dihydrogen phosphate", "nitrate", "lactate",
            "gluconate", "lactobionate", "malate", "oxalate", "benzoate", "salicylate", "camsylate", "isethionate",
-           "pamoate", "embonate", "xinafoate", "stearate", "orotate", "aspartate", "glutamate", "carbonate",
+           "pamoate", "embonate", "xinafoate", "lauryl sulfate", "laurilsulfate", "laurylsulfate", "stearate", "orotate", "aspartate", "glutamate", "carbonate",
            "bicarbonate", "chloride", "bromide", "iodide", "sodium", "disodium", "trisodium", "monosodium",
            "potassium", "dipotassium", "calcium", "magnesium", "zinc", "aluminum", "lysine", "arginine",
            "meglumine", "tromethamine", "trometamol", "olamine", "diolamine", "erbumine", "choline",
