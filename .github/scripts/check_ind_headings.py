@@ -83,7 +83,8 @@ def refs(t):
 
 
 CAUTION = re.compile(r"\b(not indicated|consider|potential for|not been established|not recommended|not approved|"
-                     r"should not|warning|precaution|monitor)\b", re.I)
+                     r"should not|should be part of|risk management|as appropriate|caution|contraindicat\w*|"
+                     r"warning|precaution|monitor)\b", re.I)
 
 
 def clauses(t):
@@ -93,35 +94,47 @@ def clauses(t):
     return [p for p in parts if not CAUTION.search(p)]
 
 
-TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자)
-    "이상지질혈증": (["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "lipid",
-                 "ldl", "chylomicronemia", "lipoprotein", "sitosterolemia"], "이상지질혈증"),
-    "고혈압": (["hypertension"], "고혈압"),
-    "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], ""),
-    "통풍": (["gout", "hyperuricemia"], "통풍"),
-    "당뇨병": (["diabetes", "glycemic control"], "당뇨병"),
-    "편두통": (["migraine"], ""),
-    "류마티스관절염": (["rheumatoid arthritis"], ""),
-    "건선": (["psoriasis", "psoriatic"], ""),
-    "천식": (["asthma"], "천식"),
-    "골다공증": (["osteoporosis"], "골다공증"),
-    "조현병": (["schizophrenia"], ""),
-    "심방세동": (["atrial fibrillation"], ""),
-    "뇌전증": (["epilep", "seizure"], "뇌전증"),
-    "파킨슨병": (["parkinson"], "파킨슨"),
+_HTN_X = ["ocular hypertension", "pulmonary arterial hypertension", "pulmonary hypertension",
+          "intracranial hypertension", "portal hypertension", "intraocular"]
+TESTS = {   # 한글: (라벨에서 찾을 말들, ATC 질환군 글자, 빼고 볼 말들)
+    "이상지질혈증": (["hyperlipidemia", "hypercholesterolemia", "dyslipidemia", "hypertriglyceridemia", "ldl",
+                 "hyperlipoproteinemia", "triglyceride", "chylomicronemia", "lipoprotein", "sitosterolemia"],
+                "이상지질혈증", []),
+    "고혈압": (["hypertension"], "고혈압", _HTN_X),
+    "폐동맥고혈압": (["pulmonary arterial hypertension", "pah"], "", []),
+    "통풍": (["gout", "hyperuricemia"], "통풍", []),
+    "당뇨병": (["diabetes", "glycemic control"], "당뇨병", ["diabetes insipidus", "diabetic macular", "diabetic retinopathy",
+                                                     "diabetic foot", "diabetic peripheral neuropathy", "diabetic neuropathy"]),
+    "편두통": (["migraine"], "", []),
+    "류마티스관절염": (["rheumatoid arthritis"], "", []),
+    "건선": (["psoriasis", "psoriatic"], "", []),
+    "천식": (["asthma"], "천식", []),
+    "골다공증": (["osteoporosis"], "골다공증", []),
+    "조현병": (["schizophrenia"], "", []),
+    "심방세동": (["atrial fibrillation"], "", []),
+    "뇌전증": (["epilep", "seizure"], "뇌전증", []),
+    "파킨슨병": (["parkinson"], "파킨슨", []),
 }
 
 
-def hit(texts, terms):
-    return any(any(w in norm(x) for w in terms) for x in texts)
+def hit(texts, terms, excl=()):
+    for x in texts:
+        n = norm(x)
+        for e in excl:
+            n = n.replace(norm(e), " ")
+        if any(w in n for w in terms):
+            return True
+    return False
 
 
 def main():
     prod = pd.read_parquet(io.BytesIO(get(RAW + "prod.parquet")))
     ing = pd.read_parquet(io.BytesIO(get(RAW + "ing.parquet")))
     a2i = prod.drop_duplicates("신청번호").set_index("신청번호")["주성분"]
-    want = set(prod.loc[prod["구분"] != "ANDA", "신청번호"])
-    print(f"미국 판매 중 신약 신청(NDA·BLA) {len(want):,}건 · 성분 {prod.loc[prod['구분'] != 'ANDA', '주성분'].nunique():,}개")
+    kind = prod.drop_duplicates("신청번호").set_index("신청번호")["구분"]
+    want = set(prod["신청번호"])
+    print(f"미국 판매 중 신청 {len(want):,}건 (신약 {int((kind != 'ANDA').sum()):,} · 제네릭 {int((kind == 'ANDA').sum()):,})"
+          f" · 성분 {prod['주성분'].nunique():,}개")
     idx = json.loads(get("https://api.fda.gov/download.json", timeout=60))["results"]
     lab, t0 = {}, time.time()
     for r in stream(idx["drug"]["label"]["partitions"]):
@@ -140,54 +153,37 @@ def main():
 
     rows = []
     for a, (et, txt, br, gn) in lab.items():
-        h, rf = headings(txt, br, gn), refs(txt)
-        c = [] if h else clauses(txt)
-        rows.append({"신청번호": a, "주성분": a2i.get(a, ""), "상표": ", ".join(br[:2]), "소제목": " | ".join(h),
-                     "허가문장": " | ".join(c),
-                     "요약구절": " | ".join(rf), "적응증 글": txt})
+        h = headings(txt, br, gn)
+        rows.append({"신청번호": a, "구분": kind.get(a, ""), "주성분": a2i.get(a, ""), "라벨일": et, "상표": ", ".join(br[:2]),
+                     "소제목": h, "허가문장": clauses(txt), "적응증 글": txt})
     df = pd.DataFrame(rows)
-    has_h, has_r = df["소제목"] != "", df["요약구절"] != ""
-    by_ing = df.groupby("주성분").agg(h=("소제목", lambda x: any(x != "")), r=("요약구절", lambda x: any(x != "")))
-    print(f"\n■ 소제목이 있는 라벨: 신청 {has_h.mean():.0%} ({has_h.sum():,}) · 성분 기준 {by_ing['h'].mean():.0%}")
-    print(f"■ 요약구절('…( 1.x )')만 있는 라벨: {(~has_h & has_r).mean():.0%} · 둘 다 없는 라벨: {(~has_h & ~has_r).mean():.0%}"
-          f" · 성분 기준 둘 다 없음 {(~by_ing['h'] & ~by_ing['r']).mean():.0%}")
-    random.seed(3)
-    print("\n■ 소제목 예 (무작위 40):")
-    for x in random.sample([y for s in df.loc[has_h, "소제목"] for y in s.split(" | ")], 40):
-        print("   ·", x)
-    print("\n■ 소제목 없는 라벨 예 (무작위 8, 앞 220자):")
-    for _, x in df[~has_h].sample(8, random_state=4).iterrows():
-        print(f"   · {x['주성분']} [{x['상표']}] {x['적응증 글'][:220]}")
-    hc = Counter(norm(y) for s in df.loc[has_h, "소제목"] for y in s.split(" | "))
-    print("\n■ 자주 나오는 소제목 30:", hc.most_common(30))
-
+    # 성분마다 쓸 라벨: 신약(NDA·BLA) 라벨이 있으면 그것, 없으면 제네릭(ANDA) 라벨 최근 3개
+    use = []
+    for n, g in df.groupby("주성분"):
+        nd = g[g["구분"] != "ANDA"]
+        use.append(nd if len(nd) else g.sort_values("라벨일", ascending=False).head(3))
+    df = pd.concat(use, ignore_index=True)
+    allm = set(prod["주성분"])
+    via = df.groupby("주성분")["구분"].agg(lambda x: "신약" if (x != "ANDA").any() else "제네릭")
+    print(f"■ 라벨이 있는 성분 {len(via):,} / {len(allm):,} ({len(via) / len(allm):.0%}) · 그중 제네릭 라벨로 보는 성분 {(via == '제네릭').sum():,}")
+    print(f"■ 소제목이 있는 라벨 {(df['소제목'].map(len) > 0).mean():.0%}")
+    print("■ 라벨이 없는 성분 예:", sorted(allm - set(via.index))[:25])
+    G = {n: (sum(g["소제목"], []) + sum(g["허가문장"], []), list(g["적응증 글"])) for n, g in df.groupby("주성분")}
     ing_grp = ing.set_index("주성분")["질환군"]
-    for ko, (terms, atc) in TESTS.items():
-        g = df.groupby("주성분")
-        H = {n for n, x in g if hit(x["소제목"].str.split(" \\| ").sum(), terms)}
-        R = {n for n, x in g if hit(x["요약구절"].str.split(" \\| ").sum(), terms)}
-        T = {n for n, x in g if hit(x["적응증 글"], terms)}
+    for ko, (terms, atc, excl) in TESTS.items():
+        HC = {n for n, (hc, _) in G.items() if hit(hc, terms, excl)}
+        T = {n for n, (_, t) in G.items() if hit(t, terms, excl)}
         A = set(ing.loc[ing["질환군"].str.contains(atc, regex=False), "주성분"]) if atc else set()
-        C = {n for n, x in g if hit(x["허가문장"].str.split(" \\| ").sum(), terms)}
-        HC = H | C
-        print(f"   ▶ 소제목+허가문장(소제목 없을 때만) {len(HC)}" + (f" · ATC 성분 중 잡힘 {len(A & HC)}/{len(A)}" if atc else "")
+        print(f"\n◆ {ko}: 소제목+허가문장 {len(HC)} (적응증 글 전체로 찾으면 {len(T)})"
+              + (f" · ATC '{atc}' 성분 중 잡힘 {len(A & HC)}/{len(A)}" if atc else "")
               + f" · olanzapine {'포함' if 'olanzapine' in HC else '없음'}")
         if atc:
-            print("     ATC인데 못 잡음:", sorted(A - HC)[:20])
-            print("     잡혔는데 ATC 다름:", [(n, str(ing_grp.get(n, ''))[:20]) for n in sorted(HC - A)[:25]])
-        else:
-            print("     글 전체엔 있는데 못 잡음:", sorted(T - HC)[:20], "· 새로 잡힌 것:", sorted(HC - T)[:10])
-        print(f"\n◆ {ko}: 소제목 {len(H)} · 소제목+요약구절 {len(H | R)} · 글 전체 {len(T)}"
-              + (f" · ATC '{atc}' 성분 {len(A)} (그중 소제목으로 잡힘 {len(A & H)}, +요약구절 {len(A & (H | R))})" if atc else ""))
-        print("   글 전체로만 잡히는 것(소제목·요약구절엔 없음):", sorted(T - H - R)[:25])
-        if atc:
-            miss = sorted(A - H - R)
-            print("   ATC 질환군인데 소제목·요약구절로 못 잡음:", miss[:25])
-        odd = sorted(n for n in (H | R) if atc and n not in A)
-        print("   소제목·요약구절로 잡혔는데 ATC 질환군 다름:", [(n, str(ing_grp.get(n, ""))[:22]) for n in odd[:20]])
-        print("   olanzapine 포함?", "olanzapine" in (H | R), "(글 전체:", "olanzapine" in T, ")")
+            print("   ATC인데 못 잡음:", [(n, via.get(n, '라벨 없음')) for n in sorted(A - HC)][:20])
+        print("   ATC 밖에서 잡힌 것(확인용):", [(n, str(ing_grp.get(n, ''))[:16]) for n in sorted(HC - A)][:40])
+        print("   글 전체엔 있는데 빠진 것:", sorted(T - HC)[:15])
     os.makedirs("out", exist_ok=True)
-    df.drop(columns=["적응증 글"]).to_csv("out/ind_headings.csv", index=False, encoding="utf-8-sig")
+    df.assign(소제목=df["소제목"].map(" | ".join), 허가문장=df["허가문장"].map(" | ".join)).drop(
+        columns=["적응증 글"]).to_csv("out/ind_headings.csv", index=False, encoding="utf-8-sig")
     return 0
 
 
