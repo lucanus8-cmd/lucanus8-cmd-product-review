@@ -350,6 +350,15 @@ def main():
     if os.environ.get("TEN") == "kr":
         kr_probe()
         return 0
+    if os.environ.get("TEN", "").startswith("seq:"):      # 품목명 → 품목기준코드 (의약품안전나라 상세 화면 열기용)
+        import gsheet
+        kr = gsheet.read_sheet(APPROVAL_ID)
+        kr.columns = [str(c).split("\n")[0].strip() for c in kr.columns]
+        for w in os.environ["TEN"][4:].split(","):
+            h = kr[kr["품목명"].astype(str).str.contains(w.strip(), regex=False)]
+            for _, r in h.head(8).iterrows():
+                print(f"{w} | {r['품목기준코드']} | {r['품목명']} | {r['업체명']} | {r['상태']} | {r['허가일자']}")
+        return 0
     head("A. EMA 의약품 자료")
     links = find_links()
     df, src = load_ema(links)
