@@ -316,8 +316,31 @@ def review10(auth, kr, kr_past, us_state, c):
     print(f"\n저장: {OUT}/ema_disease10.csv · {len(out)}줄")
 
 
+def kr_probe():
+    """국내 허가 시트에서 '국내 없음'으로 나온 성분이 실제로 어떻게 적혀 있는지 보기 (공개 허가 정보만)."""
+    head("국내 허가 시트 확인")
+    import gsheet
+    kr = gsheet.read_sheet(APPROVAL_ID)
+    kr.columns = [str(c).split("\n")[0].strip() for c in kr.columns]
+    print(f"{len(kr):,}행 · 칸 {list(kr.columns)}")
+    print("상태 값:", Counter(kr["상태"]).most_common(8) if "상태" in kr.columns else "")
+    words = ["golimumab", "골리무맙", "certolizumab", "세르톨리주맙", "sarilumab", "사릴루맙", "ofatumumab", "오파투무맙",
+             "siponimod", "시포니모드", "interferon beta-1b", "인터페론베타-1b", "베타페론", "canagliflozin", "카나글리플로진",
+             "ertugliflozin", "에르투글리플로진", "aliskiren", "알리스키렌", "detemir", "디터미어", "심퍼니", "심지아", "케브자라"]
+    txt = kr.astype(str).apply(lambda r: " | ".join(r.values), axis=1).str.lower()
+    show = [c for c in ("품목명", "상태", "전문/일반", "주성분(영문)", "주성분", "허가일", "취소/취하일자", "업체명") if c in kr.columns]
+    for w in words:
+        h = kr[txt.str.contains(w.lower(), regex=False)]
+        print(f"\n[{w}] {len(h)}행")
+        for _, r in h.head(6).iterrows():
+            print("   ", {c: str(r[c])[:60] for c in show})
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
+    if os.environ.get("TEN") == "kr":
+        kr_probe()
+        return 0
     head("A. EMA 의약품 자료")
     links = find_links()
     df, src = load_ema(links)
