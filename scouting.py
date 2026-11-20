@@ -188,7 +188,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-20-a"
+BUILD = "2026-11-20-b"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2564,10 +2564,21 @@ if PAGE == "search":
                     st.caption(f"특허 {len(m):,}건 · 존속 등록 {int(_live.sum())}건")
                 cmap = {ss.PATENT_PAGE_COL: "구분", "품목명": "품목명", "PATENT_GB_CODE": "유형",
                         "PATENTEE": "특허권자", "DOMESTIC_PATENT_NO": "특허번호",
-                        "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)"}
+                        "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일", "만료D(년)": "만료D(년)",
+                        "DOMESTIC_INVN_NM": "발명의 명칭"}
                 cmap = {k2: v for k2, v in cmap.items() if k2 in m.columns}
-                show_df(m.rename(columns=cmap)[list(cmap.values())].sort_values("만료일", ascending=False),
-                        height=300, file_name="특허목록.csv")
+                # 순서: 제품특허(식약처 등재 — 등재자 = 품목허가권자) → 허가권자와 같은 회사의 기타특허 → 나머지
+                try:
+                    _ord, _tier = ss.patent_order(m)
+                    _pm = m.loc[_ord]
+                    if ss.has_listed_flag(m):
+                        _n1 = int((_tier == 1).sum())
+                        st.caption("순서: **제품특허**(허가권자가 식약처 특허목록에 등재) → "
+                                   + (f"허가권자와 같은 회사의 기타특허 {_n1}건 → " if _n1 else "")
+                                   + "다른 회사 특허 · 각 묶음 안에서는 존속 중, 만료일 늦은 순")
+                except Exception:
+                    _pm = m.sort_values("DOMESTIC_END_DATE", ascending=False)
+                show_df(_pm.rename(columns=cmap)[list(cmap.values())], height=300, file_name="특허목록.csv")
             else: st.info("특허 데이터 미연결")
         with tabs[2]:
             if HAS_REG and HAS_CLIN:
@@ -3922,7 +3933,7 @@ if PAGE == "patent":
             st.plotly_chart(px.bar(cnt, x="만료연도", y="건수", title="만료 연도별 특허 건수"), use_container_width=True)
             cmap = {ss.PATENT_PAGE_COL: "구분", "품목명": "품목명", "INGR_NAME": "성분", "PATENT_GB_CODE": "유형",
                     "PATENTEE": "특허권자", "DOMESTIC_PATENT_STATUS": "상태", "DOMESTIC_END_DATE": "만료일",
-                    "만료D(년)": "만료D(년)"}
+                    "만료D(년)": "만료D(년)", "DOMESTIC_INVN_NM": "발명의 명칭"}
             cc = {k2: v for k2, v in cmap.items() if k2 in pt.columns}
             show_df(pt.rename(columns=cc)[list(cc.values())].sort_values("만료일"), height=360, file_name="특허분석.csv")
 

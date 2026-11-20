@@ -153,7 +153,9 @@ def patent_available():
 
 _PATENT_COLS = ["품목기준코드", "품목명", "업체명", "INGR_ENG_NAME", "INGR_NAME",
                 "DOMESTIC_PATENT_STATUS", "PATENT_GB_CODE", "PATENTEE",
-                "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE", "PAGE_GB_NM"]
+                "DOMESTIC_PATENT_NO", "DOMESTIC_END_DATE", "PAGE_GB_NM", "DOMESTIC_INVN_NM"]
+# DOMESTIC_INVN_NM = 발명의 명칭 (예: '신규한 트리사이클릭 화합물', '…결정형 I의 제조방법') — 특허가 무슨 내용인지
+# 화면에서 알 수 있게 보여 준다. 같은 이름이 품목마다 반복되므로 메모리를 아끼려고 범주형으로 읽는다.
 
 # 특허 자료의 PAGE_GB_NM: '제품특허' = 원개발사가 식약처 의약품 특허목록에 등재한
 # 특허, '기타특허' = 같은 성분에 관한 다른 특허(다른 회사의 염·수화물·조성 특허 등).
@@ -189,6 +191,45 @@ def gb_mask(sr, kind):
 def substance_mask(sr):
     """'성분을 막는 물질특허'로 볼 것 — 물질 + 물질(기타). 염·수화물 등 형태 특허는 뺀다."""
     return gb_mask(sr, "물질") | gb_mask(sr, "물질기타")
+
+
+# 회사 이름에서 떼고 비교할 말 (법인 형태·나라 이름) — '한국애브비(주)' ↔ '애브비 인코포레이티드'
+_CO_NOISE = re.compile(r"\(주\)|\(유\)|주식회사|유한책임회사|유한회사|㈜|한국|코리아|제약|약품|인코포레이티드|인코퍼레이티드|"
+                       r"코포레이션|컴퍼니|리미티드|엘티디|엘엘씨|게엠베하|게엠베하|아게|에스\.?에이\.?(유\.?)?|비\.?브이\.?|"
+                       r"에이비|인크|씨오\.?|홀딩스|그룹|[\s.,·()\-]")
+
+
+_CO_ALIAS = [("노파르티스", "노바티스"), ("잉겔하임", "인겔하임"), ("아벤티스", ""), ("파마슈티카", ""), ("파마수티컬스", "")]
+
+
+def company_core(name):
+    s = _CO_NOISE.sub("", str(name or ""))
+    for a, b in _CO_ALIAS:
+        s = s.replace(a, b)
+    return s
+
+
+def same_company(patentee, holder):
+    """특허권자가 허가권자(업체명)와 같은 회사로 보이나. 가려진 이름(**)은 판단하지 않는다."""
+    a, b = company_core(patentee), company_core(holder)
+    if "*" in str(patentee) or len(a) < 2 or len(b) < 2:
+        return False
+    return a in b or b in a
+
+
+def patent_order(m):
+    """특허 표 보여 줄 순서: ① 제품특허(식약처 특허목록 등재 — 등재자는 품목허가권자)
+    ② 기타특허 중 특허권자가 허가권자와 같은 회사 ③ 나머지. 묶음 안에서는 존속 중 → 만료일 늦은 순."""
+    lst = listed_patent_mask(m)
+    own = pd.Series([same_company(p, h) for p, h in zip(m.get("PATENTEE", ""), m.get("업체명", ""))], index=m.index) \
+        if len(m) else pd.Series(dtype=bool)
+    tier = pd.Series(2, index=m.index)
+    tier[own] = 1
+    tier[lst] = 0
+    live = active_patent_mask(m["DOMESTIC_PATENT_STATUS"]) if "DOMESTIC_PATENT_STATUS" in m.columns else True
+    o = pd.DataFrame({"t": tier, "l": ~live, "e": pd.to_datetime(m.get("DOMESTIC_END_DATE"), errors="coerce")},
+                     index=m.index)
+    return o.sort_values(["t", "l", "e"], ascending=[True, True, False]).index, tier
 
 
 def listed_patent_mask(pt):
@@ -317,7 +358,10 @@ def _load_patent(_mt):
         e["_single"] = pd.Series(dtype="bool")
         e["_exp"] = pd.Series(dtype="datetime64[ns]")
         return e
-    return enrich_patent(pd.read_parquet(SD / "patent.parquet"))
+    df = pd.read_parquet(SD / "patent.parquet")
+    if "DOMESTIC_INVN_NM" in df.columns:
+        df["DOMESTIC_INVN_NM"] = df["DOMESTIC_INVN_NM"].fillna("").astype(str).astype("category")
+    return enrich_patent(df)
 
 def load_patent():
     _ensure("patent")
