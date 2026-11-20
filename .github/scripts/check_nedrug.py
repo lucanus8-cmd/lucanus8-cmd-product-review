@@ -56,7 +56,30 @@ def detail(pg, url):
         print(f"   {l[:200]}")
 
 
+def find_seqs(pg, name):
+    """품목명으로 찾아 품목기준코드 얻기 (검색 결과 화면의 상세 링크)."""
+    import urllib.parse
+    url = "https://nedrug.mfds.go.kr/pbp/CCBBB01/getItem?itemName=" + urllib.parse.quote(name)
+    pg.goto(url, wait_until="domcontentloaded", timeout=90_000)
+    time.sleep(6)
+    seqs = list(dict.fromkeys(re.findall(r"getItemDetail\?itemSeq=(\d+)", pg.content())))
+    print(f"'{name}' 검색: 품목 {len(seqs)}개 · {seqs[:6]}")
+    return seqs[:3]
+
+
 def main():
+    if SEQS and not SEQS[0].isdigit():
+        with sync_playwright() as p:
+            br = p.chromium.launch(executable_path=os.environ.get("CHROMIUM_PATH") or None)
+            pg = br.new_context(viewport={"width": 1400, "height": 3000}, locale="ko-KR").new_page()
+            for name in SEQS:
+                for s in find_seqs(pg, name)[:2]:
+                    try:
+                        dump(pg, s)
+                    except Exception as e:
+                        print(f"{s}: 실패 {str(e)[:200]}")
+            br.close()
+        return 0
     if not SEQS:
         print("ITEM_SEQ 가 없다")
         return 1
