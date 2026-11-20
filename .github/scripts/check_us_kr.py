@@ -489,7 +489,10 @@ def main():
 
     st_c, gb_c, eng_c, name_c = "상태", "전문/일반", "주성분(영문)", "품목명"
     k = kr[kr[st_c].eq("정상") & kr[gb_c].astype(str).str.contains("전문|일반")].copy()
-    split = lambda s: [x for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", str(s)) if x.strip()]  # noqa: E731
+    # 괄호 속 설명을 먼저 지운다: 바이오의약품은 'Golimumab (rDNA, Host: Sp2/0-Ag14, Vector : p1860, p1865)' 처럼
+    # 괄호 안에 쉼표·빗금이 있어 성분 나누기에서 이름이 조각났다 (괄호 안은 원래 성분 비교에 쓰지 않음 · 안 닫힌 괄호도)
+    split = lambda s: [x for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", re.sub(r"\([^)]*(?:\)|$)", " ", str(s)))  # noqa: E731
+                       if x.strip()]
     k["keys"] = k[eng_c].map(lambda s: tuple(sorted({canon(x) for x in split(s)})) if str(s).strip() else None)
     k["fg"] = k[name_c].map(lambda s: form_of(re.sub(
         r"\(.*?\)|\[.*?\]|\d+(\.\d+)?\s*(밀리그램|마이크로그램|그램|밀리리터|리터|mg|μg|㎍|㎎|g|mL|㎖|%|퍼센트|단위|IU|국제단위).*$",
