@@ -23,6 +23,11 @@ OUT_DIR=out/fda USKR_OUT=out/uskr SITE_OUT=out/fda_site python $S/build_fda_site
 if [ $rc -eq 3 ]; then echo "사이트용 파일 건너뜀 — 어제 파일 그대로"; exit 0; fi
 if [ $rc -ne 0 ]; then echo "사이트용 파일 실패"; exit 1; fi
 
+# 유럽 EMA (사이트 '해외 허가 비교 › 유럽 EMA'). 실패해도 FDA 저장은 계속 — 사이트는 어제 EMA 파일을 쓴다
+rm -rf out/ema_site
+EMA_OUT=out/ema_site python $S/build_ema_site.py || echo "EMA 표 건너뜀 — 어제 파일 유지"
+EMA_OK=0; ls out/ema_site/prod.parquet out/ema_site/sent.parquet out/ema_site/meta.json >/dev/null 2>&1 && EMA_OK=1
+
 if [ "${SAVE:-1}" != "1" ]; then echo "저장 안 함 (SAVE=0)"; exit 0; fi
 git config user.name "fda-bot"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -31,10 +36,11 @@ for i in 1 2 3 4; do
   rm -rf databr_site; git worktree prune
   if git fetch -q --depth=1 origin data && git worktree add -q databr_site FETCH_HEAD; then
     if (cd databr_site && git checkout -q -B data && mkdir -p fda_site && cp ../out/fda_site/* fda_site/ \
+        && { [ "$EMA_OK" != "1" ] || { mkdir -p ema_site && cp ../out/ema_site/* ema_site/ && git add ema_site; }; } \
         && git add fda_site \
         && { git diff --cached --quiet || git commit -qm "FDA 비교(사이트용) $(date -u -d '+9 hours' +%Y-%m-%d)"; } \
         && git push -q origin data); then
-      echo "data 가지 fda_site/ 에 저장함"; exit 0
+      echo "data 가지 fda_site/ 에 저장함 (EMA: $([ "$EMA_OK" = "1" ] && echo '같이 저장' || echo '어제 파일 유지'))"; exit 0
     fi
   fi
   echo "저장 다시 시도 ($i)"; sleep $((20 * i))

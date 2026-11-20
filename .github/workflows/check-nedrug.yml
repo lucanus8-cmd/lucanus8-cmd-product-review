@@ -32,7 +32,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ inputs.what == 'jpind' && 200 || 45 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -177,6 +177,89 @@ jobs:
         run: |
           python -m pip install --quiet pandas openpyxl xlrd pypdf
           python .github/scripts/check_overseas.py
+
+      - name: 일본 PMDA·후생노동성 자료 붙일 수 있는지 재 보기 (읽기만)
+        if: inputs.what == 'pmda'
+        run: |
+          python -m pip install --quiet pandas openpyxl xlrd pyarrow
+          if [ "${{ inputs.words }}" = "update3" ]; then python -m pip install --quiet playwright==1.49.0 && python -m playwright install --with-deps chromium; fi
+          PROBE="${{ inputs.words }}" python .github/scripts/check_pmda.py
+
+      - name: 일본 첨부문서 효능·효과로 질병 찾기 검토 (읽기만, words=숫자면 그만큼만 시험)
+        if: inputs.what == 'jpind'
+        run: |
+          python -m pip install --quiet pandas openpyxl xlrd pyarrow ijson
+          N="${{ inputs.words }}" python .github/scripts/check_jp_ind.py
+          if [ "${{ inputs.detail }}" = "1" ]; then
+            git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            for i in 1 2 3; do
+              rm -rf rv; git worktree prune
+              git fetch -q --depth=1 origin data && git worktree add -q rv FETCH_HEAD && cd rv && git checkout -q -B data \
+                && mkdir -p review && cp ../out/jp_*.csv review/ && git add review \
+                && { git diff --cached --quiet || git commit -qm "검토용 일본 첨부문서 효능 표"; } && git push -q origin data \
+                && { echo "검토 표 저장"; break; }
+              cd "$GITHUB_WORKSPACE"; sleep 20
+            done
+          fi
+
+      - name: 유럽 EMA 의약품 자료로 FDA 비교처럼 할 수 있는지 검토 (읽기만, detail=1 이면 data 가지 review/ 에 표 저장)
+        if: inputs.what == 'ema'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet pandas openpyxl pyarrow google-auth google-api-python-client
+          TEN="${{ inputs.words }}" python .github/scripts/check_ema.py
+          if [ "${{ inputs.detail }}" = "1" ]; then
+            git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            for i in 1 2 3; do
+              rm -rf rv; git worktree prune
+              git fetch -q --depth=1 origin data && git worktree add -q rv FETCH_HEAD && cd rv && git checkout -q -B data \
+                && mkdir -p review && cp ../out/ema_*.csv review/ && git add review \
+                && { git diff --cached --quiet || git commit -qm "검토용 유럽 EMA 표"; } && git push -q origin data \
+                && { echo "검토 표 저장"; break; }
+              cd "$GITHUB_WORKSPACE"; sleep 20
+            done
+          fi
+
+      - name: 고친 국내 비교 로봇 시험 — 사이트용 FDA 표를 새로 만들어 지금 표와 비교 (구글 시트·data 가지에 쓰지 않음)
+        if: inputs.what == 'uskrtest'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet pandas ijson openpyxl google-auth google-api-python-client pyarrow
+          S=.github/scripts
+          OUT_DIR=out/fda PREV_DIR=none python $S/build_fda_tables.py
+          USKR_OUT=out/uskr python $S/check_us_kr.py
+          OUT_DIR=out/fda USKR_OUT=out/uskr SITE_OUT=out/fda_site python $S/build_fda_site.py
+          python $S/compare_fda_site.py
+
+      - name: 사이트용 EMA 표 만들기 (detail=1 이면 data 가지 ema_site/ 에 저장)
+        if: inputs.what == 'emasite'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet pandas openpyxl pyarrow ijson google-auth google-api-python-client
+          python .github/scripts/build_ema_site.py
+          if [ "${{ inputs.detail }}" = "1" ]; then
+            git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            for i in 1 2 3; do
+              rm -rf rv; git worktree prune
+              git fetch -q --depth=1 origin data && git worktree add -q rv FETCH_HEAD && cd rv && git checkout -q -B data \
+                && mkdir -p ema_site && cp ../out/ema_site/* ema_site/ && git add ema_site \
+                && { git diff --cached --quiet || git commit -qm "EMA 비교(사이트용)"; } && git push -q origin data \
+                && { echo "data 가지 ema_site/ 저장"; break; }
+              cd "$GITHUB_WORKSPACE"; sleep 20
+            done
+          fi
+
+      - name: 일본 검토 표 남기기
+        if: always() && inputs.what == 'jpind'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jp-ind
+          path: out/jp_*.csv
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: 일본 성분명 공식 영문 자료 찾기
         if: inputs.what == 'jpnames'
