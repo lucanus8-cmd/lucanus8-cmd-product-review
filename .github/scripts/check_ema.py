@@ -139,9 +139,30 @@ def col(df, *keys):
 SPLIT = re.compile(r"\s*(?:/|;|\+|,(?=\s*[A-Za-z])|\band\b)\s*", re.I)
 
 
+U2I = {}
+
+
+def load_u2i():
+    try:
+        b, _, _ = get(RAW + "fda/fda_usan_inn_pairs.csv", timeout=60)
+        p = pd.read_csv(io.BytesIO(b), dtype=str).fillna("")
+        for u, i in zip(p.iloc[:, 0], p.iloc[:, 1]):
+            a, c = ov.en_moiety(u), ov.en_moiety(i)
+            if a and c and a != c:
+                U2I[a] = c
+        print(f"미국 이름 → 국제 이름 짝 {len(U2I):,}개")
+    except Exception as e:
+        print("미국·국제 이름 표 못 읽음", str(e)[:80])
+
+
+def key(x):
+    m = ov.en_moiety(x)
+    return U2I.get(m, m)
+
+
 def moieties(s):
     s = re.sub(r"\([^)]*\)", " ", str(s))
-    return tuple(sorted({ov.en_moiety(x) for x in SPLIT.split(s) if x.strip() and len(x.strip()) > 2}))
+    return tuple(sorted({key(x) for x in SPLIT.split(s) if x.strip() and len(x.strip()) > 2}))
 
 
 def korea_keys():
@@ -162,12 +183,12 @@ def korea_keys():
     k = kr[st]
     eng = k["주성분(영문)"].astype(str)
     split = lambda s: [x for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", s) if x.strip()]  # noqa: E731
-    combos = {tuple(sorted({ov.en_moiety(x) for x in split(s)})) for s in eng if s.strip()}
+    combos = {tuple(sorted({key(x) for x in split(s)})) for s in eng if s.strip()}
     singles = {m for t in combos for m in t}
     past = set()
     if "상태" in kr.columns:
         p = kr[~kr["상태"].astype(str).eq("정상")]["주성분(영문)"].astype(str)
-        past = {ov.en_moiety(x) for s in p for x in split(s)} - singles
+        past = {key(x) for s in p for x in split(s)} - singles
     print(f"국내 정상 품목 성분 조합 {len(combos):,} · 단일 성분 {len(singles):,} · 취하·만료로만 있는 성분 {len(past):,}")
     return singles, past
 
@@ -178,7 +199,23 @@ UK = [(r"anaemi", "anemi"), (r"haem", "hem"), (r"oesophag", "esophag"), (r"leuka
       (r"oestrogen", "estrogen"), (r"ischaemi", "ischemi"), (r"lipidaemi", "lipidemi"), (r"cholesterolaemi", "cholesterolemi"),
       (r"glyceridaemi", "glyceridemi"), (r"uricaemi", "uricemi"), (r"anaesthe", "anesthe"), (r"foetal", "fetal")]
 # 유럽 적응증은 '제2형 당뇨병 치료' 식으로 병명을 바로 쓴다 (FDA 는 'glycemic control') → 유럽에만 덧붙이는 말
-EU_EXTRA = {"당뇨병": ["type 2 diabetes", "type 1 diabetes", "diabetes mellitus"]}
+EU_EXTRA = {"당뇨병": ["type 2 diabetes", "type 1 diabetes", "diabetes mellitus"],
+            "폐암": ["lung carcinoma", "nsclc", "sclc", "non small cell lung", "small cell lung"],
+            "대장암": ["colorectal carcinoma", "carcinoma of the colon", "colon or rectum", "colon cancer", "rectal cancer", "mcrc"],
+            "전립선암": ["prostate carcinoma", "prostate adenocarcinoma", "mcrpc", "mhspc", "castration resistant"],
+            "유방암": ["breast carcinoma"]}
+# 유럽 글에서 빼고 볼 말 (질병별)
+EU_X = {"여드름": ["acne inversa"], "이상지질혈증": ["apolipoprotein"],
+        "비만": ["diet and exercise alone", "diet weight reduction and exercise", "weight reduction and exercise"]}
+# 이런 말이 든 문장은 그 질병 근거로 쓰지 않는다 (합병증·동반 질환 문맥)
+EU_SENT_X = {"당뇨병": ["kidney disease", "renal disease", "nephropathy", "hypoglyc", "atrial fibrillation", "macular",
+                     "retinopathy", "neuropathy", "foot ulcer", "skin ulcer"]}
+# 문장 전체를 빼는 경우: 주의 문장 · '5.1 참고' 안내 · 진단용
+DROP = re.compile(r"^\s*(for (trial|study) results|see section)|should not be (given|used)|not recommended|"
+                  r"has not been established|not been studied", re.I)
+RISK = re.compile(r"(with )?(one or more )?(additional )?risk factors?\b[^.]*", re.I)
+DIAG = re.compile(r"for diagnostic use only|diagnostic agent|radiopharmaceutical|positron emission tomography|\bpet\b imaging|"
+                  r"scintigraph|in vivo diagnosis", re.I)
 
 
 def us_spell(s):
@@ -234,6 +271,7 @@ def main():
             print(f"   {nm}: {Counter(auth[c]).most_common(3)}")
 
     head("B. 성분 짝짓기 — 한국 허가 · 미국 FDA 표")
+    load_u2i()
     name_src = c_inn or c_sub
     auth = auth.assign(_keys=auth[name_src].map(moieties))
     if c_sub and c_inn:
@@ -285,14 +323,16 @@ def main():
         print("적응증 칸 없음")
         return 0
     eu_txt = {}
-    for _, r in auth.iterrows():
+    diag = auth["_ind"].map(lambda t: bool(DIAG.search(t)))
+    print(f"진단용(영상·검사) 제품 {int(diag.sum())}개 — 질병 찾기에서 뺌 · 예 {auth.loc[diag, c_name].head(8).tolist() if c_name else ''}")
+    for _, r in auth[~diag].iterrows():
         if not r["_ind"]:
             continue
         for m in r["_keys"] or ():
             eu_txt.setdefault(m, []).append(r["_ind"])
     # 적응증이 한 덩어리 글이라 문장으로 나눈다 (FDA 쪽과 같은 단위로)
-    eu_sent = {m: [us_spell(s) for t in ts for s in re.split(r"(?<=[.;])\s+(?=[A-Z])|•", t) if len(s) > 3]
-               for m, ts in eu_txt.items()}
+    eu_sent = {m: [RISK.sub(" ", us_spell(s)) for t in ts for s in re.split(r"(?<=[.;])\s+(?=[A-Z])|•", t)
+                   if len(s) > 3 and not DROP.search(s)] for m, ts in eu_txt.items()}
     try:
         b, _, _ = get(RAW + "fda_site/indx.parquet", timeout=120)
         ix = pd.read_parquet(io.BytesIO(b))
@@ -304,7 +344,9 @@ def main():
     print(f"적응증 글 있는 유럽 성분 {len(eu_sent):,} · FDA 문장 있는 성분 {len(fda_txt):,} · 둘 다 {len(both):,}")
     out, tot = [], Counter()
     for k, (terms, _, excl) in ih.TESTS.items():
-        eh = {m: ih.hit(ts, terms + EU_EXTRA.get(k, []), excl) for m, ts in eu_sent.items()}
+        sx = [ih.norm(w) for w in EU_SENT_X.get(k, [])]
+        eh = {m: ih.hit([t for t in ts if not any(w in ih.norm(t) for w in sx)], terms + EU_EXTRA.get(k, []), excl + EU_X.get(k, []))
+              for m, ts in eu_sent.items()}
         eh = {m: s for m, s in eh.items() if s}
         fh = {m: ih.hit(fda_txt[m], terms, excl) for m in both}
         fh = {m: s for m, s in fh.items() if s}
