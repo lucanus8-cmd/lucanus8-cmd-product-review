@@ -350,6 +350,21 @@ def main():
     if os.environ.get("TEN") == "kr":
         kr_probe()
         return 0
+    if os.environ.get("TEN", "").startswith("pat:"):      # 특허 시트 칸 보기 (공개 특허 정보, 읽기만)
+        import gsheet
+        pt = gsheet.read_sheet("1tj75vy8KcJSmz6-rAqmPpLThNt7ZymuQfi12Vbzz1CE")
+        pt.columns = [str(c).split("\n")[0].strip() for c in pt.columns]
+        print(f"특허 시트 {len(pt):,}행 · 칸 {list(pt.columns)}")
+        for c in pt.columns:
+            v = pt[c].astype(str)
+            nz = v[v.str.strip() != ""]
+            print(f"   {c} · 빈칸 아님 {len(nz):,} · 예 {[x[:70] for x in nz.drop_duplicates().head(3)]}")
+        for w in os.environ["TEN"][4:].split(","):
+            h = pt[pt.astype(str).apply(lambda r: w.strip() in " ".join(r.values), axis=1)]
+            print(f"\n[{w}] {len(h)}행")
+            for _, r in h.drop_duplicates([c for c in pt.columns if "PATENT_NO" in c] or None).head(20).iterrows():
+                print("   ", {c: str(r[c])[:90] for c in pt.columns if str(r[c]).strip()})
+        return 0
     if os.environ.get("TEN", "").startswith("seq:"):      # 품목명 → 품목기준코드 (의약품안전나라 상세 화면 열기용)
         import gsheet
         kr = gsheet.read_sheet(APPROVAL_ID)
