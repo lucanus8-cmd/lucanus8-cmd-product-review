@@ -66,14 +66,15 @@ def main():
         t = text(fr)
         ver = next((ln for ln in t.splitlines() if "코드 버전" in ln), "")
         print("상태 화면:", ver or "코드 버전 줄 못 찾음")
-        if "2026-11-19-c" not in t:
-            print("❌ 새 코드(2026-11-19-c)가 아직 안 올라감")
+        if "2026-11-20-a" not in t:
+            print("❌ 새 코드(2026-11-20-a)가 아직 안 올라감")
             ok = False
         btn = fr.get_by_role("button", name="제품 제안")
         btn.first.click()
         time.sleep(8)
         fr = frame(pg)
-        fr.get_by_text("FDA 비교", exact=True).first.click()
+        fr.get_by_text("해외 허가 비교", exact=True).first.click()
+        time.sleep(5)
         if not wait_text(fr, "① 성분으로 찾기", 90):
             print("❌ FDA 비교 보기가 안 뜸")
             print(text(fr)[-600:])
@@ -102,6 +103,23 @@ def main():
         ok &= wait_text(fr, "미국 첫 허가가 최근인 순", 60)
         print("③ 목록:", "✅" if "국내 성분 없음 (" in text(fr) else "❌", "· 오류", errors(fr))
         pg.screenshot(path="fda_live.png")
+        # 유럽 EMA (같은 목차)
+        fr.get_by_text("유럽 EMA", exact=True).first.click()
+        ok &= wait_text(fr, "EMA 중앙 허가 약만", 90)
+        fr.get_by_text("② 적응증으로 찾기").first.click()
+        time.sleep(5)
+        box = fr.get_by_label("적응증 (한글·영문)").first
+        box.fill("다발성경화증")
+        box.press("Enter")
+        ok &= wait_text(fr, "이 적응증 EMA 허가 성분", 60)
+        print("EMA ② 다발성경화증:", "✅" if "EMA 허가 적응증 문장에서" in text(fr) else "❌", "· 오류", errors(fr))
+        fr.get_by_text("④ 철회·거절 목록").first.click()
+        ok &= wait_text(fr, "허가 신청 철회", 60)
+        print("EMA ④ 철회·거절:", "✅" if "최근 날짜 순" in text(fr) else "❌", "· 오류", errors(fr))
+        ok &= errors(fr) == 0
+        pg.screenshot(path="ema_live.png")
+        fr.get_by_text("미국 FDA", exact=True).first.click()
+        time.sleep(5)
         for p_ in ("patent", "search"):
             pg.goto(URL + f"/?page={p_}", wait_until="domcontentloaded", timeout=120_000)
             fr = None

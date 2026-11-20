@@ -188,7 +188,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-19-c"
+BUILD = "2026-11-20-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -3614,12 +3614,25 @@ if PAGE == "sugg":
     a, b, c = st.columns([1, 1, 1.5])
     src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
     unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
-    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "FDA 비교"],
+    if st.session_state.get("sugg_view") == "FDA 비교":       # 예전 이름으로 열려 있던 화면
+        st.session_state["sugg_view"] = "해외 허가 비교"
+    sugg_view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "해외 허가 비교"],
                         horizontal=True, key="sugg_view")
-    if sugg_view == "FDA 비교":
-        # FDA 비교는 로봇이 매일 만든 작은 표만 읽는다(매출 자료 필요 없음)
-        import fda_view
-        fda_view.render()
+    if sugg_view == "해외 허가 비교":
+        # 해외 허가 비교는 로봇이 매일 만든 작은 표만 읽는다(매출 자료 필요 없음) — 기관마다 같은 목차
+        _ag = st.radio("허가 기관", ["미국 FDA", "유럽 EMA"], horizontal=True, key="ovs_agency")
+        if _ag == "유럽 EMA":
+            try:
+                import ema_view
+                ema_view.render()
+            except Exception as _e:      # EMA 화면 문제로 다른 화면이 멈추지 않게
+                if type(_e).__name__ in ("RerunException", "StopException"):
+                    raise
+                st.warning("EMA 비교 화면을 여는 중 문제가 생겼습니다. '미국 FDA' 는 그대로 쓸 수 있습니다.")
+                st.caption(f"({type(_e).__name__}: {str(_e)[:120]})")
+        else:
+            import fda_view
+            fda_view.render()
         ss.release_memory()
         st.stop()
     if sugg_view.startswith("🧬"):

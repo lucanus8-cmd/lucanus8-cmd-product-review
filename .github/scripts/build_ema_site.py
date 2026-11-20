@@ -70,6 +70,9 @@ def main():
         print("FDA 표 못 읽음 (국내 판정은 국내 시트만으로):", str(ex)[:80])
         us_state = {}
 
+    # 국내 시트가 복합 성분을 한 이름으로 쓴 경우 ('Sacubitril Valsartan Sodium Hydrate' → 'sacubitril valsartan')
+    kr_tok = {frozenset(k.split()) for k in kr if " " in k}
+
     def one(m):
         if m in kr or us_state.get(m) in ("국내에도 있음", "일부 제형 없음"):
             return "있음"
@@ -81,7 +84,7 @@ def main():
             return "확인 못 함"
         if len(st) == 1:
             return {"있음": "국내 성분 있음", "취하·만료만": "국내 취하·만료만", "없음": "국내 성분 없음"}[st[0]]
-        if tuple(sorted(keys)) in ce.KR_COMBOS:
+        if tuple(sorted(keys)) in ce.KR_COMBOS or frozenset(" ".join(keys).split()) in kr_tok:
             return "국내 같은 복합제 있음"
         if all(x == "있음" for x in st):
             return "성분은 모두 있음 (복합제 없음)"
