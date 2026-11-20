@@ -181,13 +181,13 @@ def korea_keys():
     kr.columns = [str(c).split("\n")[0].strip() for c in kr.columns]
     st = kr["상태"].astype(str).eq("정상") if "상태" in kr.columns else True
     k = kr[st]
-    eng = k["주성분(영문)"].astype(str)
+    eng = k["주성분(영문)"].astype(str).map(lambda x: re.sub(r"\([^)]*(\)|$)", " ", x))
     split = lambda s: [x for x in re.split(r"/|;|\+|,(?=\s*[A-Za-z\[])", s) if x.strip()]  # noqa: E731
     combos = {tuple(sorted({key(x) for x in split(s)})) for s in eng if s.strip()}
     singles = {m for t in combos for m in t}
     past = set()
     if "상태" in kr.columns:
-        p = kr[~kr["상태"].astype(str).eq("정상")]["주성분(영문)"].astype(str)
+        p = kr[~kr["상태"].astype(str).eq("정상")]["주성분(영문)"].astype(str).map(lambda x: re.sub(r"\([^)]*(\)|$)", " ", x))
         past = {key(x) for s in p for x in split(s)} - singles
     print(f"국내 정상 품목 성분 조합 {len(combos):,} · 단일 성분 {len(singles):,} · 취하·만료로만 있는 성분 {len(past):,}")
     return singles, past
@@ -203,13 +203,16 @@ EU_EXTRA = {"당뇨병": ["type 2 diabetes", "type 1 diabetes", "diabetes mellit
             "폐암": ["lung carcinoma", "nsclc", "sclc", "non small cell lung", "small cell lung"],
             "대장암": ["colorectal carcinoma", "carcinoma of the colon", "colon or rectum", "colon cancer", "rectal cancer", "mcrc"],
             "전립선암": ["prostate carcinoma", "prostate adenocarcinoma", "mcrpc", "mhspc", "castration resistant"],
-            "유방암": ["breast carcinoma"]}
+            "유방암": ["breast carcinoma"],
+            "비만": ["management of weight", "obese patients"], "심부전": ["cardiac failure"],
+            "고혈압": ["blood pressure is not adequately controlled"]}
 # 유럽 글에서 빼고 볼 말 (질병별)
-EU_X = {"여드름": ["acne inversa"], "이상지질혈증": ["apolipoprotein"],
+EU_X = {"여드름": ["acne inversa"], "이상지질혈증": ["apolipoprotein"], "고혈압": ["arterialhypertens"],
         "비만": ["diet and exercise alone", "diet weight reduction and exercise", "weight reduction and exercise"]}
 # 이런 말이 든 문장은 그 질병 근거로 쓰지 않는다 (합병증·동반 질환 문맥)
 EU_SENT_X = {"당뇨병": ["kidney disease", "renal disease", "nephropathy", "hypoglyc", "atrial fibrillation", "macular",
-                     "retinopathy", "neuropathy", "foot ulcer", "skin ulcer"]}
+                     "retinopathy", "neuropathy", "foot ulcer", "skin ulcer", "cardiovascular morbidity", "target organ damage"],
+             "심부전": ["thromboembolism"], "유방암": ["skeletal"]}
 # 문장 전체를 빼는 경우: 주의 문장 · '5.1 참고' 안내 · 진단용
 DROP = re.compile(r"^\s*(for (trial|study) results|see section)|should not be (given|used)|not recommended|"
                   r"has not been established|not been studied", re.I)
@@ -270,7 +273,7 @@ def review10(auth, kr, kr_past, us_state, c):
 
     a["_kind"] = a.apply(kind, axis=1)
     a["_kr"] = a["_keys"].map(kr_state)
-    a["_sent"] = a["_ind"].map(lambda t: [RISK.sub(" ", us_spell(x)) for x in re.split(r"(?<=[.;])\s+(?=[A-Z])|•", t)
+    a["_sent"] = a["_ind"].map(lambda t: [RISK.sub(" ", us_spell(x)) for x in re.split(r"(?<=[.;])\s*(?=[A-Z])|•", t)
                                          if len(x) > 3 and not DROP.search(x)])
     out = []
     for k, mesh in TEN.items():
@@ -402,6 +405,8 @@ def main():
     except Exception as e:
         print("FDA 표 못 읽음", str(e)[:100])
         us_single, us_state = set(), {}
+    flip = sorted(m for m, v in us_state.items() if v == "국내 성분 없음" and "+" not in m and m in kr)
+    print(f"   ⚠ 사이트 FDA 표 '국내 성분 없음' 중 괄호 지우고 보면 국내 있음: {len(flip)}개 · {flip[:80]}")
     eu_single = {m for t in auth["_keys"] for m in t if m}
     print(f"유럽 허가 성분(단일 기준) {len(eu_single):,} · 미국 판매 단일 성분 {len(us_single):,} · 국내 단일 성분 {len(kr):,}")
     in_us, in_kr = eu_single & us_single, eu_single & kr
