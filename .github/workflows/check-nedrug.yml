@@ -208,7 +208,7 @@ jobs:
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
         run: |
           python -m pip install --quiet pandas openpyxl pyarrow google-auth google-api-python-client
-          python .github/scripts/check_ema.py
+          TEN="${{ inputs.words }}" python .github/scripts/check_ema.py
           if [ "${{ inputs.detail }}" = "1" ]; then
             git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             for i in 1 2 3; do

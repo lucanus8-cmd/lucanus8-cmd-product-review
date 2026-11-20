@@ -224,6 +224,98 @@ def us_spell(s):
     return s
 
 
+# ═══════════ 질병 10개 검토 (사이트 '② 적응증으로 찾기' 화면 모양 그대로) ═══════════
+TEN = {   # 질병: EMA 치료 분야(MeSH) 에서 이 말이 든 제품 = 빠진 것 찾기용 대조
+    "당뇨병": ["Diabetes Mellitus"], "비만": ["Obesity"], "고혈압": ["Hypertension"],
+    "심부전": ["Heart Failure"], "천식": ["Asthma"], "아토피피부염": ["Dermatitis, Atopic"],
+    "류마티스관절염": ["Arthritis, Rheumatoid"], "다발성경화증": ["Multiple Sclerosis"],
+    "폐암": ["Lung Neoplasms", "Carcinoma, Non-Small-Cell Lung", "Small Cell Lung Carcinoma"],
+    "유방암": ["Breast Neoplasms"]}
+MESH_X = {"고혈압": ["Pulmonary", "Ocular"]}
+
+
+def review10(auth, kr, kr_past, us_state, c):
+    head("질병 10개 검토 — 화면에 나올 표")
+    diag = auth["_ind"].map(lambda t: bool(DIAG.search(t)))
+    a = auth[~diag].copy()
+
+    def kind(r):
+        if c["atc"] and str(r[c["atc"]]).startswith("J07") or re.search(r"vaccin", str(r[c["name_src"]]), re.I):
+            return "백신"
+        if c["adv"] and str(r[c["adv"]]).lower() == "yes":
+            return "첨단(세포·유전자)"
+        if c["gen"] and str(r[c["gen"]]).lower() == "yes":
+            return "제네릭"
+        if c["bio"] and str(r[c["bio"]]).lower() == "yes":
+            return "바이오시밀러"
+        return "신약"
+
+    def kr_state(keys):
+        st = []
+        for m in keys:
+            u = us_state.get(m, "")
+            if m in kr or u in ("국내에도 있음", "일부 제형 없음"):
+                st.append("있음")
+            elif m in kr_past:
+                st.append("취하·만료만")
+            else:
+                st.append("없음")
+        if not st:
+            return "확인 못 함"
+        if all(x == "있음" for x in st):
+            return "국내 성분 있음"
+        if len(st) > 1 and any(x == "있음" for x in st):
+            return "일부 성분만 있음"
+        return "국내 취하·만료만" if "취하·만료만" in st else "국내 성분 없음"
+
+    a["_kind"] = a.apply(kind, axis=1)
+    a["_kr"] = a["_keys"].map(kr_state)
+    a["_sent"] = a["_ind"].map(lambda t: [RISK.sub(" ", us_spell(x)) for x in re.split(r"(?<=[.;])\s+(?=[A-Z])|•", t)
+                                         if len(x) > 3 and not DROP.search(x)])
+    out = []
+    for k, mesh in TEN.items():
+        terms, _, excl = ih.TESTS[k]
+        sx = [ih.norm(w) for w in EU_SENT_X.get(k, [])]
+        hits = []
+        for _, r in a.iterrows():
+            ev = ih.hit([t for t in r["_sent"] if not any(w in ih.norm(t) for w in sx)], terms + EU_EXTRA.get(k, []),
+                        excl + EU_X.get(k, []))
+            if ev:
+                hits.append((r, ev))
+        # 성분 단위로 묶기 (같은 성분 여러 제품 → 한 줄)
+        by = {}
+        for r, ev in hits:
+            key = " + ".join(r["_keys"]) or r[c["name_src"]]
+            g = by.setdefault(key, {"성분": key, "국내": r["_kr"], "구분": set(), "유럽 제품": [], "첫 허가": "", "희귀": False,
+                                    "근거": ev})
+            g["구분"].add(r["_kind"])
+            g["유럽 제품"].append(r[c["name"]])
+            d = str(r[c["date"]])[:10] if c["date"] else ""
+            if d and (not g["첫 허가"] or d[-4:] + d[3:5] + d[:2] < g["첫 허가"][-4:] + g["첫 허가"][3:5] + g["첫 허가"][:2]):
+                g["첫 허가"] = d
+            g["희귀"] |= bool(c["orph"]) and str(r[c["orph"]]).lower() == "yes"
+        rows = sorted(by.values(), key=lambda g: (g["국내"] != "국내 성분 없음", g["성분"]))
+        miss = []
+        if c["area"]:
+            mm = a[a[c["area"]].map(lambda t: any(m.lower() in str(t).lower() for m in mesh)
+                                     and not any(x.lower() in str(t).lower() for x in MESH_X.get(k, [])))]
+            got = {id(r) for r, _ in hits}
+            hit_names = {r[c["name"]] for r, _ in hits}
+            miss = [(r[c["name"]], " + ".join(r["_keys"]), r["_ind"][:200]) for _, r in mm.iterrows() if r[c["name"]] not in hit_names]
+        n_gap = sum(1 for g in rows if g["국내"] == "국내 성분 없음")
+        print(f"\n■ {k} — 성분 {len(rows)}개 (제품 {len(hits)}개) · 국내 성분 없음 {n_gap}개 · 치료분야(MeSH)엔 있는데 못 찾은 제품 {len(miss)}개")
+        for g in rows:
+            print(f"   {g['국내']:9s} | {g['성분'][:34]:34s} | {'/'.join(sorted(g['구분'])):8s} | {g['첫 허가']} |"
+                  f" {', '.join(dict.fromkeys(g['유럽 제품']))[:40]} | {g['근거'][:130]}")
+            out.append({"질병": k, "성분": g["성분"], "국내 상황": g["국내"], "구분": "/".join(sorted(g["구분"])),
+                        "유럽 첫 허가": g["첫 허가"], "희귀의약품": "예" if g["희귀"] else "",
+                        "유럽 제품": ", ".join(dict.fromkeys(g["유럽 제품"])), "근거 (EMA 허가 적응증)": g["근거"][:600]})
+        for nm, ks, ind in miss[:15]:
+            print(f"   ↳ 못 찾음? {nm[:30]} | {ks[:30]} | {ind[:150]}")
+    pd.DataFrame(out).to_csv(f"{OUT}/ema_disease10.csv", index=False, encoding="utf-8-sig")
+    print(f"\n저장: {OUT}/ema_disease10.csv · {len(out)}줄")
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     head("A. EMA 의약품 자료")
@@ -310,6 +402,11 @@ def main():
                          "바이오시밀러": r[c_bio] if c_bio else "", "희귀": r[c_orph] if c_orph else "",
                          "적응증": r.get("_ind", "")[:600], "주소": r[c_url] if c_url else ""})
     eu = pd.DataFrame(rows)
+    if os.environ.get("TEN"):
+        c_adv = col(df, "advanced_therapy")
+        review10(auth, kr, kr_past, us_state, {"atc": c_atc, "name_src": name_src, "adv": c_adv, "gen": c_gen, "bio": c_bio,
+                                               "name": c_name, "date": c_date, "orph": c_orph, "area": c_area})
+        return 0
     eu.to_csv(f"{OUT}/ema_products.csv", index=False, encoding="utf-8-sig")
     g = eu[(eu["국내"] != "있음")].drop_duplicates("성분")
     if c_gen:
