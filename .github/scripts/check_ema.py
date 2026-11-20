@@ -157,6 +157,7 @@ def load_u2i():
 
 def key(x):
     m = ov.en_moiety(x)
+    m = re.sub(r"\s+l\s+pyroglutamic(\s+acid)?$", "", m)      # 'ertugliflozin l pyroglutamic acid' → 'ertugliflozin'
     return U2I.get(m, m)
 
 
@@ -190,7 +191,12 @@ def korea_keys():
         p = kr[~kr["상태"].astype(str).eq("정상")]["주성분(영문)"].astype(str).map(lambda x: re.sub(r"\([^)]*(\)|$)", " ", x))
         past = {key(x) for s in p for x in split(s)} - singles
     print(f"국내 정상 품목 성분 조합 {len(combos):,} · 단일 성분 {len(singles):,} · 취하·만료로만 있는 성분 {len(past):,}")
+    KR_COMBOS.clear()
+    KR_COMBOS.update(combos)
     return singles, past
+
+
+KR_COMBOS = set()   # 국내 정상 품목의 성분 조합 (복합제 판정용)
 
 
 # 유럽 글은 영국식 철자 → FDA 규칙(미국식)에 맞게 바꿔서 찾는다
