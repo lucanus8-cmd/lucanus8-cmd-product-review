@@ -352,8 +352,19 @@ def main():
         return 0
     if os.environ.get("TEN", "").startswith("pat:"):      # 특허 시트 칸 보기 (공개 특허 정보, 읽기만)
         import gsheet
-        pt = gsheet.read_sheet("1tj75vy8KcJSmz6-rAqmPpLThNt7ZymuQfi12Vbzz1CE")
-        pt.columns = [str(c).split("\n")[0].strip() for c in pt.columns]
+        sid = "1tj75vy8KcJSmz6-rAqmPpLThNt7ZymuQfi12Vbzz1CE"
+        api = gsheet.svc()
+        meta = gsheet._call(api.spreadsheets().get(spreadsheetId=sid, fields="sheets.properties(title,gridProperties)"))
+        tabs = [(t["properties"]["title"], t["properties"].get("gridProperties", {})) for t in meta["sheets"]]
+        print("탭:", [(n, g.get("rowCount"), g.get("columnCount")) for n, g in tabs])
+        pt = pd.DataFrame()
+        for n, g in sorted(tabs, key=lambda x: -x[1].get("rowCount", 0)):
+            vals = gsheet._call(api.spreadsheets().values().get(spreadsheetId=sid, range=f"'{n}'")).get("values", [])
+            if len(vals) > 1:
+                hdr = [str(c).split("\n")[0].strip() for c in vals[0]]
+                pt = pd.DataFrame([(r + [""] * len(hdr))[:len(hdr)] for r in vals[1:]], columns=hdr)
+                print(f"읽은 탭: {n}")
+                break
         print(f"특허 시트 {len(pt):,}행 · 칸 {list(pt.columns)}")
         for c in pt.columns:
             v = pt[c].astype(str)
