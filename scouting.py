@@ -188,7 +188,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-20-b"
+BUILD = "2026-11-21-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -2924,6 +2924,56 @@ def _dmf_keys(cores):
     return [mp.get(str(c or ""), "") for c in cores]
 
 
+def _dmf_atc_filter(t, m, name):
+    """원료사 동향 표에 ATC(매출 자료 기준 — '조건 필터'와 같은 값)를 붙이고, 단계별로 좁히는 칸을 보여 준다.
+    DMF 성분(한글) → 영문 성분키 → 매출 자료의 같은 성분(단일제, 매출 큰 쪽)의 ATC.
+    매출 자료에 없는 성분은 ATC가 비어 있어, ATC를 고르면 빠진다.
+    반환: (좁힌 표, 표에 보여 줄 가장 자세한 ATC 칸 이름 또는 None). 문제가 생기면 표를 그대로 돌려준다."""
+    try:
+        if m is None or m.empty or "_key" not in m.columns or name not in m.columns or t.empty:
+            return t, None
+        lv = [c for c in m.columns if re.match(r"^ATC\s*\d", str(c))]
+        if not lv and "ATC" in m.columns:
+            lv = ["ATC"]
+        if not lv:
+            return t, None
+        mm = m[ss.is_single_series(m[name].astype(str)) & (m["_key"].astype(str).str.len() > 0)]
+        if "시장규모" in mm.columns:
+            mm = mm.sort_values("시장규모", ascending=False)
+        mm = mm.drop_duplicates("_key").set_index("_key")
+        keys = pd.Series(_dmf_keys(t["성분"]), index=t.index).astype(str)
+        for c in lv:
+            t[c] = keys.map(mm[c].astype(str).str.strip()).fillna("").replace({"nan": "", "None": ""})
+        # 표에는 값이 있는 가장 자세한 단계를 보여 준다
+        t["_ATC표시"] = ""
+        for c in lv:
+            t["_ATC표시"] = t[c].where(t[c].astype(str).str.len() > 0, t["_ATC표시"])
+        n_none = int((t[lv[0]].astype(str).str.len() == 0).sum())
+        st.markdown("**ATC 계열로 좁히기** (매출 자료 기준 · 비우면 전체)")
+        cols = st.columns(len(lv))
+        pool, picked = t, False
+        for i, c in enumerate(lv):
+            opts = sorted({str(x).strip() for x in pool[c] if str(x).strip()})
+            mt = re.match(r"^ATC\s*(\d)", str(c))
+            lab = ("ATC " + mt.group(1) + "단계") if (len(lv) > 1 and mt) else "ATC"
+            sel = cols[i].multiselect(lab, opts, default=[], key=f"dmfv_atc_{i}_{abs(hash(tuple(opts))) % 10**8}",
+                                      help="비우면 전체" if i == 0 else "위 단계에서 고른 것 안의 항목만 나옵니다")
+            sel = [x for x in sel if x in opts]
+            if sel:
+                picked = True
+                pool = pool[pool[c].astype(str).str.strip().isin(sel)]
+        if picked:
+            st.caption(f"ATC로 좁힌 성분 {len(pool)}개"
+                       + (f" · 매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개는 빠짐" if n_none else ""))
+        elif n_none:
+            st.caption(f"매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개 — ATC를 고르면 빠집니다")
+        return pool, "_ATC표시"
+    except Exception as e:                      # ATC 문제로 원료사 동향 화면이 멈추지 않게
+        if type(e).__name__ in ("RerunException", "StopException"):
+            raise
+        return t, None
+
+
 def _dmf_view(m, name, unit, yr=()):
     import dmf_trend as _dt
     st.markdown("#### 🧪 원료사 동향 — DMF가 몰리는 성분")
@@ -2952,6 +3002,7 @@ def _dmf_view(m, name, unit, yr=()):
     else:
         t = t_all[(t_all["추가_최근"] >= min_n) & (t_all["추가_증감"] > 0)]
         t = t.sort_values(["추가_증감", "추가_최근"], ascending=False)
+    t, _atc_show = _dmf_atc_filter(t.copy(), m, name)
     t = t.head(80).copy()
 
     # 임상: 성분 이름이 적힌 최근 생동·1상, 코드명 의심
@@ -3003,6 +3054,8 @@ def _dmf_view(m, name, unit, yr=()):
         "성분 확인 생동·1상(24개월)": t["성분생동1상"],
         "코드명 의심": t["코드명의심"],
     })
+    if _atc_show and _atc_show in t.columns:
+        view.insert(1, "ATC", t[_atc_show].astype(str).values)
     _nokey = t["_key"].astype(str).str.len() == 0
 
     def _dstr(c):
