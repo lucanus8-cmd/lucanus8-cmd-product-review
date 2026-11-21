@@ -49,7 +49,9 @@ def build_cache():
     os.makedirs("scout_data", exist_ok=True)
     out = {}
     for name, sid in SHEETS.items():
-        df = read_big(sid)
+        # 특허는 줄이 가장 많은 탭('특허정보'), 허가·임상은 사이트 bootstrap 과 같이 칸이 가장 많은 탭
+        df = read_big(sid) if name == "patent" else gsheet.read_sheet(sid)
+        print(f"   {name}: {len(df):,}행")
         df.astype(str).to_parquet(f"scout_data/{name}.parquet", index=False)
         out[name] = df
     cl = out["clinical"]
@@ -139,6 +141,16 @@ def probe_kr(ap):
             print(f"      {str(d.get('품목명', ''))[:30]} | {d.get('전문/일반', '')} | 영문 '{str(d.get('주성분(영문)', ''))[:50]}' | 한글 '{str(d.get('주성분', ''))[:30]}'")
 
 
+def probe_beta(ap):
+    """베타메타손 디프로피오네이트 단일제가 국내 정상 품목에 있는지 (FDA 표는 '국내 성분 없음')."""
+    eng = ap["주성분(영문)"].astype(str)
+    one = ~eng.str.contains(r"/|\+|;", regex=True)
+    h = ap[one & eng.str.lower().str.contains("betamethasone dipropionate") & ap["상태"].eq("정상")]
+    print(f"\n   [betamethasone dipropionate 단일] 정상 {len(h)}품목")
+    for d in h.head(6).to_dict("records"):
+        print(f"      {str(d.get('품목명', ''))[:34]} | {d.get('전문/일반', '')} | 영문 '{str(d.get('주성분(영문)', ''))[:40]}'")
+
+
 def main():
     if not gsheet.available():
         print("구글 키 없음")
@@ -146,6 +158,7 @@ def main():
     print("시트 읽기 (전체)")
     data = build_cache()
     probe_kr(data["approval"])
+    probe_beta(data["approval"])
     candidates()
     return 0
 
