@@ -1,8 +1,8 @@
 {
- "fetched_at": "2026-11-21 10:18 KST",
+ "fetched_at": "2026-11-22 09:14 KST",
  "source": "https://nedrug.mfds.go.kr/pbp/CCBAC03/getList",
- "rows": 9978,
- "site_total": 9978,
+ "rows": 9975,
+ "site_total": 9977,
  "latest_first_reg": "2026-11-20",
  "by_year": {
   "2021": 984,
@@ -13,10 +13,10 @@
   "2026": 806
  },
  "status": {
-  "정상": 9195,
-  "취하": 773,
+  "정상": 9193,
+  "취하": 772,
   "폐업": 9,
   "취소": 1
  },
- "linked_review": 3752
+ "linked_review": 3751
 }
