@@ -55,6 +55,11 @@ def main():
             mm = re.search(r"_(\d{4})Q([0-4])$", c)
             byyr.setdefault(mm.group(1), []).append("Q" + mm.group(2))
         print(f"   {m}: 분기 칸 {len(q)}개 · 연도별 {dict(sorted(byyr.items()))} · 연간 칸 {[c.split('_')[-1] for c in y]}")
+        last = max(byyr) if byyr else None
+        if last:   # 마지막 해의 분기 칸이 비었는지(합계 0)만 적는다 — 값은 적지 않음
+            empt = {qq: bool(float(pd.to_numeric(df[f"{m}_{last}{qq}"], errors="coerce").fillna(0).sum()) == 0)
+                    for qq in sorted(byyr[last])}
+            print(f"      {last}년 분기별 '비어 있음' 여부: {empt}")
     return 0
 
 
