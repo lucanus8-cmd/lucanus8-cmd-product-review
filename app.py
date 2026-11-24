@@ -150,6 +150,11 @@ def load_ubist(cache_mtime):
     num_cols = [c for c in df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
     return df, num_cols
 
+@st.cache_data(show_spinner=False, max_entries=1)
+def _u_partial_cached(cache_mtime):
+    df, _ = load_ubist(cache_mtime)
+    return u_partial_years(df)
+
 # UBIST 지표 컬럼 선택 (gran: "연간" | "분기별")
 def u_cols(df, metric, gran="연간"):
     if gran == "분기별":
@@ -157,17 +162,54 @@ def u_cols(df, metric, gran="연간"):
     else:
         pat = rf"{re.escape(metric)}.*_(\d{{4}})년$"
     cols = [c for c in df.columns if re.search(pat, c)]
+    if gran == "분기별" and UBIST_PART:      # 덜 찬 해의 빈 분기(아직 자료 없음)는 0으로 그리지 않는다
+        def _has(c):
+            m = re.search(r"_(\d{4})Q([1-4])$", c)
+            return not (m and m.group(1) in UBIST_PART and int(m.group(2)) not in UBIST_PART[m.group(1)])
+        cols = [c for c in cols if _has(c)]
     def _key(c):
         m = re.search(r"_(\d{4})Q([1-4])$", c) or re.search(r"_(\d{4})년$", c)
         return (m.group(1), m.group(2) if "Q" in c else "0")
     return sorted(cols, key=_key)
+
+# 분기가 4개 다 차지 않은 연도(예: 진행 중인 해) → 자료에 있는 분기 번호. UBIST를 읽은 뒤 채운다.
+# 이런 해의 '연간' 값은 일부 분기만 더한 값이라 CAGR·성장률에 그대로 쓰면 안 된다.
+UBIST_PART = {}
+
+def u_partial_years(df, metric="처방조제액(원)"):
+    by = {}
+    for c in df.columns:
+        m = re.match(rf"{re.escape(metric)}_(\d{{4}})Q([1-4])$", c)
+        if m and float(pd.to_numeric(df[c], errors="coerce").fillna(0).sum()) != 0:   # 칸만 있고 빈 분기는 없는 것으로
+            by.setdefault(m.group(1), set()).add(int(m.group(2)))
+    return {y: sorted(q) for y, q in by.items() if len(q) < 4}
+
+def u_qtxt(qs):
+    """[1, 2, 3] → '1~3Q', [1, 3] → '1·3Q'"""
+    if not qs:
+        return ""
+    if qs == list(range(qs[0], qs[-1] + 1)):
+        return f"{qs[0]}~{qs[-1]}Q" if len(qs) > 1 else f"{qs[0]}Q"
+    return "·".join(str(q) for q in qs) + "Q"
+
+def u_full(cols):
+    """연간 칸 중 분기가 다 찬 연도만 (CAGR·성장률용)."""
+    out = []
+    for c in cols:
+        m = re.search(r"(\d{4})년$", c)
+        if m and m.group(1) not in UBIST_PART:
+            out.append(c)
+    return out
 
 def u_period_label(c):
     m = re.search(r"_(\d{4})Q([1-4])$", c)
     if m:
         return f"{m.group(1)} {m.group(2)}Q"
     m = re.search(r"_(\d{4})년$", c)
-    return f"{m.group(1)}년" if m else c
+    if not m:
+        return c
+    y = m.group(1)
+    return f"{y}년({u_qtxt(UBIST_PART[y])})" if y in UBIST_PART else f"{y}년"
 
 # ── CAGR 계산 ────────────────────────────────────────────────────────────────
 
@@ -344,7 +386,7 @@ def build_report(summary, ri, ru):
             L.append(f"· 매출액 추이(백만원): " + ", ".join([f"{y[0][:-1]} {y[1]:,.0f}" for y in yrs]))
             L.append(f"· {first_y[0][:-1]}년 {first_y[1]:,.0f}백만원 → {last_y[0][:-1]}년 {last_y[1]:,.0f}백만원")
         if ri.get("cagr") is not None:
-            L.append(f"· 연평균 성장률(CAGR, ~2025): {ri['cagr']:+.1f}%")
+            L.append(f"· 연평균 성장률(CAGR, ~{ri['yearly'][-1][0][:-1] if ri.get('yearly') else '최근'}): {ri['cagr']:+.1f}%")
         if ri.get("reimb"):
             top_r = ri["reimb"][0]
             L.append(f"· 급여 구성: " + ", ".join([f"{r[0]} {r[2]:.1f}%" for r in ri["reimb"]]))
@@ -367,9 +409,9 @@ def build_report(summary, ri, ru):
         if ru.get("rx_yearly"):
             L.append(f"· 처방조제액 추이(백만원): " + ", ".join([f"{y[0]} {y[1]:,.0f}" for y in ru["rx_yearly"]]))
         if ru.get("cagr_rx") is not None:
-            L.append(f"· 처방조제액 CAGR(~2025): {ru['cagr_rx']:+.1f}%")
+            L.append(f"· 처방조제액 CAGR(~{ru.get('cagr_to') or '최근 완결 연도'}): {ru['cagr_rx']:+.1f}%")
         if ru.get("cagr_cnt") is not None:
-            L.append(f"· 처방건수 CAGR(~2025): {ru['cagr_cnt']:+.1f}%")
+            L.append(f"· 처방건수 CAGR(~{ru.get('cagr_to') or '최근 완결 연도'}): {ru['cagr_cnt']:+.1f}%")
         L.append("")
 
     # 요약 코멘트
@@ -600,6 +642,7 @@ if UBIST_SAVED.exists() or UBIST_CACHE.exists():
         with st.spinner("UBIST 캐시 생성 중… (최초 1회)"):
             build_cache("ubist")
     ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
+    UBIST_PART.update(_u_partial_cached(UBIST_CACHE.stat().st_mtime))
 
 # UBIST의 ATC 열 이름은 자료 판마다 다를 수 있어(ATC / ATC코드 등) 실제 열에서 찾는다
 UBIST_ATC_COL = next((c for c in (ubist_df.columns if ubist_df is not None else [])
@@ -760,7 +803,7 @@ with tabs[0]:
                     st.metric(
                         f"📈 매출액 CAGR ({valid_yrs[0][:-1]}→{valid_yrs[-1][:-1]})",
                         f"{cagr:+.1f}%",
-                        help="첫 매출 발생 연도부터 마지막 연도(2025년)까지 연평균 성장률. 진행 중인 2026년은 제외."
+                        help=f"첫 매출 발생 연도부터 마지막 연도({valid_yrs[-1]})까지 연평균 성장률."
                     )
 
             # ── 처방량 (DU) ────────────────────────────────────────────────
@@ -970,45 +1013,56 @@ with tabs[0]:
                 export_blocks.append({"name": "UBIST_처방조제액", "df": rx_table,
                                       "chart": "bar", "cat": plabel, "val": "처방조제액(백만원)",
                                       "title": f"[UBIST] {ugran} 처방조제액 (백만원)"})
-                # CAGR
-                cagr_rx = calc_cagr(prod_u[rx_cols_25].sum().values,
-                                    [re.search(r"\d{4}", c).group(0) + "년" for c in rx_cols_25])
-                cagr_cnt = calc_cagr(prod_u[cnt_cols_25].sum().values,
-                                     [re.search(r"\d{4}", c).group(0) + "년" for c in cnt_cols_25]) if cnt_cols_25 else None
+                # CAGR — 분기가 다 찬 연도만 (진행 중인 해는 일부 분기 합이라 뺀다)
+                rx_full, cnt_full = u_full(rx_cols_25), u_full(cnt_cols_25)
+                cagr_rx = calc_cagr(prod_u[rx_full].sum().values,
+                                    [re.search(r"\d{4}", c).group(0) + "년" for c in rx_full]) if rx_full else None
+                cagr_cnt = calc_cagr(prod_u[cnt_full].sum().values,
+                                     [re.search(r"\d{4}", c).group(0) + "년" for c in cnt_full]) if cnt_full else None
                 report_ubist["n"] = len(prod_u)
                 report_ubist["rx_yearly"] = list(zip(rx_table[plabel], rx_table["처방조제액(백만원)"]))
                 report_ubist["cagr_rx"] = cagr_rx
                 report_ubist["cagr_cnt"] = cagr_cnt
+                _u_last = re.search(r"\d{4}", rx_full[-1]).group(0) if rx_full else ""
+                report_ubist["cagr_to"] = _u_last
+                _u_ex = (" 분기가 덜 찬 " + ", ".join(f"{y}년({u_qtxt(q)})" for y, q in sorted(UBIST_PART.items()))
+                         + "은 제외.") if UBIST_PART else ""
                 m1, m2 = st.columns(2)
                 with m1:
                     if cagr_rx is not None:
-                        st.metric("📈 처방조제액 CAGR (~2025)", f"{cagr_rx:+.1f}%",
-                                  help="첫 발생 연도~2025년 연평균 성장률. 진행 중인 2026년 제외.")
+                        st.metric(f"📈 처방조제액 CAGR (~{_u_last})", f"{cagr_rx:+.1f}%",
+                                  help=f"첫 발생 연도~{_u_last}년 연평균 성장률.{_u_ex}")
                 with m2:
                     if cagr_cnt is not None:
-                        st.metric("📈 처방건수 CAGR (~2025)", f"{cagr_cnt:+.1f}%",
-                                  help="첫 발생 연도~2025년 연평균 성장률. 진행 중인 2026년 제외.")
+                        st.metric(f"📈 처방건수 CAGR (~{_u_last})", f"{cagr_cnt:+.1f}%",
+                                  help=f"첫 발생 연도~{_u_last}년 연평균 성장률.{_u_ex}")
 
             # 제품별 처방 표 (붙여넣기용) — 항상 연간 기준
             if rx_cols_25:
-                st.markdown("**📋 제품별 연도별 처방조제액 (단위: 백만원, CAGR ~2025)**")
+                rx_full_t = u_full(rx_cols_25)
+                _t_last = re.search(r"\d{4}", rx_full_t[-1]).group(0) if rx_full_t else ""
+                st.markdown(f"**📋 제품별 연도별 처방조제액 (단위: 백만원, CAGR ~{_t_last})**")
                 ugrp_cols = [c for c in ["제품명", "제조사명", "성분", "ATC", "급여구분"] if c in prod_u.columns]
                 pu = prod_u.groupby(ugrp_cols)[rx_cols_25].sum().reset_index()
-                pu["CAGR(%)"] = pu[rx_cols_25].apply(
-                    lambda r: calc_cagr(r.values, [re.search(r"\d{4}", c).group(0) + "년" for c in rx_cols_25]),
+                pu["CAGR(%)"] = pu[rx_full_t].apply(
+                    lambda r: calc_cagr(r.values, [re.search(r"\d{4}", c).group(0) + "년" for c in rx_full_t]),
                     axis=1
-                )
-                pu = pu.sort_values(rx_cols_25[-1], ascending=False)
+                ) if rx_full_t else None
+                pu = pu.sort_values((rx_full_t or rx_cols_25)[-1], ascending=False)
                 dispu = pu.copy()
+                _ren = {}
                 for c in rx_cols_25:
                     yr = re.search(r"\d{4}", c).group(0)
                     dispu[c] = (dispu[c] / 1e6).round(0).astype("int64")
-                    dispu = dispu.rename(columns={c: f"{yr}(백만원)"})
-                fmtu = {f"{re.search(r'[0-9]{4}', c).group(0)}(백만원)": "{:,}" for c in rx_cols_25}
+                    _ren[c] = f"{yr} {u_qtxt(UBIST_PART[yr])}(백만원)" if yr in UBIST_PART else f"{yr}(백만원)"
+                dispu = dispu.rename(columns=_ren)
+                fmtu = {v: "{:,}" for v in _ren.values()}
                 fmtu["CAGR(%)"] = "{:+.1f}"
                 st.dataframe(dispu.style.format(fmtu, na_rep="-"),
                              use_container_width=True, hide_index=True)
-                st.caption("CAGR은 2026년(진행 중) 제외, 2025년까지 기준. 표 드래그 선택 후 Ctrl+C로 복사 가능")
+                _t_ex = ("분기가 덜 찬 " + ", ".join(f"{y}년({u_qtxt(q)})" for y, q in sorted(UBIST_PART.items()))
+                         + "은 CAGR에서 제외, ") if UBIST_PART else ""
+                st.caption(f"CAGR은 {_t_ex}{_t_last}년까지 기준. 표 드래그 선택 후 Ctrl+C로 복사 가능")
                 export_blocks.append({"name": "UBIST_제품별처방", "df": dispu,
                                       "chart": None, "title": "[UBIST] 제품별 연도별 처방조제액 (백만원)"})
 
@@ -1154,6 +1208,8 @@ with tabs[1]:
             selected_atc = st.selectbox("ATC 선택", atc_list)
         with col_period:
             def _period_label(c):
+                if "처방조제액" in c:                 # UBIST: 분기가 덜 찬 해는 '2026년(1~3Q)'처럼
+                    return u_period_label(c)
                 m = re.search(r"(\d{4})", c)
                 return (m.group(1) + "년") if m else c
             if period_cols:
@@ -1347,7 +1403,10 @@ with tabs[2]:
             if i_prod.empty and u_prod.empty:
                 st.warning("양쪽 데이터 모두 검색 결과 없음")
             else:
-                common_years = ["2021", "2022", "2023", "2024", "2025"]
+                # 두 자료에 모두 있는 해만 비교 (예: IQVIA 2025년까지 · UBIST 2026년까지 → 2025년까지)
+                _yi = {m.group(1) for c in (lc_yr or []) for m in [re.match(r"(\d{4})년$", c)] if m}
+                _yu = {m.group(1) for c in (ubist_num_cols or []) for m in [re.match(r"처방조제액\(원\)_(\d{4})년$", c)] if m}
+                common_years = sorted(_yi & _yu) or ["2021", "2022", "2023", "2024", "2025"]
 
                 rows, vrows = [], []
                 for yr in common_years:
@@ -1523,14 +1582,31 @@ with tabs[3]:
                 c0, c1, c2 = st.columns(3)
                 with c0:
                     gu_unit = st.selectbox("분석 단위", ["제품별", "성분별"], key="grow_u_unit")
+                _full_y = [y for y in yr_labels if y not in UBIST_PART]
+                _ylab = lambda y: f"{y} ({u_qtxt(UBIST_PART[y])}만)" if y in UBIST_PART else y  # noqa: E731
                 with c1:
-                    base_idx = st.selectbox("기준 연도", yr_labels[:-1], index=len(yr_labels)-2)
+                    _b_def = yr_labels.index(_full_y[-2]) if len(_full_y) >= 2 else len(yr_labels) - 2
+                    base_idx = st.selectbox("기준 연도", yr_labels[:-1], index=_b_def, format_func=_ylab)
                 with c2:
                     comp_choices = [y for y in yr_labels if y > base_idx]
-                    comp_idx = st.selectbox("비교 연도", comp_choices)
+                    comp_idx = st.selectbox("비교 연도", comp_choices, format_func=_ylab)
 
                 base_col = f"처방조제액(원)_{base_idx}년"
                 comp_col = f"처방조제액(원)_{comp_idx}년"
+                # 덜 찬 해가 끼면 1년치와 몇 분기치를 비교하게 되므로, 그 해에 있는 분기끼리만 비교한다
+                _qs = UBIST_PART.get(comp_idx) or UBIST_PART.get(base_idx)
+                _qtag = ""
+                if _qs:
+                    _bq = [f"처방조제액(원)_{base_idx}Q{q}" for q in _qs]
+                    _cq = [f"처방조제액(원)_{comp_idx}Q{q}" for q in _qs]
+                    if all(c in src_u.columns for c in _bq + _cq):
+                        _qtag = " " + u_qtxt(_qs)
+                        base_col, comp_col = f"_b{_qtag}", f"_c{_qtag}"
+                        src_u = src_u.assign(**{base_col: src_u[_bq].sum(axis=1), comp_col: src_u[_cq].sum(axis=1)})
+                        st.caption(f"{comp_idx if comp_idx in UBIST_PART else base_idx}년은 {u_qtxt(_qs)}까지만 있어, "
+                                   f"두 해 모두 같은 분기({u_qtxt(_qs)})끼리 비교합니다.")
+                    else:
+                        st.warning("분기가 덜 찬 해인데 같은 분기 자료가 없어 연간 합으로 비교합니다 — 해석에 주의하세요.")
                 min_base_u = st.number_input("최소 기준연도 처방조제액 (백만원)", value=50.0, step=10.0)
 
                 if gu_unit == "성분별":
@@ -1547,8 +1623,8 @@ with tabs[3]:
                 grp_u[comp_col] = (grp_u[comp_col] / 1e6).round(0)
                 grp_u["YoY 성장률(%)"] = grp_u["YoY 성장률(%)"].round(1)
                 grp_u = grp_u.sort_values("YoY 성장률(%)", ascending=False)
-                grp_u = grp_u.rename(columns={base_col: f"{base_idx}(백만원)", comp_col: f"{comp_idx}(백만원)"})
-                bcol_u, ccol_u = f"{base_idx}(백만원)", f"{comp_idx}(백만원)"
+                grp_u = grp_u.rename(columns={base_col: f"{base_idx}{_qtag}(백만원)", comp_col: f"{comp_idx}{_qtag}(백만원)"})
+                bcol_u, ccol_u = f"{base_idx}{_qtag}(백만원)", f"{comp_idx}{_qtag}(백만원)"
 
                 top_tab_u, bot_tab_u = st.tabs([f"📈 고성장 {gu_unit} Top 20", f"📉 하락 {gu_unit} Bottom 20"])
                 with top_tab_u:
