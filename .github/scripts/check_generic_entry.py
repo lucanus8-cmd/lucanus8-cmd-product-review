@@ -50,6 +50,17 @@ def main():
     fc = gy.groupby("제품코드")["적용일자"].min()
     print("품목별 첫 급여일 중 자료 시작일과 같은 것:", int((fc == d0).sum()), "/", len(fc),
           "· 첫 급여일 분포(연):", fc.dt.year.value_counts().sort_index().to_dict())
+    print("첫 급여일이 몰린 날 (상위 10):", {str(k.date()): int(v) for k, v in fc.value_counts().head(10).items()})
+    # 몰린 날에 처음 나온 품목이 그 전에 다른 코드로 있었는지: 같은 제품명이 더 이른 날짜에 있는지
+    nm_first = gy.groupby("제품명")["적용일자"].min()
+    code_nm = gy.drop_duplicates("제품코드").set_index("제품코드")["제품명"]
+    for day in list(fc.value_counts().head(4).index):
+        codes = fc[fc == day].index
+        nms = code_nm.reindex(codes)
+        earlier = int((nm_first.reindex(nms.values).values < day).sum())
+        print(f"   {day.date()}: 처음 나온 품목 {len(codes):,}개 중 같은 제품명이 더 일찍 있던 것 {earlier:,}개")
+    if "성분수" in gy.columns:
+        print("성분수 값:", gy["성분수"].astype(str).value_counts().head(5).to_dict())
 
     words = [w.strip() for w in (os.environ.get("WORDS") or DEFAULT).split(",") if w.strip()]
     rows = []
@@ -59,13 +70,13 @@ def main():
         origs = ss.original_products(keys) if keys else []
         pref = {re.split(r"[0-9]", re.sub(r"\s", "", o))[0] for o in origs}
         pref = {p for p in pref if len(p) >= 2}
-        same = gy[gy["_core"] == core]
-        if pref:
-            is_o = same["제품명"].astype(str).apply(lambda n: any(re.sub(r"\s", "", n).startswith(p) for p in pref))
-        else:
-            is_o = pd.Series(False, index=same.index)
+        single = gy["성분수"].astype(str).isin(["1", "1.0"]) if "성분수" in gy.columns else True
+        same = gy[(gy["_key"].isin(keys) | (gy["_core"] == core)) & single]
+        nms = same["제품명"].astype(str).tolist()
+        is_o = pd.Series([any(re.sub(r"\s", "", n).startswith(p) for p in pref) for n in nms],
+                         index=same.index, dtype=bool)
         o, g = same[is_o], same[~is_o]
-        r = {"성분": term, "오리지널 이름": ",".join(sorted(pref))[:24] or "(못 찾음)",
+        r = {"성분": term, "키": ",".join(sorted(keys))[:20], "오리지널 이름": ",".join(sorted(pref))[:24] or "(못 찾음)",
              "오리지널 품목": o["제품코드"].nunique(), "제네릭 품목": g["제품코드"].nunique()}
         if not o.empty:
             r["오리지널 첫 급여"] = o["적용일자"].min().date()
@@ -115,7 +126,9 @@ def main():
     # 한 성분 자세히: 첫 등재 앞뒤 품목
     for term in words[:3]:
         core = ss.ing_core(term)
-        same = gy[gy["_core"] == core]
+        keys = ss.resolve_keys(term) | ss.resolve_keys(core)
+        single = gy["성분수"].astype(str).isin(["1", "1.0"]) if "성분수" in gy.columns else True
+        same = gy[(gy["_key"].isin(keys) | (gy["_core"] == core)) & single]
         first = same.groupby(["제품코드", "제품명"])["적용일자"].min().sort_values().reset_index()
         print(f"\n[{term}] 품목별 첫 급여일 (앞 12개)")
         print(first.head(12).to_string(index=False))
