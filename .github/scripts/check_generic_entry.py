@@ -99,7 +99,7 @@ def main():
             r["오리지널 첫급여"] = o["적용일자"].min().date()
         first = g.groupby("제품명")["적용일자"].min()
         r["제네릭"] = len(first)
-        unk = first[first.isin(bulk) | (first <= last_bulk)]
+        unk = first[first.isin(bulk) | (first <= pr["적용일자"].min())]
         known = first[~first.index.isin(unk.index)]
         r["날짜모름(묶음)"] = len(unk)
         if not known.empty:
@@ -122,7 +122,7 @@ def main():
         if "제제코드" in g.columns and not o.empty:
             oc = set(o["제제코드"].astype(str)) - {"", "nan"}
             f2 = g[g["제제코드"].astype(str).isin(oc)].groupby("제품명")["적용일자"].min()
-            f2k = f2[~(f2.isin(bulk) | (f2 <= last_bulk))]
+            f2k = f2[~f2.isin(bulk)]
             r["동일제제 첫등재"] = f2k.min().date() if not f2k.empty else ("묶음 전" if len(f2) else "-")
         rows.append(r)
         detail[term] = (o.groupby("제품명")["적용일자"].min().sort_values().head(4),
