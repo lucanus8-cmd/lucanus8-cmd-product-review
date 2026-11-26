@@ -9,11 +9,18 @@ import re
 import pandas as pd
 
 _UNIT = r"(?:MCG|MG|UG|µG|G|ML|IU|%)"
-# 숫자+단위 뒤에 '/숫자(+단위)'가 하나 이상 이어지는 덩어리 (예: 40MG/10, 1G/200MG, 10MG/5MG/12.5MG)
+# 숫자+단위 뒤에 '/숫자(+단위)'가 하나 이상 이어지는 덩어리
+# 예: 40MG/10 · 1G/200MG · 10MG/5MG/12.5MG · 50MG/500. (뒤 점) · 10MG/.5G (앞 점)
+_NUM = r"(?:\d+(?:\.\d*)?|\.\d+)"
 _PACK_DOSE = re.compile(
-    rf"(?<![\d.])(\d+(?:\.\d+)?)\s*({_UNIT})((?:\s*/\s*\d+(?:\.\d+)?\s*{_UNIT}?)+)(?![\d.])",
+    rf"(?<![\d.])(\d+(?:\.\d+)?)\s*({_UNIT})((?:\s*/\s*{_NUM}\s*{_UNIT}?)+)(?![\d])",
     re.IGNORECASE)
-_PART = re.compile(rf"(\d+(?:\.\d+)?)\s*({_UNIT})?", re.IGNORECASE)
+_PART = re.compile(rf"({_NUM})\s*({_UNIT})?", re.IGNORECASE)
+
+
+def _fmt(n):
+    """'10.' → '10', '.5' → '0.5', '12.50' → '12.5'"""
+    return ("%.4f" % float(n)).rstrip("0").rstrip(".")
 
 
 def _norm(s):
@@ -21,7 +28,7 @@ def _norm(s):
 
 
 def pack_dose(pack, dose):
-    """팩명에서 복합 용량을 읽어 '40MG/10MG' 꼴로 돌려준다. 못 읽거나 '용량' 칸과 안 맞으면 None."""
+    """팩명에서 복합 용량을 읽어 '40MG/10' 꼴로 돌려준다. 못 읽거나 '용량' 칸과 안 맞으면 None."""
     if not isinstance(pack, str) or "/" not in pack:
         return None
     m = _PACK_DOSE.search(pack.upper())
@@ -36,10 +43,10 @@ def pack_dose(pack, dose):
         return None
     parts = [first]
     for num, unit in _PART.findall(m.group(3)):
-        unit = (unit or first_unit).upper()
+        unit = unit.upper()
         if unit == "ML" or first_unit == "ML":   # 5MG/5ML 같은 농도 표기는 복합제가 아니므로 건드리지 않는다
             return None
-        parts.append(f"{num}{unit}")
+        parts.append(f"{_fmt(num)}{unit}")      # 팩명에 단위가 없으면 지어내지 않는다 (40MG/10)
     return "/".join(parts)
 
 
@@ -62,7 +69,7 @@ def fix_iqvia_dose(df):
     return df, n
 
 
-_NUMS = re.compile(r"\d+(?:\.\d+)?")
+_NUMS = re.compile(r"\d+(?:\.\d+)?|\.\d+")
 
 
 def dose_key(s):
