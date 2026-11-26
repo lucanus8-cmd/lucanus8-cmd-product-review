@@ -23,8 +23,8 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, ".github", "scripts"))
 import gsheet  # noqa: E402
 
-DEFAULT = ("펠루비프로펜,펙소페나딘,로수바스타틴,아토르바스타틴,에제티미브,텔미사르탄,올메사르탄,"
-           "시타글립틴,리나글립틴,다파글리플로진,엠파글리플로진,리바록사반,아픽사반,에독사반,티카그렐러,"
+DEFAULT = ("다파글리플로진,올메사르탄,펠루비프로펜,펙소페나딘,로수바스타틴,아토르바스타틴,에제티미브,텔미사르탄,올메사르탄,"
+           "시타글립틴,리나글립틴,엠파글리플로진,리바록사반,아픽사반,에독사반,티카그렐러,"
            "에스오메프라졸,셀레콕시브,세레콕시브,프레가발린,솔리페나신,미라베그론,토파시티닙,두타스테리드,타다라필,레바미피드")
 
 
@@ -80,8 +80,10 @@ def main():
     rows, detail = [], {}
     for term in words:
         core = ss.ing_core(term)
-        a = ap_single[ap_single["_core"] == core]
-        keys = set(a["_key"].astype(str)) - {""}
+        a0 = ap_single[(ap_single["_core"] == core) | ap_single["_core"].astype(str).str.startswith(core)]
+        keys = set(a0["_key"].astype(str)) - {""}
+        # 오리지널은 같은 영문키의 단일제 전체에서 고른다 (한글 염 표기가 달라도: 포시가=다파글리플로진프로판디올)
+        a = ap_single[ap_single["_key"].isin(keys)]
         r = {"성분": term, "키": ",".join(sorted(keys))[:16] or "(허가에 없음)"}
         if a.empty or not keys:
             rows.append(r); continue
@@ -102,6 +104,9 @@ def main():
         unk = first[first.isin(bulk) | (first <= pr["적용일자"].min())]
         known = first[~first.index.isin(unk.index)]
         r["날짜모름(묶음)"] = len(unk)
+        early = first[first <= pd.Timestamp("2010-02-01")]
+        r["판정"] = (f"2010.02 전부터 제네릭 {len(early)}개" if len(early) else
+                    ("제네릭 없음" if first.empty else "첫 등재 찾음"))
         if not known.empty:
             fd = known.min()
             who = known.idxmin()
@@ -115,7 +120,7 @@ def main():
                     og = og.sort_values("적용일자")
                     p, t = og["금액"].values, og["적용일자"].values
                     for i in range(1, len(og)):
-                        if p[i] < p[i - 1] and pd.Timestamp(t[i]) >= fd - pd.Timedelta(days=31):
+                        if p[i] < p[i - 1] * 0.97 and pd.Timestamp(t[i]) >= fd - pd.Timedelta(days=31):
                             cuts.append((pd.Timestamp(t[i]), (p[i] - p[i - 1]) / p[i - 1] * 100)); break
                 if cuts:
                     c = min(cuts); r["그뒤 오리지널 인하"] = f"{c[0].date()} {c[1]:+.0f}%"
@@ -130,7 +135,7 @@ def main():
     out = pd.DataFrame(rows)
     print()
     print(out.to_string(index=False))
-    for term in ["펠루비프로펜", "로수바스타틴", "아토르바스타틴", "프레가발린", "토파시티닙", "에스오메프라졸"]:
+    for term in ["다파글리플로진", "올메사르탄", "세레콕시브", "펙소페나딘"]:
         if term in detail:
             o1, g1 = detail[term]
             print(f"\n[{term}] 오리지널 쪽 품목(첫 급여일): " + " / ".join(f"{k[:24]} {v.date()}" for k, v in o1.items()))
