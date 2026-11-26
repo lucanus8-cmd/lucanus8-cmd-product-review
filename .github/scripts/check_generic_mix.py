@@ -63,8 +63,10 @@ def main():
         return frozenset(k for k in (ss.ing_key(p) for p in parts) if k)
 
     pr["_set"] = pr["주성분명"].map(lambda s: kset(s, r"[,/+]"))
-    code = pr["주성분코드"].map(lambda x: x if isinstance(x, str) else "")
-    pr["_cd"] = code
+    code = pr["주성분코드"].map(lambda x: x.strip().upper() if isinstance(x, str) else "")
+    alt = pr["제제코드"].map(lambda x: x.strip().upper() if isinstance(x, str) else "")
+    pr["_cd"] = code.where(code.str.len() > 0, alt)          # 최신 고시 행은 제제코드만 있을 수 있다
+    print(f"코드 빈 행 {int((pr['_cd'].str.len() == 0).sum()):,} · 성분명 빈 행 {int((pr['주성분명'].astype(str).str.strip().isin(['', 'nan'])).sum()):,}")
     has = pr["_set"].map(len) > 0
     cmap = pr[has].groupby("_cd")["_set"].agg(lambda x: x.value_counts().index[0])
     pr.loc[~has, "_set"] = pr.loc[~has, "_cd"].map(cmap)
@@ -74,6 +76,20 @@ def main():
     bulk = set(vc[vc >= 3000].index)
     ap["_eset"] = ap["주성분(영문)"].map(lambda s: kset(s, r"[/,+|;\n]|및"))
     ap1 = ap[ap["_eset"].map(len) == 1]
+    # 영문 성분명이 빈 허가(오래된 품목)는 한글 성분을 영문키로 바꿔 채운다
+    k2 = {}
+    for c, k in zip(ap1["_core"].astype(str), ap1["_key"].astype(str)):
+        if c and k:
+            k2.setdefault(c, {}).setdefault(k, 0); k2[c][k] += 1
+    k2 = {c: max(v, key=v.get) for c, v in k2.items()}
+
+    def kor_eset(s):
+        parts = [p for p in re.split(r"[|/,+]|및", str(s or "")) if p.strip()]
+        ks = {k2.get(ss.ing_core(p), "") for p in parts}
+        return frozenset(k for k in ks if k) if all(ks) else frozenset()
+    blank = ap["_eset"].map(len) == 0
+    ap.loc[blank, "_eset"] = ap.loc[blank, "주성분"].map(kor_eset)
+    print(f"영문 성분 빈 허가 {int(blank.sum()):,}건 → 한글로 채움 {int((ap.loc[blank, '_eset'].map(len) > 0).sum()):,}건")
 
     def kor2key(w):
         c = ss.ing_core(w)
@@ -103,7 +119,10 @@ def main():
         oth = same[~is_br & ~same["업체명"].map(co).isin(ocos)]
         f = oth.groupby("제품명").agg(d=("적용일자", "min"), c=("_cd", "first"))
         r["오리지널 첫급여"] = str(orig["적용일자"].min().date())[:7]
-        for tag, sub in (("◆동일제제", f[f["c"].isin(codes)]), ("◇염변경등", f[~f["c"].isin(codes)])):
+        # 단일제는 코드 앞 4자리(염까지 같은 성분)가 같으면 함량이 달라도 ◆. 복합제는 함량 조합마다 앞 4자리가 달라 코드 전체로.
+        same_ing = f["c"].isin(codes) | (f["c"].str[:4].isin({c[:4] for c in codes}) if len(eset) == 1 else False)
+        r["오리지널 코드"] = ",".join(sorted({c[:4] for c in codes}))[:20]
+        for tag, sub in (("◆같은성분코드", f[same_ing]), ("◇염변경등", f[~same_ing])):
             k = sub[~sub["d"].isin(bulk)]
             pre = int((sub["d"] <= pd.Timestamp("2010-02-01")).sum())
             if sub.empty:
