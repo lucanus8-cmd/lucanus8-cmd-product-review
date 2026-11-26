@@ -188,7 +188,7 @@ def msel(container, label, series, key, default=None):
 TABLE_CAP = 500
 
 # 배포된 코드가 어느 것인지 눈으로 확인하려고 둔다. 올릴 때마다 올린다.
-BUILD = "2026-11-24-a"
+BUILD = "2026-11-26-a"
 
 def show_df(df, height=360, cap=TABLE_CAP, key=None, file_name="결과.csv", container=None):
     """큰 표를 상위 cap건만 그리고, 넘치면 전체 CSV 내려받기 버튼을 함께 보여준다."""
@@ -523,8 +523,9 @@ CALC_RATE = {"salt": .90, "salt_adj": 1.00, "dose": 1.00, "dose_adj": 1.10,
              "gen_base": .45, "gen_innov": .60, "gen_semi": .50,
              "combo_base": .45, "combo_imp": .60, "combo_innov": .68}
 # ── 2026.8 개정고시 ─────────────────────────────────────────────────────
-# 기준요건(DMF·자체생동) 충족 수에 따른 산정률. 0개는 산술로 28.8% 지만 고시 표기대로 29%.
-REQ_RATE = {2: .45, 1: .36, 0: .29}
+# 기준요건(DMF·자체생동) 충족 수에 따른 산정률. 미충족 1개마다 20%씩 내린다
+# (1개 = 45% × 0.8 = 36% · 0개 = 45% × 0.8 × 0.8 = 28.8%).
+REQ_RATE = {2: .45, 1: .36, 0: .288}
 STEP_RATE = .29          # 계단식은 기준요건과 무관하게 29% 기준
 AFTER_CUT = .85          # 다품목 1년 후 · 계단식 모두 85%
 AFTER_ADDON = .45        # 가산이 끝나면 요건률이 아니라 45% 로 유지된다
@@ -535,10 +536,51 @@ STEP_PRIOR = 13          # 기등재가 이 수 이상이면 계단식 약가인
 DOSE_A = .45
 DOSE_A_SPECIAL = .70
 
-# ① 단일제 자료제출의 세 갈래. 70% 가산은 가운데(동시 조정)에만 붙는다.
+# ① 단일제 자료제출의 세 갈래 (오리지널의 조정 상태).
 OSTATE = ["조정 전 — 이번 등재로도 오리지널 조정이 일어나지 않음",
-          "동시 조정 — 이번 등재와 함께 오리지널이 조정됨 (70% 가산)",
+          "동시 조정 — 이번 등재와 함께 오리지널이 조정됨",
           "이미 조정됨 — 오리지널이 전에 조정을 마친 상태"]
+
+# ── ① 자료제출 산정 (2026.8 개정 · 펙소페나딘 구강붕해정 표로 검산) ──────────
+ADJ_RATIO = .45       # 현행 조정 비율: 조정된 금액 = 조정 전 기준가(P) × 45%
+REQ_CUT = .80         # 기준요건(DMF·자체생동) 미충족 1개마다 20% 인하
+OLD_RATIO = .5355     # 재평가 시행 전 기존 품목의 비율 (이미 조정됨: 상한가 ÷ 이 값 = P)
+# 기존 품목 재평가 — 상한가를 나누는 비율. [(적용 시작 (연, 월)), 비율] · 그 전은 53.55%.
+# ※ 2027년 4월부터 적용 (1차 2027.4~ · 2차 2030.10~). 47·49% 구간은 특례.
+REEVAL = {
+    "1차": {"일반": [((2027, 4), .51), ((2028, 4), .49), ((2029, 4), .47), ((2030, 4), .45)],
+            "준혁신형": [((2027, 4), .51), ((2028, 4), .49), ((2029, 4), .47), ((2033, 4), .45)],
+            "혁신형": [((2027, 4), .51), ((2028, 4), .49), ((2033, 4), .45)]},
+    "2차": {"일반": [((2030, 10), .51), ((2031, 10), .49), ((2032, 10), .47), ((2033, 10), .45)],
+            "준혁신형": [((2030, 10), .51), ((2031, 10), .49), ((2032, 10), .47), ((2036, 10), .45)],
+            "혁신형": [((2030, 10), .51), ((2031, 10), .49), ((2036, 10), .45)]},
+}
+
+
+def reeval_ratio(cha, co, when):
+    """상한가를 나누는 비율. when 은 상한가의 시점(날짜). 차수 시행 전이면 53.55%."""
+    r = OLD_RATIO
+    try:
+        ym = (int(when.year), int(when.month))
+    except Exception:
+        return r
+    for start, v in REEVAL.get(cha, {}).get(co, []):
+        if ym >= start:
+            r = v
+    return r
+
+
+def low_cap(prev, new, cheap):
+    """조정(인하) 때 저가의약품 기준금액 아래로 내려가지 않는다.
+    조정 전 금액이 이미 기준금액 이하였으면 인하 없이 그 값을 유지한다."""
+    if not cheap or new >= prev or new >= cheap:
+        return new
+    return cheap if prev > cheap else prev
+
+
+def pct(x):
+    """0.5355 → '53.55%', 0.45 → '45%', 0.288 → '28.8%'."""
+    return f"{float(x) * 100:.2f}".rstrip("0").rstrip(".") + "%"
 
 # 저가의약품 기준금액(원). 계단식에서 '이 값 이하면 인하 없이 최저가와 동일가'.
 # 실제 고시 자료 22,062 품목 중 22,058 개(99.98%)가 투여·단위로 가려진다.
@@ -746,36 +788,93 @@ def _orig_cuts(code, drop=0.20):
     return name, why, cuts, y0
 
 
+def _ph_amt(base, ph):
+    """단계의 금액. 4번째 칸에 금액이 있으면 그 값(①·② 저가 캡), 없으면 기준가 × 비율."""
+    return int(ph[3]) if len(ph) > 3 else won(base * ph[2])
+
+
+def _calc_dataonly(base, opt):
+    """① 단일제 자료제출 — 2026.8 개정 (펙소페나딘 구강붕해정 표와 같은 값).
+
+    P       = 이미 조정됨: 상한가 ÷ 나누는 비율(53.55% · 2027.4부터 재평가 비율) · 그 밖: 기준가
+    조정된 금액 = P × 45% → 저가 기준금액 아래면 기준금액
+    산정가    = 조정된 금액 × 유형배율(용법용량+이미 조정 1.1) × 0.8^(기준요건 미충족) → 저가 캡
+    가산      = 기준요건 2개 충족 때만. 산정가 + 산정가 × (70/45 − 1)  ← 고시 '그 조정된 금액에 가산'
+    """
+    R, ph, tr = CALC_RATE, [], []
+    opt["trace"] = tr
+    if base <= 0:
+        return [("산정", "이후", 0.0, 0)], "기준가를 넣어주세요."
+    dose = str(opt.get("sub", "")).startswith("용법")
+    imp = str(opt.get("imp", "")).startswith("개량")
+    st3 = int(opt.get("ostate", 0))
+    miss = max(0, 2 - int(opt.get("reqs", 2)))
+    cut = REQ_CUT ** miss
+    cheap = float(opt.get("cheap") or 0)
+    cut_txt = f" × {cut:g} (기준요건 미충족 {miss}개)" if miss else ""
+
+    if st3 == 0:
+        init = (R["dose"] if dose else R["salt"]) * cut
+        amt = won(base * init)
+        tr.append(f"조정 전 유지: {base:,.0f}원 × {pct(R['dose'] if dose else R['salt'])}{cut_txt} = {amt:,}원")
+        ph.append(("최초 등재 (조정 전 유지)", "이후", amt / base, amt))
+        return ph, (f"오리지널이 조정 전이고 이번 등재로도 조정이 일어나지 않는 경우라 "
+                    f"{pct(init)} 를 계속 적용합니다. 가산은 붙지 않습니다.")
+
+    if st3 == 2:
+        div = float(opt.get("div") or OLD_RATIO)
+        P = base / div
+        mult = 1.1 if dose else 1.0
+        tr.append(f"P = 상한가 {base:,.0f}원 ÷ {pct(div)} = {P:,.2f}원")
+    else:
+        div, P, mult = None, float(base), 1.0
+        tr.append(f"P = 기준가 {base:,.0f}원 (오리지널이 아직 조정 전 가격)")
+    adj = won(P * ADJ_RATIO)
+    adj_c = max(adj, cheap) if cheap else adj
+    tr.append(f"조정된 금액 = P × {pct(ADJ_RATIO)} = {P * ADJ_RATIO:,.2f} → {adj:,}원"
+              + (f" → 저가 기준 {adj_c:,.0f}원" if adj_c != adj else ""))
+    calc = won(adj_c * mult * cut)
+    calc_c = int(max(calc, cheap)) if cheap else calc
+    tr.append(f"산정가 = {adj_c:,.0f}원" + (f" × {mult:g} (용법용량 개선)" if mult != 1 else "")
+              + cut_txt + f" = {calc:,}원" + (f" → 저가 기준 {calc_c:,}원" if calc_c != calc else ""))
+
+    addon = bool(opt.get("addon", True)) and miss == 0
+    if not addon:
+        why = ("기준요건 미충족이라 가산 없음" if miss else "가산 없음을 골랐습니다")
+        tr.append(f"{why} → 산정가 {calc_c:,}원을 계속 적용")
+        ph.append(("산정가 (가산 없음)", "이후", calc_c / base, calc_c))
+        return ph, (f"{why}. 산정가 {calc_c:,}원을 처음부터 계속 적용합니다."
+                    + (" 위탁 생산이면 '자체 생동시험'을 빼고 계산합니다." if miss else ""))
+
+    add70 = won(calc_c * (0.70 / ADJ_RATIO - 1))
+    a70 = calc_c + add70
+    tr.append(f"가산 1년 = {calc_c:,} + {calc_c:,} × (70/{ADJ_RATIO*100:g} − 1) = {calc_c:,} + {add70:,} = {a70:,}원")
+    ph.append(("최초등재 가산 (70%)", "1년", a70 / base, a70))
+    if imp:
+        ph.append(("개량신약 가산 유지 (70%)", "이후", a70 / base, a70))
+        tr.append(f"개량신약: {a70:,}원 계속 (연장이 이어짐)")
+        return ph, ("개량신약이라 70% 수준의 가산이 계속 이어지는 것으로 그렸습니다. "
+                    "가산액은 고시대로 '조정된 금액에 (70/45 − 1)을 더하는' 방식입니다.")
+    prev = a70
+    if opt.get("ext", True):
+        add60 = won(calc_c * (0.60 / ADJ_RATIO - 1))
+        a60 = low_cap(prev, calc_c + add60, cheap)
+        tr.append(f"가산 3년 = {calc_c:,} + {calc_c:,} × (60/{ADJ_RATIO*100:g} − 1) = {calc_c:,} + {add60:,} = {calc_c + add60:,}원"
+                  + (f" → 저가 캡 {a60:,}원" if a60 != calc_c + add60 else ""))
+        ph.append(("가산 연장 (60%)", "3년", a60 / base, a60))
+        prev = a60
+    after = low_cap(prev, calc_c, cheap)
+    tr.append(f"이후 = 산정가 {calc_c:,}원" + (f" → 저가 캡 {after:,}원" if after != calc_c else ""))
+    ph.append(("가산 종료 후 (산정가)", "이후", after / base, after))
+    return ph, ("가산액은 고시대로 '조정된 금액에 (70/45 − 1)·(60/45 − 1)을 더하는' 방식입니다. "
+                "3년 연장은 국내 생산 또는 동일제품 회사 수 3개 이하일 때만 붙습니다.")
+
+
 def _calc_phases(ty, base, opt):
-    """유형별 단계 목록 [(이름, 기간, 비율)] 과 안내문."""
+    """유형별 단계 목록 [(이름, 기간, 비율[, 금액])] 과 안내문."""
     R, ph = CALC_RATE, []
     if ty.startswith("①"):
-        # 산정 비율은 '넣은 기준가가 이미 조정된 가격인지'로 갈린다.
-        #   염·이성체/신규제형 : 조정 전 가격 90%  / 조정된 가격 100%
-        #   용법용량 개선      : 조정 전 가격 100% / 조정된 가격 110%
-        salt = opt["sub"].startswith("염")
-        imp = opt["imp"].startswith("개량")
-        # 오리지널의 조정 상태로 세 갈래가 갈린다. 70% 가산은 '등재와 동시에
-        # 오리지널이 조정되는' 경우에만 붙는다. 이미 조정을 마친 오리지널을
-        # 기준으로 삼으면 가산 없이 100%(용법용량 개선 110%)로 산정한다.
-        st3 = int(opt.get("ostate", 0))
-        if st3 == 1:
-            ph.append(("최초등재 가산", "1년", R["addon"]))
-            ph.append(("개량신약 가산 유지" if imp else "자료제출 가산", "3년",
-                       R["improved"] if imp else R["dataonly"]))
-            ph.append((f"가산 종료 후 ({R['after']*100:.0f}%)", "이후", R["after"]))
-            return ph, ("등재와 동시에 오리지널이 조정되는 경우입니다. "
-                        "기준가는 **조정 전** 오리지널 가격이어야 하며, "
-                        "70%에서 시작해 가산이 끝나면 45%로 유지됩니다.")
-        if st3 == 2:
-            rate = R["salt_adj"] if salt else R["dose_adj"]
-            ph.append(("이미 조정된 가격 기준", "이후", rate))
-            return ph, (f"오리지널이 이미 조정을 마친 경우라 가산 없이 {rate*100:.0f}% 로 산정합니다. "
-                        "기준가는 **조정된 뒤의** 가격이어야 합니다.")
-        init = R["salt"] if salt else R["dose"]
-        ph.append(("최초 등재 (조정 전 유지)", "이후", init))
-        return ph, (f"오리지널이 조정 전이고 이번 등재로도 조정이 일어나지 않는 경우라 "
-                    f"{init*100:.0f}% 를 계속 적용합니다. 가산은 붙지 않습니다.")
+        return _calc_dataonly(base, opt)
     if ty.startswith("②"):
         # 2026.8 개정고시: 기준요건(DMF·자체생동) 충족 수로 산정률이 갈린다.
         req = REQ_RATE[opt["reqs"]]
@@ -804,25 +903,31 @@ def _calc_phases(ty, base, opt):
             if opt["ext"]:
                 ph.append(("가산 연장", "3년", add))
 
+        cheap = float(opt.get("cheap") or 0)
         if way == "다품목":
             if add:
                 # 가산 중에는 인하가 걸리지 않는다. 가산이 끝나면 45% 하락과 85% 인하가 한 번에.
-                ph.append(("가산 종료 — 45% × 85%", "이후", AFTER_ADDON * AFTER_CUT))
+                _new = low_cap(won(base * add), won(base * AFTER_ADDON * AFTER_CUT), cheap)
+                ph.append(("가산 종료 — 45% × 85%", "이후", (_new / base) if base else 0, _new))
                 note = ("다품목 등재관리 대상입니다. 가산을 받는 동안은 인하가 걸리지 않고, "
                         "가산이 끝나는 순간 45%로 떨어짐과 동시에 85%가 같이 걸립니다.")
             else:
                 ph.append(("등재 ~ 1년", "1년", req))
-                ph.append(("1년 후 — 다품목 85%", "이후", req * AFTER_CUT))
+                _new = low_cap(won(base * req), won(base * req * AFTER_CUT), cheap)
+                ph.append(("1년 후 — 다품목 85%", "이후", (_new / base) if base else 0, _new))
                 note = ("다품목 등재관리 대상입니다. 등재 1년 뒤 최초 산정가의 85%로 조정됩니다 "
-                        f"({req*100:.0f}% → {req*AFTER_CUT*100:.2f}%).")
+                        f"({pct(req)} → {pct(req * AFTER_CUT)}).")
+            note += f" 조정 때는 저가 기준금액 {cheap:,.0f}원 아래로 내려가지 않습니다." if cheap else ""
             return ph, (f"기등재 {opt['prior']}개 + 동시신청 {opt['apply']}개 = "
                         f"{opt['prior']+opt['apply']}개. " + note)
 
         if add:
-            ph.append((f"가산 종료 후 ({AFTER_ADDON*100:.0f}%)", "이후", AFTER_ADDON))
-            return ph, ("가산이 끝나면 기준요건과 무관하게 45%로 유지됩니다.")
+            _new = low_cap(won(base * add), won(base * AFTER_ADDON), cheap)
+            ph.append((f"가산 종료 후 ({AFTER_ADDON*100:.0f}%)", "이후", (_new / base) if base else 0, _new))
+            return ph, ("가산이 끝나면 기준요건과 무관하게 45%로 유지됩니다."
+                        + (f" 조정 때는 저가 기준금액 {cheap:,.0f}원 아래로 내려가지 않습니다." if cheap else ""))
         ph.append(("기본 산정", "이후", req))
-        return ph, (f"기준요건 {opt['reqs']}개 충족 → {req*100:.0f}%. "
+        return ph, (f"기준요건 {opt['reqs']}개 충족 → {pct(req)}. "
                     f"기등재 {opt['prior']}개 + 동시신청 {opt['apply']}개라 "
                     "다품목·계단식에는 해당하지 않습니다.")
     if ty.startswith("④"):
@@ -871,9 +976,10 @@ def _calc_chart(base, phases):
     """단계별 예상 상한금액을 계단 그래프로. '이후' 구간은 2년 폭으로 그린다."""
     xs, ys, ticks, tlabels = [], [], [0], ["등재"]
     t = 0.0
-    for name, term, rate in phases:
+    for ph in phases:
+        name, term, rate = ph[0], ph[1], ph[2]
         dur = 2.0 if term == "이후" else float(str(term).replace("년", "") or 1)
-        amt = base * rate
+        amt = _ph_amt(base, ph)
         xs += [t, t + dur]
         ys += [amt, amt]
         if term == "이후":
@@ -889,9 +995,10 @@ def _calc_chart(base, phases):
                              hovertemplate="%{y:,.0f}원<extra></extra>"))
     # 단계별 금액을 구간 가운데에 적어 준다
     t = 0.0
-    for name, term, rate in phases:
+    for ph in phases:
+        name, term, rate = ph[0], ph[1], ph[2]
         dur = 2.0 if term == "이후" else float(str(term).replace("년", "") or 1)
-        fig.add_annotation(x=t + dur / 2, y=base * rate, text=f"{won(base*rate):,}원",
+        fig.add_annotation(x=t + dur / 2, y=_ph_amt(base, ph), text=f"{_ph_amt(base, ph):,}원",
                            showarrow=False, yshift=14, font=dict(size=12, color="#c9376b"))
         t += dur
     fig.update_layout(height=260, margin=dict(l=10, r=10, t=36, b=10), showlegend=False,
@@ -1897,6 +2004,32 @@ def _meta_page():
                        file_name="meta_result.csv", mime="text/csv", key="ma_dl_out")
 
 
+def _cheap_pick(where, row, sfx):
+    """저가의약품 기준금액 고르기. 투여·단위로 자동 판정하고 고쳐 쓸 수 있다."""
+    _kind = cheap_kind(row.get("투여"), row.get("단위"))
+    _opts = list(CHEAP) + ["직접 입력"]
+    _idx = _opts.index(_kind) if _kind in _opts else len(_opts) - 1
+    _sel = where.selectbox("저가의약품 기준", _opts, index=_idx, key=f"calc_cheapkind{sfx}")
+    if _sel == "직접 입력":
+        return float(where.number_input("기준금액(원)", value=0.0, step=1.0,
+                                        format="%.0f", key=f"calc_cheapamt{sfx}"))
+    where.caption(f"{CHEAP[_sel]:,}원 — 투여 {row.get('투여') or '?'} · "
+                  f"단위 {row.get('단위') or '?'} 로 자동 판정 · 조정 때 이 금액 아래로 안 내려감")
+    return float(CHEAP[_sel])
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _price_asof():
+    """약가 자료의 가장 최근 적용일(= 고시 적용일). 못 읽으면 오늘."""
+    try:
+        d = pd.to_datetime(ss.load_price()["적용일자"], errors="coerce").max()
+        if pd.notna(d):
+            return d.date()
+    except Exception:
+        pass
+    return pd.Timestamp.today().date()
+
+
 def _price_calc_page():
     """유형별 예상 상한금액. 기준가는 같은 제제(성분·함량·제형) 최고가에서 자동으로 채운다."""
     if not ss.price_group_ready():
@@ -2091,25 +2224,54 @@ def _price_calc_page():
                "mg_new": 0.0, "mg_ref": 0.0, "own": True,
                "special": False, "bio": False, "bval": 1.0}
         if ty.startswith("①"):
+            # 선택지 글자가 바뀌어 예전 화면이 남긴 값과 섞이지 않도록 key 를 새로 붙인다.
             opt["sub"] = st.radio("산정 유형",
-                                  ["염·이성체 / 신규제형 (90% · 조정가 기준 100%)",
-                                   "용법용량 개선 (100% · 조정가 기준 110%)"], key="calc_sub")
-            opt["imp"] = st.radio("개량신약 인정", ["개량신약 (70% · 3년+α)", "자료제출 (60% · 최대 3년)"],
-                                  key="calc_imp")
+                                  ["염·이성체 / 신규제형",
+                                   "용법용량 개선 (이미 조정됨이면 × 1.1)"], key="calc_sub2")
+            opt["imp"] = st.radio("개량신약 인정",
+                                  ["개량신약 — 가산 70% 계속",
+                                   "자료제출 — 1년 70% → 3년 60% → 이후"], index=1, key="calc_imp2")
             opt["ostate"] = OSTATE.index(st.radio(
                 "**오리지널 조정 상태**", OSTATE, index=adj_guess,
-                key=f"calc_ostate_{row['제제코드']}"))
-            st.caption("70% 가산은 **등재와 동시에 오리지널이 조정되는** 경우에만 붙습니다. "
-                       "이미 조정을 마친 오리지널을 기준으로 삼으면 가산 없이 "
-                       "100%(용법용량 개선 110%)입니다.")
+                key=f"calc_ost2_{row['제제코드']}"))
+            if opt["ostate"] == 2:
+                with st.container(border=True):
+                    st.markdown("**상한가 나누는 비율** — 재평가 차수 · 기업 유형")
+                    d1, d2 = st.columns(2)
+                    _cha = d1.radio("재평가 차수", ["1차", "2차"], horizontal=True, key="calc_cha")
+                    _coty = d2.radio("기업 유형", ["일반", "준혁신형", "혁신형"],
+                                     horizontal=True, key="calc_coty")
+                    _when = st.date_input("상한가 시점 (기본: 약가 고시 적용일)",
+                                          value=_price_asof(), key=f"calc_when_{row['제제코드']}")
+                    opt["div"] = reeval_ratio(_cha, _coty, _when)
+                    if base > 0:
+                        st.caption(f"→ **{pct(opt['div'])}** 로 나눔 · P = {base:,.0f} ÷ "
+                                   f"{pct(opt['div'])} = **{base / opt['div']:,.0f}원**")
+                    st.caption("📝 상한가 나누는 비율은 **2027년 4월부터** 적용됩니다 "
+                               "(1차 2027.4~ · 2차 2030.10~). 그 전에는 무엇을 골라도 53.55%입니다.")
+            if opt["ostate"] in (1, 2):
+                opt["addon"] = st.radio("최초등재 가산", ["가산 받음", "가산 없음"],
+                                        horizontal=True, key="calc_addon").startswith("가산 받음")
+                if opt["imp"].startswith("개량"):
+                    st.caption("개량신약은 연장이 자동으로 이어집니다 (70% 계속).")
+                else:
+                    opt["ext"] = st.checkbox("+3년 연장 (60%) — 국내 생산 또는 동일제품 회사 수 3개 이하",
+                                             value=True, key="calc_ext1")
+            q1, q2 = st.columns(2)
+            _dmf1 = q1.checkbox("DMF 등록 원료", value=True, key="calc_dmf1")
+            _bio1 = q2.checkbox("자체 생동시험", value=True, key="calc_bio1")
+            opt["reqs"] = int(_dmf1) + int(_bio1)
+            st.caption("기준요건 미충족 1개마다 20% 인하 · 하나라도 미충족이면 가산 없음 · "
+                       "위탁 생산이면 '자체 생동시험'을 빼세요 (일반의약품은 비교용출자료로 갈음 가능)")
+            opt["cheap"] = _cheap_pick(st, row, "1")
         elif ty.startswith("②"):
             q1, q2 = st.columns(2)
             _dmf = q1.checkbox("DMF 등록 원료", value=True, key="calc_dmf")
             _bio = q2.checkbox("자체 생동시험", value=True, key="calc_bio")
             opt["reqs"] = int(_dmf) + int(_bio)
             st.caption(f"기준요건 **{opt['reqs']}개 충족 → 산정률 "
-                       f"{REQ_RATE[opt['reqs']]*100:.0f}%** "
-                       "(2개 45% · 1개 36% · 0개 29%)")
+                       f"{pct(REQ_RATE[opt['reqs']])}** "
+                       "(2개 45% · 1개 36% · 0개 28.8% — 미충족 1개마다 20% 인하)")
 
             opt["co"] = st.radio("기업 유형 (정책가산)",
                                  ["혁신형 (60%)", "준혁신형 (50%)", "해당 없음 (가산 없음)"],
@@ -2129,28 +2291,19 @@ def _price_calc_page():
                        "진입 시점에는 달라지니 직접 고쳐 쓰세요.")
             {"일반": st.info, "다품목": st.warning, "계단식": st.error}[_way](
                 {"일반": f"**일반 산정** — 합계 {opt['prior']+opt['apply']}개. "
-                         f"{REQ_RATE[opt['reqs']]*100:.0f}% 로 등재됩니다.",
+                         f"{pct(REQ_RATE[opt['reqs']])} 로 등재됩니다.",
                  "다품목": f"**다품목 등재관리** — 기등재 {opt['prior']} + 신청 {opt['apply']} = "
                           f"{opt['prior']+opt['apply']}개 (14개 이상). 1년 뒤 85%로 조정됩니다.",
                  "계단식": f"**계단식 약가인하** — 기등재가 {opt['prior']}개 (13개 이상)라 "
                           "min(기등재 최저가, 29% 산정액) × 85% 로 산정됩니다."}[_way])
 
+            c1, c2 = st.columns(2)
             if _way == "계단식":
-                c1, c2 = st.columns(2)
                 opt["low"] = c1.number_input(
                     "기등재 동일제제 최저가", value=float(row["최저가"]), step=1.0,
                     format="%.0f", key=f"calc_low_{row['제제코드']}")
-                _kind = cheap_kind(row.get("투여"), row.get("단위"))
-                _opts = list(CHEAP) + ["직접 입력"]
-                _idx = _opts.index(_kind) if _kind in _opts else len(_opts) - 1
-                _sel = c2.selectbox("저가의약품 기준", _opts, index=_idx, key="calc_cheapkind")
-                if _sel == "직접 입력":
-                    opt["cheap"] = c2.number_input("기준금액(원)", value=0.0, step=1.0,
-                                                   format="%.0f", key="calc_cheapamt")
-                else:
-                    opt["cheap"] = float(CHEAP[_sel])
-                    c2.caption(f"{CHEAP[_sel]:,}원 — 투여 {row.get('투여') or '?'} · "
-                               f"단위 {row.get('단위') or '?'} 로 자동 판정")
+            # 저가 기준금액은 계단식 판정과, 가격이 내려가는 조정 단계의 하한(캡)에 쓴다.
+            opt["cheap"] = _cheap_pick(c2, row, "")
         elif ty.startswith("③"):
             opt["ct"] = st.radio("복합제 유형", ["제네릭/자료제출 (45%)", "개량신약 복합제 (60%)",
                                              "개량신약 복합제 + 혁신형 (68%)"], key="calc_ct")
@@ -2209,16 +2362,20 @@ def _price_calc_page():
 
     phases, note = _calc_phases(ty, base, opt)
     with R:
-        st.metric("등재 시 예상 상한금액", f"{won(base * phases[0][2]):,} 원",
+        st.metric("등재 시 예상 상한금액", f"{_ph_amt(base, phases[0]):,} 원",
                   delta=f"기준가 대비 {phases[0][2]*100:.2f}%", delta_color="off")
         if base > 0:
             st.plotly_chart(_calc_chart(base, phases), use_container_width=True)
-        st.dataframe(pd.DataFrame([{"단계": n, "기간": y, "비율": f"{r*100:.2f}%",
-                                    "상한금액": f"{won(base*r):,} 원"} for n, y, r in phases]),
+        st.dataframe(pd.DataFrame([{"단계": ph[0], "기간": ph[1], "기준가 대비": f"{ph[2]*100:.2f}%",
+                                    "상한금액": f"{_ph_amt(base, ph):,} 원"} for ph in phases]),
                      use_container_width=True, hide_index=True)
         st.caption("산정 근거")
-        st.code("\n".join(f"{n}: {base:,.0f} × {r*100:.2f}% = {won(base*r):,}원"
-                          for n, y, r in phases), language=None)
+        if opt.get("trace"):
+            st.code("\n".join(opt["trace"]), language=None)
+        else:
+            st.code("\n".join(f"{ph[0]}: {base:,.0f} × {ph[2]*100:.2f}% = {_ph_amt(base, ph):,}원"
+                              + (" (저가 캡)" if len(ph) > 3 and ph[3] != won(base * ph[2]) else "")
+                              for ph in phases), language=None)
     st.caption(note + "  산정 비율은 제도 변경 시 코드 상단 CALC_RATE 에서 고칩니다.")
 
 @st.cache_data(show_spinner="약가 품목 준비 중…")
