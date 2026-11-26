@@ -71,6 +71,11 @@ def main():
     cmap = pr[has].groupby("_cd")["_set"].agg(lambda x: x.value_counts().index[0])
     pr.loc[~has, "_set"] = pr.loc[~has, "_cd"].map(cmap)
     pr["_set"] = pr["_set"].map(lambda v: v if isinstance(v, frozenset) else frozenset())
+    c4 = pr[has & (pr["_set"].map(len) == 1)].groupby(pr["_cd"].str[:4])["_set"].agg(lambda x: x.value_counts().index[0])
+    miss = pr["_set"].map(len) == 0
+    pr.loc[miss, "_set"] = pr.loc[miss, "_cd"].str[:4].map(c4)
+    pr["_set"] = pr["_set"].map(lambda v: v if isinstance(v, frozenset) else frozenset())
+    print(f"성분 조합 못 정한 행(코드로 채운 뒤) {int((pr['_set'].map(len) == 0).sum()):,}")
     gy = pr[pr["급여구분"] == "급여"]
     vc = pr.groupby("제품명")["적용일자"].min().value_counts()
     bulk = set(vc[vc >= 3000].index)
@@ -87,6 +92,17 @@ def main():
         parts = [p for p in re.split(r"[|/,+]|및", str(s or "")) if p.strip()]
         ks = {k2.get(ss.ing_core(p), "") for p in parts}
         return frozenset(k for k in ks if k) if all(ks) else frozenset()
+    miss = pr["_set"].map(len) == 0
+
+    def from_name(n):
+        m = re.search(r"\(([^()_]+)\)", str(n))
+        if not m:
+            return frozenset()
+        return kor_eset(m.group(1))
+    pr.loc[miss, "_set"] = pr.loc[miss, "제품명"].map(from_name)
+    pr["_set"] = pr["_set"].map(lambda v: v if isinstance(v, frozenset) else frozenset())
+    print(f"성분 조합 못 정한 행(제품명 괄호로 채운 뒤) {int((pr['_set'].map(len) == 0).sum()):,}")
+    gy = pr[pr["급여구분"] == "급여"]
     blank = ap["_eset"].map(len) == 0
     ap.loc[blank, "_eset"] = ap.loc[blank, "주성분"].map(kor_eset)
     print(f"영문 성분 빈 허가 {int(blank.sum()):,}건 → 한글로 채움 {int((ap.loc[blank, '_eset'].map(len) > 0).sum()):,}건")
@@ -105,7 +121,9 @@ def main():
         a = ap[(ap["_eset"] == eset) & ap["_d"].notna()].sort_values("_d")
         if a.empty or "" in eset:
             r["결과"] = "허가에서 못 찾음"; out.append(r); continue
-        o = a.iloc[0]
+        new = a[a["신약구분"].astype(str).str.strip() == "신약"] if "신약구분" in a.columns else a.iloc[0:0]
+        o = new.iloc[0] if not new.empty else a.iloc[0]
+        r["근거"] = "신약표시" if not new.empty else "최초허가"
         ob = brand(o["품목명"])
         if item in ("클로피도그렐", "암로디핀", "로사르탄+히드로클로로티아지드"):
             print(f"[{item}] 허가 앞쪽:", [(str(x)[:14], str(d.date()), st) for x, d, st in
@@ -125,6 +143,11 @@ def main():
         oth = same[~is_br & ~same["업체명"].map(co).isin(ocos)]
         f = oth.groupby("제품명").agg(d=("적용일자", "min"), c=("_cd", "first"))
         r["오리지널 첫급여"] = str(orig["적용일자"].min().date())[:7]
+        d0 = orig["적용일자"].min()
+        snap = same[(same["적용일자"] <= d0 + pd.Timedelta(days=62)) & same["_cd"].isin(codes)]
+        if not snap.empty:
+            top = snap.sort_values("금액", ascending=False).iloc[0]
+            r["그때 최고가"] = "오리지널" if brand(top["제품명"]) == ob else brand(top["제품명"])[:8]
         # 단일제는 코드 앞 4자리(염까지 같은 성분)가 같으면 함량이 달라도 ◆. 복합제는 함량 조합마다 앞 4자리가 달라 코드 전체로.
         same_ing = f["c"].isin(codes) | (f["c"].str[:4].isin({c[:4] for c in codes}) if len(eset) == 1 else False)
         r["오리지널 코드"] = ",".join(sorted({c[:4] for c in codes}))[:20]
