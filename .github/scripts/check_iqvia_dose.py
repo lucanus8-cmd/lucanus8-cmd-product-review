@@ -75,12 +75,24 @@ def check_ubist(drive, bootstrap):
     print(f"성분에 용량 2개 이상(복합제) {int(multi.sum()):,}행 · 그중 같은 숫자가 겹쳐 하나로 줄어든 행 {int(shrunk.sum()):,}")
     print("성분 글자 모양(숫자 9) 상위:", Counter(mask(x) for x in u.loc[multi, "성분"].astype(str)).most_common(5))
     print("용량 비어 있는 행:", int((u["용량"].astype(str) == "").sum()))
-    t = u[u["제품명"].astype(str).str.contains("트윈콤비", regex=False)]
-    print("트윈콤비 (제품명 · 성분 · 용량):")
-    for _, r in t[["제품명", "성분", "용량"]].drop_duplicates().iterrows():
+    nm = u["제품명"].astype(str)
+    ing = u["성분"].astype(str).str.lower()
+    print("제품명에 '트윈' 들어간 UBIST 제품:", sorted(nm[nm.str.contains("트윈", regex=False)].unique().tolist())[:20])
+    ta = u[ing.str.contains("telmisartan") & ing.str.contains("amlodipine")]
+    print(f"성분에 telmisartan+amlodipine 함께 있는 행 {len(ta)} · 제조사 {sorted(ta['제조사명'].astype(str).unique().tolist())[:15]}")
+    for _, r in ta[["제품명", "성분", "용량"]].drop_duplicates().head(12).iterrows():
         print("  ", r["제품명"], "|", r["성분"], "|", r["용량"])
+    tl = u[ing.str.contains("telmisartan") & ~ing.str.contains("amlodipine")]
+    print("telmisartan만 있는데 제품명이 복합제 같은 것(예시):",
+          sorted(tl.loc[tl["제품명"].astype(str).str.contains("/|콤비|플러스|듀오", regex=True), "제품명"].astype(str).unique().tolist())[:10])
+    tw = u[nm.str.contains("트윈", regex=False)]
+    for _, r in tw[["제품명", "성분", "용량"]].drop_duplicates().head(12).iterrows():
+        print("  트윈:", r["제품명"], "|", r["성분"], "|", r["용량"])
     for q in ["40", "40/10", "40mg/5mg"]:
-        print(f"  용량 검색 '{q}' → {int(dose_match(t['용량'], q).sum())}행")
+        print(f"  telmisartan+amlodipine 용량 검색 '{q}' → {int(dose_match(ta['용량'], q).sum())}행")
+    cm = u.loc[multi, "성분"].astype(str)
+    plus = cm[cm.str.contains(r"\+|,|/", regex=True)]
+    print(f"복합제 같은 성분 글자(+ , /) {len(plus):,}행 · 모양:", Counter(mask(x) for x in plus).most_common(5))
     if shrunk.any():
         ex = u.loc[shrunk, ["제품명", "성분", "용량"]].drop_duplicates().head(5)
         print("겹쳐 줄어든 예 (제품명 · 성분 · 용량):")

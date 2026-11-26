@@ -86,4 +86,4 @@ def dose_match(series, query):
         return series.astype(str).str.contains(str(query).strip(), case=False, na=False, regex=False)
     pat = re.compile(rf"(?:^|/){re.escape(q)}(?:/|$)")
     keys = series.astype(str).map(dose_key)
-    return keys.map(lambda k: bool(pat.search(k)))
+    return keys.map(lambda k: bool(pat.search(k))).astype(bool)
