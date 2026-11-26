@@ -84,22 +84,31 @@ def main():
     vc = nm_first.value_counts()
     bulk = set(vc[vc >= 3000].index)
 
-    ap["_kset"] = ap["주성분"].map(kor_set)
-    ap["_eset"] = ap["주성분(영문)"].map(eng_set)
+    # 허가 자료의 복합제 표기 모양
+    tw = ap[ap["품목명"].astype(str).str.contains("트윈스타|자누메트|로수젯|아모잘탄", regex=True)]
+    print("\n허가 복합제 표기 예:")
+    print(tw[["품목명", "주성분", "주성분(영문)"]].head(6).to_string(index=False))
+    SPLIT_AP = r"[/,+|;\n]|및"
+
+    def eng_set_ap(s):
+        parts = [p for p in re.split(SPLIT_AP, strip(s)) if p.strip()]
+        return frozenset(k for k in (ss.ing_key(p) for p in parts) if k)
+    ap["_eset"] = ap["주성분(영문)"].map(eng_set_ap)
+    ap1 = ap[ss.is_single_series(ap["주성분"], ap["주성분(영문)"])]
+    print("허가 영문 조합 성분 수 분포:", ap["_eset"].map(len).value_counts().sort_index().to_dict())
+
+    def kor2key(w):
+        c = ss.ing_core(w)
+        a1 = ap1[(ap1["_core"] == c) | ap1["_core"].astype(str).str.startswith(c)]
+        v = a1["_key"].astype(str)
+        v = v[v.str.len() > 0]
+        return v.value_counts().index[0] if len(v) else ""
 
     rows = []
     for combo in [c.strip() for c in (os.environ.get("WORDS") or DEFAULT).split(";") if c.strip()]:
-        want = [ss.ing_core(x) for x in combo.split("+")]
-        n = len(want)
-
-        def match(ks):
-            if len(ks) != n:
-                return False
-            return all(any(k == w or k.startswith(w) for k in ks) for w in want)
-        a = ap[ap["_kset"].map(match)]
-        keys = frozenset().union(*a["_eset"].tolist()) if not a.empty else frozenset()
-        sets = a["_eset"].value_counts()
-        eset = sets.index[0] if len(sets) else frozenset()
+        eset = frozenset(kor2key(x) for x in combo.split("+"))
+        n = len(combo.split("+"))
+        a = ap[ap["_eset"] == eset]
         r = {"조합": combo, "허가 품목": len(a), "영문 조합": "+".join(sorted(eset))}
         a = a[a["_d"].notna()].sort_values("_d")
         if a.empty or len(eset) != n:
