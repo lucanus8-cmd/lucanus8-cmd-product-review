@@ -122,12 +122,13 @@ def main():
         r["오리지널 약가품목"] = orig["제품명"].nunique()
         if orig.empty:
             r["판정"] = "약가에서 오리지널 못 찾음"; rows.append(r); continue
-        codes = sorted(set(orig["주성분코드"].astype(str)))
+        codes = sorted({str(x) for x in orig["주성분코드"].tolist() if isinstance(x, str) and x.strip()})
         r["오리지널 코드(함량별)"] = ", ".join(codes)[:60]
         r["코드수/함량수"] = f"{len(codes)}/{orig['제품명'].nunique()}"
         oth = same[~same["제품명"].isin(set(orig["제품명"]))]
         oth = oth[oth["업체명"].astype(str) != str(orig["업체명"].iloc[0])]
-        f = oth.groupby(["제품명"]).agg(d=("적용일자", "min"), c=("주성분코드", "first"))
+        oth = oth.assign(_c=oth["주성분코드"].map(lambda x: x if isinstance(x, str) else ""))
+        f = oth.groupby(["제품명"]).agg(d=("적용일자", "min"), c=("_c", "first"))
         dz = f[f["c"].astype(str).isin(codes)]
         sz = f[~f["c"].astype(str).isin(codes)]
 
