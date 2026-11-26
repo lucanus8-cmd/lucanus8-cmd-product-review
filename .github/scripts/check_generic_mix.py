@@ -63,8 +63,11 @@ def main():
         return frozenset(k for k in (ss.ing_key(p) for p in parts) if k)
 
     pr["_set"] = pr["주성분명"].map(lambda s: kset(s, r"[,/+]"))
-    code = pr["주성분코드"].map(lambda x: x.strip().upper() if isinstance(x, str) else "")
-    alt = pr["제제코드"].map(lambda x: x.strip().upper() if isinstance(x, str) else "")
+    def _c(x):
+        x = x.strip().upper() if isinstance(x, str) else ""
+        return "" if x in ("NAN", "NONE", "NULL") else x
+    code = pr["주성분코드"].map(_c)
+    alt = pr["제제코드"].map(_c)
     pr["_cd"] = code.where(code.str.len() > 0, alt)          # 최신 고시 행은 제제코드만 있을 수 있다
     print(f"코드 빈 행 {int((pr['_cd'].str.len() == 0).sum()):,} · 성분명 빈 행 {int((pr['주성분명'].astype(str).str.strip().isin(['', 'nan'])).sum()):,}")
     has = pr["_set"].map(len) > 0
@@ -133,6 +136,18 @@ def main():
                                         zip(pv["품목명"].head(5), pv["주성분(영문)"].head(5), pv["주성분"].head(5), pv["_d"].head(5))])
         r["오리지널"] = f"{ob}({o['_d'].year})"
         same = gy[gy["_set"] == eset]
+        # 최초허가로 고른 경우: 처음 자료에 나올 때 같은 조합에서 더 비싼 품목이 있으면 그것을 오리지널로
+        #   (양도양수로 허가일이 새로 찍힌 오래된 오리지널: 노바스크·코자플러스 등)
+        if r.get("근거") == "최초허가" and not same.empty:
+            d0 = same["적용일자"].min()
+            snap = same[same["적용일자"] <= d0 + pd.Timedelta(days=62)].copy()
+            snap["_b"] = snap["제품명"].map(brand)
+            bp = snap.groupby("_b")["금액"].max()
+            if ob in bp.index and len(bp) and bp.max() > bp[ob] * 1.01:
+                newb = bp.idxmax()
+                r["근거"] = f"최초허가({ob})→최고가"
+                ob = newb
+                r["오리지널"] = f"{ob}(최고가)"
         nm = same["제품명"].astype(str).str.replace(r"\s+", "", regex=True)
         is_br = nm.str.startswith(ob)
         orig = same[nm.map(brand) == ob]
