@@ -107,6 +107,12 @@ def main():
             r["결과"] = "허가에서 못 찾음"; out.append(r); continue
         o = a.iloc[0]
         ob = brand(o["품목명"])
+        if item in ("클로피도그렐", "암로디핀", "로사르탄+히드로클로로티아지드"):
+            print(f"[{item}] 허가 앞쪽:", [(str(x)[:14], str(d.date()), st) for x, d, st in
+                                       zip(a["품목명"].head(4), a["_d"].head(4), a["상태"].head(4))])
+            pv = ap[ap["품목명"].astype(str).str.contains("플라빅스|노바스크|코자플러스", regex=True)]
+            print("   찾는 오리지널 허가:", [(str(x)[:14], str(e)[:30], str(k)[:30], str(d)[:10]) for x, e, k, d in
+                                        zip(pv["품목명"].head(5), pv["주성분(영문)"].head(5), pv["주성분"].head(5), pv["_d"].head(5))])
         r["오리지널"] = f"{ob}({o['_d'].year})"
         same = gy[gy["_set"] == eset]
         nm = same["제품명"].astype(str).str.replace(r"\s+", "", regex=True)
