@@ -97,6 +97,12 @@ def main():
         is_o = same["업체명"].map(co).eq(o_co) | same["제품명"].map(brand).eq(o_br)
         o, g = same[is_o], same[~is_o]
         r["오리지널 약가품목"] = o["제품명"].nunique()
+        if o.empty:   # 왜 못 찾았나: 약가 전체에서 상표로 찾아 본다
+            hit = pr[pr["제품명"].astype(str).str.replace(r"\s+", "", regex=True).str.startswith(o_br)]
+            print(f"[{term}] 약가에서 '{o_br}' 품목 {hit['제품명'].nunique()}개 · 업체 {hit['업체명'].astype(str).unique()[:3].tolist()}")
+            if not hit.empty:
+                h = hit.sort_values("적용일자").drop_duplicates("제품명", keep="last")
+                print(h[["제품명", "업체명", "주성분명", "성분수", "급여구분", "적용일자", "_key"]].head(6).to_string(index=False))
         if not o.empty:
             r["오리지널 첫급여"] = o["적용일자"].min().date()
         first = g.groupby("제품명")["적용일자"].min()
