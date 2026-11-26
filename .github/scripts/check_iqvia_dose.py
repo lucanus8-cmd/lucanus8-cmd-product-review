@@ -56,7 +56,36 @@ def main():
         print("트윈콤비 용량 종류:", sorted(t["용량"].astype(str).unique().tolist()))
         for q in ["40", "40/10", "40mg/5mg"]:
             print(f"  용량 검색 '{q}' → {int(dose_match(t['용량'], q).sum())}팩")
+    check_ubist(drive, bootstrap)
     return 0
+
+
+def check_ubist(drive, bootstrap):
+    """UBIST: 용량은 '성분' 글자에서 뽑는다. 복합제가 나뉘는지, 같은 숫자가 겹쳐 하나로 줄어드는지 본다."""
+    print("\n===== UBIST =====")
+    u = bootstrap._parse_ubist(bootstrap._download(drive, bootstrap.UBIST_ID))
+    other = [c for c in u.columns if not re.search(r"_\d{4}", str(c))][:15]
+    print(f"행 {len(u):,} · 칸: {other}")
+    if "성분" not in u.columns or "용량" not in u.columns:
+        return
+    pat = re.compile(r"(\d+\.?\d*\s?(?:mg|mcg|µg|ug|g|ml|mL|L|IU|단위|%|㎎|㎍|㎕|㎖|㏖|㎏|㎗))", re.IGNORECASE)
+    allm = u["성분"].astype(str).map(lambda s: [m.replace(" ", "") for m in pat.findall(s)])
+    multi = allm.map(len) >= 2
+    shrunk = allm.map(lambda l: len(l) != len(dict.fromkeys(l)))
+    print(f"성분에 용량 2개 이상(복합제) {int(multi.sum()):,}행 · 그중 같은 숫자가 겹쳐 하나로 줄어든 행 {int(shrunk.sum()):,}")
+    print("성분 글자 모양(숫자 9) 상위:", Counter(mask(x) for x in u.loc[multi, "성분"].astype(str)).most_common(5))
+    print("용량 비어 있는 행:", int((u["용량"].astype(str) == "").sum()))
+    t = u[u["제품명"].astype(str).str.contains("트윈콤비", regex=False)]
+    print("트윈콤비 (제품명 · 성분 · 용량):")
+    for _, r in t[["제품명", "성분", "용량"]].drop_duplicates().iterrows():
+        print("  ", r["제품명"], "|", r["성분"], "|", r["용량"])
+    for q in ["40", "40/10", "40mg/5mg"]:
+        print(f"  용량 검색 '{q}' → {int(dose_match(t['용량'], q).sum())}행")
+    if shrunk.any():
+        ex = u.loc[shrunk, ["제품명", "성분", "용량"]].drop_duplicates().head(5)
+        print("겹쳐 줄어든 예 (제품명 · 성분 · 용량):")
+        for _, r in ex.iterrows():
+            print("  ", r["제품명"], "|", r["성분"], "|", r["용량"])
 
 
 if __name__ == "__main__":
