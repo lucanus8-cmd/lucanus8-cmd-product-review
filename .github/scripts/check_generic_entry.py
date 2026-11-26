@@ -1,7 +1,12 @@
-"""제네릭 첫 급여 등재 찾기 시험 (읽기만, 사이트에는 쓰지 않음). 공개 자료(심평원 약가·식약처 허가)만 쓴다.
+"""제네릭 첫 급여 등재 찾기 시험 2차 (읽기만, 사이트에는 쓰지 않음). 공개 자료(심평원 약가·식약처 허가)만 쓴다.
 
-사이트 '약가 조회' 그래프와 같은 방법으로 오리지널 품목을 고르고, 같은 성분의 나머지 급여 품목을
-제네릭으로 보아 품목마다 첫 급여 적용일자를 구한다. 동일제제(제제코드 같음) 기준도 함께 본다.
+바꾼 규칙
+1) 성분: 허가 자료에서 '단일제'이고 성분 코어가 정확히 같은 품목의 영문키만 쓴다 (복합제 통한 다른 성분 끌려옴 방지).
+   약가 쪽도 단일제만.
+2) 오리지널: 그 성분 단일제 중 식약처 허가일이 가장 빠른 품목 (신약 표시와 상관없이).
+   그 품목의 회사 제품(서방정·XR 등 개량)과 같은 상표 제품은 오리지널 쪽으로.
+3) 약가 이력에 품목이 한꺼번에 처음 나온 날(자료 묶음)은 실제 등재일을 모르는 것으로 따로 센다.
+4) 제품코드만 바뀐 경우를 새 등재로 세지 않도록, 제품명 기준으로 처음 나온 날을 쓴다.
 """
 import base64
 import json
@@ -20,7 +25,7 @@ import gsheet  # noqa: E402
 
 DEFAULT = ("펠루비프로펜,펙소페나딘,로수바스타틴,아토르바스타틴,에제티미브,텔미사르탄,올메사르탄,"
            "시타글립틴,리나글립틴,다파글리플로진,엠파글리플로진,리바록사반,아픽사반,에독사반,티카그렐러,"
-           "에스오메프라졸,셀레콕시브,프레가발린,솔리페나신,미라베그론,토파시티닙,두타스테리드,타다라필,레바미피드")
+           "에스오메프라졸,셀레콕시브,세레콕시브,프레가발린,솔리페나신,미라베그론,토파시티닙,두타스테리드,타다라필,레바미피드")
 
 
 def setup_secret():
@@ -33,6 +38,19 @@ def setup_secret():
         f.write(f'gcp_service_account_b64 = "{b64}"\n')
 
 
+def co(s):
+    s = re.sub(r"\(주\)|주식회사|㈜|\s+", "", str(s))
+    return s
+
+
+def brand(name):
+    """품목명 → 상표 줄기: '펠루비정(펠루비프로펜)' → '펠루비', '리피토정10밀리그램' → '리피토'"""
+    s = re.sub(r"\s+", "", str(name))
+    s = re.split(r"[0-9(_\[]", s)[0]
+    s = re.sub(r"(서방|장용|구강붕해|필름코팅|연질|경질)?(정|캡슐|주|시럽|산|과립|액|현탁액|패취|겔|크림)$", "", s)
+    return s
+
+
 def main():
     setup_secret()
     import pandas as pd
@@ -40,98 +58,83 @@ def main():
     print("자료 만들기:", bootstrap._do_build(only={"approval", "price"}, force=True))
     import scout_sources as ss
     ss._ensure = lambda *a, **k: None
-    pd.set_option("display.width", 250); pd.set_option("display.max_colwidth", 30)
+    pd.set_option("display.width", 260); pd.set_option("display.max_colwidth", 26)
     pr = ss.load_price()
-    gy = pr[pr["급여구분"] == "급여"]
-    d0, d1 = pr["적용일자"].min(), pr["적용일자"].max()
-    print(f"약가 이력 {len(pr):,}행 · 제품 {pr['제품코드'].nunique():,}개 · 기간 {d0.date()} ~ {d1.date()}")
-    print("급여구분 값:", pr["급여구분"].value_counts().head(5).to_dict())
-    print("칸:", list(pr.columns))
-    fc = gy.groupby("제품코드")["적용일자"].min()
-    print("품목별 첫 급여일 중 자료 시작일과 같은 것:", int((fc == d0).sum()), "/", len(fc),
-          "· 첫 급여일 분포(연):", fc.dt.year.value_counts().sort_index().to_dict())
-    print("첫 급여일이 몰린 날 (상위 10):", {str(k.date()): int(v) for k, v in fc.value_counts().head(10).items()})
-    # 몰린 날에 처음 나온 품목이 그 전에 다른 코드로 있었는지: 같은 제품명이 더 이른 날짜에 있는지
-    nm_first = gy.groupby("제품명")["적용일자"].min()
-    code_nm = gy.drop_duplicates("제품코드").set_index("제품코드")["제품명"]
-    for day in list(fc.value_counts().head(4).index):
-        codes = fc[fc == day].index
-        nms = code_nm.reindex(codes)
-        earlier = int((nm_first.reindex(nms.values).values < day).sum())
-        print(f"   {day.date()}: 처음 나온 품목 {len(codes):,}개 중 같은 제품명이 더 일찍 있던 것 {earlier:,}개")
-    if "성분수" in gy.columns:
-        print("성분수 값:", gy["성분수"].astype(str).value_counts().head(5).to_dict())
+    ap = ss.load_approval().copy()
+    ap["_d"] = ss._ap_date(ap)
+    ap_single = ap[ss.is_single_series(ap["주성분"], ap["주성분(영문)"])]
+
+    gy = pr[pr["급여구분"] == "급여"].copy()
+    psingle = ss.is_single_series(gy["주성분명"]) & gy["성분수"].astype(str).isin(["", "1", "1.0", "nan", "None"])
+    gy = gy[psingle]
+    # 자료 묶음 날짜: 제품명이 처음 나온 날이 한꺼번에 몰린 날
+    allfirst = pr.groupby("제품명")["적용일자"].min()
+    vc = allfirst.value_counts()
+    bulk = set(vc[vc >= 3000].index)
+    print(f"약가 이력 {pr['적용일자'].min().date()} ~ {pr['적용일자'].max().date()} · "
+          f"자료 묶음 날짜(제품명 3천 개 이상이 처음 나온 날): {sorted(str(d.date()) for d in bulk)} "
+          f"· 다음으로 많은 날 {[(str(d.date()), int(n)) for d, n in vc[vc < 3000].head(4).items()]}")
+    last_bulk = max(bulk) if bulk else pr["적용일자"].min()
 
     words = [w.strip() for w in (os.environ.get("WORDS") or DEFAULT).split(",") if w.strip()]
-    rows = []
+    rows, detail = [], {}
     for term in words:
         core = ss.ing_core(term)
-        keys = ss.resolve_keys(term) | ss.resolve_keys(core)
-        origs = ss.original_products(keys) if keys else []
-        pref = {re.split(r"[0-9]", re.sub(r"\s", "", o))[0] for o in origs}
-        pref = {p for p in pref if len(p) >= 2}
-        single = gy["성분수"].astype(str).isin(["1", "1.0"]) if "성분수" in gy.columns else True
-        same = gy[(gy["_key"].isin(keys) | (gy["_core"] == core)) & single]
-        nms = same["제품명"].astype(str).tolist()
-        is_o = pd.Series([any(re.sub(r"\s", "", n).startswith(p) for p in pref) for n in nms],
-                         index=same.index, dtype=bool)
+        a = ap_single[ap_single["_core"] == core]
+        keys = set(a["_key"].astype(str)) - {""}
+        r = {"성분": term, "키": ",".join(sorted(keys))[:16] or "(허가에 없음)"}
+        if a.empty or not keys:
+            rows.append(r); continue
+        a = a[a["_d"].notna()].sort_values("_d")
+        o_item = a.iloc[0]
+        newflag = a[a["신약구분"].astype(str).str.strip() == "신약"]["품목명"].astype(str).tolist() if "신약구분" in a.columns else []
+        o_co, o_br = co(o_item["업체명"]), brand(o_item["품목명"])
+        r.update({"오리지널(최초허가)": f"{o_br}·{str(o_item['업체명'])[:8]}", "허가일": o_item["_d"].date(),
+                  "신약표시": "같음" if any(brand(x) == o_br for x in newflag) else ("없음" if not newflag else "다름:" + brand(newflag[0]))})
+        same = gy[gy["_key"].isin(keys)]
+        is_o = same["업체명"].map(co).eq(o_co) | same["제품명"].map(brand).eq(o_br)
         o, g = same[is_o], same[~is_o]
-        r = {"성분": term, "키": ",".join(sorted(keys))[:20], "오리지널 이름": ",".join(sorted(pref))[:24] or "(못 찾음)",
-             "오리지널 품목": o["제품코드"].nunique(), "제네릭 품목": g["제품코드"].nunique()}
+        r["오리지널 약가품목"] = o["제품명"].nunique()
         if not o.empty:
-            r["오리지널 첫 급여"] = o["적용일자"].min().date()
-        if not g.empty:
-            first = g.groupby("제품코드")["적용일자"].min()
-            pre = int((first <= d0).sum())
-            real = first[first > d0]
-            r["자료시작 전"] = pre
-            if not real.empty:
-                fd = real.min()
-                who = g[(g["제품코드"] == real.idxmin())]["제품명"].iloc[0]
-                r["첫 제네릭 등재"] = fd.date()
-                r["첫 제네릭 품목"] = str(who)[:22]
-                r["1년 안 등재 수"] = int(((real >= fd) & (real < fd + pd.Timedelta(days=365))).sum())
-                # 첫 등재 뒤 오리지널 첫 인하
-                if not o.empty:
-                    oc = o.sort_values("적용일자")
-                    after = []
-                    for _, og in oc.groupby("제품코드"):
-                        og = og.sort_values("적용일자")
-                        p = og["금액"].values; t = og["적용일자"].values
-                        for i in range(1, len(og)):
-                            if p[i] < p[i - 1] and pd.Timestamp(t[i]) >= fd - pd.Timedelta(days=31):
-                                after.append((pd.Timestamp(t[i]), (p[i] - p[i - 1]) / p[i - 1] * 100)); break
-                    if after:
-                        a = min(after)
-                        r["그 뒤 오리지널 첫 인하"] = f"{a[0].date()} {a[1]:+.0f}%"
-            # 동일제제 기준 (오리지널과 제제코드가 같은 것만)
-            if "제제코드" in g.columns and not o.empty:
-                oc_codes = set(o["제제코드"].astype(str)) - {"", "nan"}
-                gs = g[g["제제코드"].astype(str).isin(oc_codes)]
-                f2 = gs.groupby("제품코드")["적용일자"].min()
-                f2 = f2[f2 > d0]
-                r["동일제제 제네릭"] = gs["제품코드"].nunique()
-                r["동일제제 첫 등재"] = f2.min().date() if not f2.empty else "-"
+            r["오리지널 첫급여"] = o["적용일자"].min().date()
+        first = g.groupby("제품명")["적용일자"].min()
+        r["제네릭"] = len(first)
+        unk = first[first.isin(bulk) | (first <= last_bulk)]
+        known = first[~first.index.isin(unk.index)]
+        r["날짜모름(묶음)"] = len(unk)
+        if not known.empty:
+            fd = known.min()
+            who = known.idxmin()
+            wco = g[g["제품명"] == who]["업체명"].iloc[0]
+            r["첫 제네릭 등재"] = fd.date()
+            r["첫 제네릭"] = f"{brand(who)}·{str(wco)[:6]}"
+            r["1년안"] = int(((known >= fd) & (known < fd + pd.Timedelta(days=365))).sum())
+            if not o.empty:
+                cuts = []
+                for _, og in o.groupby("제품명"):
+                    og = og.sort_values("적용일자")
+                    p, t = og["금액"].values, og["적용일자"].values
+                    for i in range(1, len(og)):
+                        if p[i] < p[i - 1] and pd.Timestamp(t[i]) >= fd - pd.Timedelta(days=31):
+                            cuts.append((pd.Timestamp(t[i]), (p[i] - p[i - 1]) / p[i - 1] * 100)); break
+                if cuts:
+                    c = min(cuts); r["그뒤 오리지널 인하"] = f"{c[0].date()} {c[1]:+.0f}%"
+        if "제제코드" in g.columns and not o.empty:
+            oc = set(o["제제코드"].astype(str)) - {"", "nan"}
+            f2 = g[g["제제코드"].astype(str).isin(oc)].groupby("제품명")["적용일자"].min()
+            f2k = f2[~(f2.isin(bulk) | (f2 <= last_bulk))]
+            r["동일제제 첫등재"] = f2k.min().date() if not f2k.empty else ("묶음 전" if len(f2) else "-")
         rows.append(r)
+        detail[term] = (o.groupby("제품명")["적용일자"].min().sort_values().head(4),
+                        first.sort_values().head(6))
     out = pd.DataFrame(rows)
     print()
     print(out.to_string(index=False))
-    # 이상해 보이는 것: 오리지널을 못 찾음 / 제네릭인데 오리지널보다 먼저 등재
-    print()
-    for r in rows:
-        if r.get("오리지널 품목", 0) == 0:
-            print(f"⚠ {r['성분']}: 오리지널을 못 찾음 → 같은 성분 전부가 제네릭으로 잡힘")
-        if r.get("첫 제네릭 등재") and r.get("오리지널 첫 급여") and r["첫 제네릭 등재"] < r["오리지널 첫 급여"]:
-            print(f"⚠ {r['성분']}: 첫 제네릭({r['첫 제네릭 등재']})이 오리지널 첫 급여({r['오리지널 첫 급여']})보다 먼저")
-    # 한 성분 자세히: 첫 등재 앞뒤 품목
-    for term in words[:3]:
-        core = ss.ing_core(term)
-        keys = ss.resolve_keys(term) | ss.resolve_keys(core)
-        single = gy["성분수"].astype(str).isin(["1", "1.0"]) if "성분수" in gy.columns else True
-        same = gy[(gy["_key"].isin(keys) | (gy["_core"] == core)) & single]
-        first = same.groupby(["제품코드", "제품명"])["적용일자"].min().sort_values().reset_index()
-        print(f"\n[{term}] 품목별 첫 급여일 (앞 12개)")
-        print(first.head(12).to_string(index=False))
+    for term in ["펠루비프로펜", "로수바스타틴", "아토르바스타틴", "프레가발린", "토파시티닙", "에스오메프라졸"]:
+        if term in detail:
+            o1, g1 = detail[term]
+            print(f"\n[{term}] 오리지널 쪽 품목(첫 급여일): " + " / ".join(f"{k[:24]} {v.date()}" for k, v in o1.items()))
+            print("   제네릭 앞쪽: " + " / ".join(f"{k[:24]} {v.date()}" for k, v in g1.items()))
     return 0
 
 
