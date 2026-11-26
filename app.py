@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from io import BytesIO
 from openpyxl import Workbook
+from dose_util import fix_iqvia_dose, dose_match
 from openpyxl.chart import BarChart, PieChart, LineChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -139,6 +140,10 @@ def build_cache(which):
 @st.cache_data(show_spinner="IQVIA 로딩 중…", max_entries=1)
 def load_iqvia(cache_mtime):
     df = pd.read_pickle(IQVIA_CACHE)
+    try:   # 복합제: 원자료 '용량'은 첫 성분만 있어(40MG) 팩명의 40MG/10을 읽어 40MG/10MG로 나눈다
+        df, _ = fix_iqvia_dose(df)
+    except Exception:
+        pass
     lc_qtr = [c for c in df.columns if re.match(r"LC-\d{2}Q\d", c)]
     lc_yr  = [c for c in df.columns if re.match(r"\d{4}년$", c)]
     return df, lc_qtr, lc_yr
@@ -287,6 +292,8 @@ def make_filter_mask(df, active, field_map, require_any=True):
         if col and col in df.columns:
             if isinstance(f["value"], list):
                 mask &= df[col].astype(str).isin([str(x) for x in f["value"]])
+            elif f["field"] == "용량":   # 단위·대소문자 상관없이 숫자로 (40/10 → 40MG/10MG, 40 → 140은 제외)
+                mask &= dose_match(df[col], f["value"]).values
             else:
                 mask &= df[col].astype(str).str.contains(f["value"].strip(), case=False, na=False)
             applied += 1
