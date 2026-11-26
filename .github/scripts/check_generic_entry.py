@@ -23,9 +23,9 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, ".github", "scripts"))
 import gsheet  # noqa: E402
 
-DEFAULT = ("다파글리플로진,올메사르탄,펠루비프로펜,펙소페나딘,로수바스타틴,아토르바스타틴,에제티미브,텔미사르탄,올메사르탄,"
+DEFAULT = ("다파글리플로진,올메사르탄,펠루비프로펜,펙소페나딘,로수바스타틴,아토르바스타틴,에제티미브,텔미사르탄,"
            "시타글립틴,리나글립틴,엠파글리플로진,리바록사반,아픽사반,에독사반,티카그렐러,"
-           "에스오메프라졸,셀레콕시브,세레콕시브,프레가발린,솔리페나신,미라베그론,토파시티닙,두타스테리드,타다라필,레바미피드")
+           "에스오메프라졸,세레콕시브,프레가발린,솔리페나신,미라베그론,토파시티닙,두타스테리드,타다라필,레바미피드")
 
 
 def setup_secret():
@@ -134,7 +134,7 @@ def main():
                         first.sort_values().head(6))
     out = pd.DataFrame(rows)
     print()
-    print(out.to_string(index=False))
+    print(out.to_string(index=False, max_colwidth=26))
     for term in ["다파글리플로진", "올메사르탄", "세레콕시브", "펙소페나딘"]:
         if term in detail:
             o1, g1 = detail[term]
