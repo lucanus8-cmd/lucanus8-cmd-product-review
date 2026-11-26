@@ -32,6 +32,10 @@ def main():
         gsheet._info(), scopes=["https://www.googleapis.com/auth/drive.readonly"])
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
     import bootstrap
+    import os
+    if os.environ.get("ONLY", "").strip().lower() == "ubist":
+        check_ubist(drive, bootstrap)
+        return 0
     df = bootstrap._parse_iqvia(bootstrap._download(drive, bootstrap.IQVIA_ID))
     print(f"행 {len(df):,} · 칸 있음: 팩명={'팩명' in df.columns} 용량={'용량' in df.columns} 제품명={'제품명' in df.columns}")
     if "팩명" not in df.columns or "용량" not in df.columns:
