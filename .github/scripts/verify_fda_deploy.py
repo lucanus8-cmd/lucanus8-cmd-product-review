@@ -66,8 +66,8 @@ def main():
         t = text(fr)
         ver = next((ln for ln in t.splitlines() if "코드 버전" in ln), "")
         print("상태 화면:", ver or "코드 버전 줄 못 찾음")
-        if "2026-11-26-a" not in t:
-            print("❌ 새 코드(2026-11-26-a)가 아직 안 올라감")
+        if "2026-11-26-b" not in t:
+            print("❌ 새 코드(2026-11-26-b)가 아직 안 올라감")
             ok = False
         btn = fr.get_by_role("button", name="제품 제안")
         btn.first.click()
