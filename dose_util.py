@@ -87,3 +87,52 @@ def dose_match(series, query):
     pat = re.compile(rf"(?:^|/){re.escape(q)}(?:/|$)")
     keys = series.astype(str).map(dose_key)
     return keys.map(lambda k: bool(pat.search(k))).astype(bool)
+
+
+# ── 단일제 / 복합제 구분 (매출 분석) ─────────────────────────────────────────
+COMBO_LABELS = ["단일제", "복합제"]
+
+
+def iqvia_combo(df):
+    """IQVIA: '단일제/복합제' 칸(SINGLE/COMBINE)을 그대로 쓴다. 칸이 없으면 성분명의 '+' 로 판단."""
+    col = next((c for c in df.columns if str(c).replace(" ", "") in ("단일제/복합제", "단일/복합")), None)
+    if col is not None:
+        v = df[col].astype(str).str.upper().str.strip()
+        out = pd.Series("단일제", index=df.index, dtype=object)
+        out[v.str.startswith("COMB")] = "복합제"
+        unknown = ~v.str.startswith("COMB") & ~v.str.startswith("SING")
+        if unknown.any() and "성분명" in df.columns:
+            out[unknown & df["성분명"].astype(str).str.contains("+", regex=False)] = "복합제"
+        return out
+    if "성분명" in df.columns:
+        return df["성분명"].astype(str).str.contains("+", regex=False).map({True: "복합제", False: "단일제"})
+    return pd.Series("단일제", index=df.index, dtype=object)
+
+
+_ING_NAME = re.compile(r"[a-z][a-z\- ]*[a-z]")
+
+
+def ubist_ingredients(text):
+    """UBIST '성분' 글자 → 성분 이름 묶음.
+    예: 'anagliptin 100㎎, metformin hydrochloride 1000㎎ [648400ATB]' → {anagliptin, metformin}
+        'rosuvastatin calcium 10.4㎎ (10㎎ as rosuvastatin) [454001ATB]' → {rosuvastatin}
+    쉼표로 나눈 조각마다 첫 영문 단어(성분명)를 모은다. 같은 성분이 두 번 나와도 하나로 센다."""
+    t = re.sub(r"\[[^\]]*\]", "", str(text or ""))
+    t = re.sub(r"\([^)]*\)", "", t).lower().replace("·", ",")   # streptodornase·streptokinase 같은 표기도 두 성분
+    names = set()
+    for part in t.split(","):
+        m = _ING_NAME.search(part)
+        if m:
+            names.add(m.group(0).split()[0])
+    return names
+
+
+def ubist_combo(df):
+    """UBIST: 성분 칸에 서로 다른 성분이 2개 이상이면 복합제."""
+    col = "성분" if "성분" in df.columns else ("성분명" if "성분명" in df.columns else None)
+    if col is None:
+        return pd.Series("단일제", index=df.index, dtype=object)
+    s = df[col].astype(str)
+    uniq = pd.Series(s.unique())
+    kind = dict(zip(uniq, uniq.map(lambda x: "복합제" if len(ubist_ingredients(x)) >= 2 else "단일제")))
+    return s.map(kind)
