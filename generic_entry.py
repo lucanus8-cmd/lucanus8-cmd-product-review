@@ -178,11 +178,12 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
     # 회사 비교는 업체명이 있는 경우만 (최신 고시 행은 업체명이 비어 있을 수 있다 — 빈 값끼리 같은 회사로 보면 안 됨)
     ocos = ({_co(oco)} | set(orow["업체명"].map(_co))) - {""}
     ap_co = {n: c for n, c in zip(hit["_nn"], hit["업체명"])}     # 약가에 업체명이 비면 허가 자료로 채운다
+    fam_nn = set(items["_nn"])
 
     def table(rows, kind):
-        # 오리지널 자기 제품은 뺀다: 같은 상표로 시작(서방·XR·OD 등)하거나 오리지널 회사 제품
-        rows = rows[~rows["_pc"].isin(e) & ~rows["_nn"].map(brand).str.startswith(ob)
-                    & ~rows["업체명"].map(_co).isin(ocos)]
+        # 오리지널 자기 제품만 뺀다 (같은 제품코드, 또는 품목명이 같은 제품 — 예전 코드·예전 회사명).
+        # 오리지널 회사가 낸 다른 제품(XR·OD·개량 등)도 약가를 받았으면 표시하고 '오리지널 회사'로 표시한다.
+        rows = rows[~rows["_pc"].isin(e) & ~rows["_nn"].isin(fam_nn)]
         if rows.empty:
             return pd.DataFrame()
         g = rows.sort_values("적용일자")
@@ -193,6 +194,8 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
         if blank.any():
             first.loc[blank, "업체"] = first.loc[blank, "제품명"].map(lambda n: ap_co.get(nn(n), "")).replace("", "(업체 정보 없음)")
         first["날짜모름"] = first["등재일"].isin(bulk)
+        own = first["업체"].map(_co).isin(ocos) | first["제품명"].map(lambda n: brand(nn(n)).startswith(ob))
+        first["비고"] = own.map({True: "오리지널 회사", False: ""})
         first["구분"] = kind
         return first.sort_values("등재일").drop(columns=["_pc"])
 

@@ -4607,9 +4607,12 @@ if PAGE == "price":
                         if _df is None or _df.empty:
                             continue
                         _gen_tabs.append(_df)
-                        _txt = [f"{str(n)[:30]}<br>{co} · {d:%Y-%m-%d} 급여 등재" + (" (자료 시작일 — 실제 등재일 모름)" if u else "")
+                        _own = _df["비고"] if "비고" in _df.columns else pd.Series("", index=_df.index)
+                        _txt = [f"{str(n)[:30]}<br>{co}" + (" (오리지널 회사)" if ow else "") + f" · {d:%Y-%m-%d} 급여 등재"
+                                + (" (자료 시작일 — 실제 등재일 모름)" if u else "")
                                 + (f" · 첫 상한가 {int(fp):,}원" if pd.notna(fp) else "")
-                                for n, co, d, u, fp in zip(_df["제품명"], _df["업체"], _df["등재일"], _df["날짜모름"], _df["첫상한가"])]
+                                for n, co, d, u, fp, ow in zip(_df["제품명"], _df["업체"], _df["등재일"], _df["날짜모름"],
+                                                               _df["첫상한가"], _own)]
                         _fig.add_trace(go.Scatter(x=_df["등재일"], y=[_yy] * len(_df), yaxis="y2", mode="markers",
                                                   marker=dict(symbol=_sym, size=9, color=_col), name=_lbl[1:],
                                                   text=_txt, hovertemplate="%{text}<extra></extra>"))
@@ -4638,7 +4641,8 @@ if PAGE == "price":
                             t += f" · 2010.02 이전부터 있음({pre})"
                         if not k.empty:
                             r0 = k.sort_values("등재일").iloc[0]
-                            t += f" · {'그 뒤 ' if pre else ''}첫 등재 {r0['등재일']:%Y.%m} ({re.split(r'[(_]', str(r0['제품명']))[0][:18]} · {r0['업체']})"
+                            _ow = " · 오리지널 회사" if str(r0.get("비고", "")) == "오리지널 회사" else ""
+                            t += f" · {'그 뒤 ' if pre else ''}첫 등재 {r0['등재일']:%Y.%m} ({re.split(r'[(_]', str(r0['제품명']))[0][:18]} · {r0['업체']}{_ow})"
                         return t
                     _sm = f"📌 {_sumtxt(_gr['same'], '◆ 같은 약가코드')}  |  {_sumtxt(_gr['salt'], '◇ 염변경 등')}"
                     if _gr.get("n_combo"):
@@ -4648,10 +4652,10 @@ if PAGE == "price":
                         with st.expander(f"📋 제네릭 등재 목록 (◆ {len(_gr['same'])} · ◇ {len(_gr['salt'])})"):
                             _tb = pd.concat(_gen_tabs, ignore_index=True).sort_values("등재일")
                             _tb["급여 등재일"] = [("자료 시작 전" if u else f"{d:%Y.%m.%d}") for d, u in zip(_tb["등재일"], _tb["날짜모름"])]
-                            show_df(_tb[["구분", "급여 등재일", "제품명", "업체", "첫상한가", "지금상한가"]],
+                            show_df(_tb[[c for c in ["구분", "급여 등재일", "제품명", "업체", "비고", "첫상한가", "지금상한가"] if c in _tb.columns]],
                                     height=320, file_name="제네릭등재.csv")
                         st.caption("◆ = 오리지널과 심평원 약가코드(성분·함량·제형)가 같은 제품 · ◇ = 같은 성분이지만 코드가 다른 제품(염변경 등) · "
-                                   "등재일 = 그 제품에 처음 급여 상한가가 붙은 날 · 공동판매 제품은 구분하지 않음")
+                                   "등재일 = 그 제품에 처음 급여 상한가가 붙은 날 · 오리지널 회사가 낸 다른 제품(XR·OD 등)도 약가를 받았으면 '오리지널 회사'로 표시해 포함 · 공동판매 제품은 구분하지 않음")
         st.divider()
 
         st.markdown("**📋 조건별 최신 약가 · 연도별**")

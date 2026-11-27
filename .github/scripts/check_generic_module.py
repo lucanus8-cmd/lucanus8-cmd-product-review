@@ -39,6 +39,8 @@ def main():
                 s += f" · 2010전 {pre}"
             if not k.empty:
                 s += f" · 첫 {k['등재일'].min().date()} {ge.brand(k.iloc[0]['제품명'])}"
+            if "비고" in df.columns and (df["비고"] == "오리지널 회사").any():
+                s += f" (오리지널회사 {int((df['비고'] == '오리지널 회사').sum())})"
             return s
         warn = ", ".join(w["brand"] for w in r["warn"][:4])
         print(f"{term:<24} | {('/'.join(map(str, r['chosen'])) if r['chosen'] else '-')[:22]:<22} {r['reason']:<6}"
