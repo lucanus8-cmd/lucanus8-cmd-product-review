@@ -37,6 +37,11 @@ def _creds():
     import base64
     import json
     from google.oauth2 import service_account
+    # -1) 따로 띄운 자료 만들기 작업: 부모가 환경변수로 넘겨준 키
+    _env_b64 = os.environ.get(_SA_ENV) if os.environ.get(_CHILD_FLAG) else None
+    if _env_b64:
+        info = json.loads(base64.b64decode(_env_b64))
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     # 0) 가장 견고한 방식: 전체 JSON을 base64로 인코딩한 단일 값.
     #    (여러 줄 PEM 붙여넣기에서 생기는 문자 손상/스마트문장부호 문제를 원천 차단)
     b64 = None
@@ -418,8 +423,8 @@ def _stale(name):
     except Exception:
         return True
 
-def _do_build(include_sales=False, force=False, only=None):
-    """실제 생성 작업. 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다.
+def _do_build_here(include_sales=False, force=False, only=None):
+    """실제 생성 작업 (이 프로세스 안에서). 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다.
     only={"patent"} 처럼 주면 그 자료만 만든다(필요한 화면의 자료만 받기 위함)."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
     # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
@@ -584,6 +589,67 @@ def _do_build(include_sales=False, force=False, only=None):
         _try("ubist", lambda: _save(_parse_ubist(_download(drive, UBIST_ID)), SAVED / "ubist.pkl", "pickle"))
 
     return "built" if rebuilt else "local"
+
+
+# ── 자료 만들기는 따로 띄운 작업(자식 프로세스)에서 한다 ───────────────────────
+# 엑셀·시트를 받아 표로 만드는 동안 수백 MB를 쓰는데, 같은 프로세스에서 하면 다 만든 뒤에도
+# 그 메모리를 운영체제에 돌려주지 않아 사이트가 계속 무겁다. 따로 띄운 작업은 끝나면
+# 메모리를 전부 돌려준다. 따로 띄우지 못하면(어떤 이유든) 예전처럼 이 프로세스 안에서 만든다.
+_CHILD_FLAG = "_BOOT_CHILD"
+_SA_ENV = "_BOOT_SA_B64"
+
+
+def _sa_b64_for_child():
+    """자식 작업에 넘길 서비스계정 키(base64). 화면·파일에는 쓰지 않고 자식의 환경변수로만 넘긴다."""
+    import base64
+    import json
+    try:
+        b64 = st.secrets.get("gcp_service_account_b64", None)
+        if b64:
+            return str(b64).strip()
+    except Exception:
+        pass
+    try:
+        raw = st.secrets["gcp_service_account"]
+        return base64.b64encode(json.dumps(dict(raw)).encode()).decode()
+    except Exception:
+        return None      # 로컬: 자식도 secrets/service-account.json 을 그대로 읽는다
+
+
+def _do_build(include_sales=False, force=False, only=None):
+    """자료 만들기. 따로 띄운 작업에서 돌리고 결과('built'/'local')만 받는다."""
+    import json
+    import subprocess
+    import sys
+    if os.environ.get(_CHILD_FLAG) or os.environ.get("BOOT_BUILD_INPROC"):
+        return _do_build_here(include_sales=include_sales, force=force, only=only)
+    args = json.dumps({"include_sales": bool(include_sales), "force": bool(force),
+                       "only": sorted(only) if only else None})
+    code = ("import json,sys\n"
+            "import bootstrap\n"
+            "a=json.loads(sys.argv[1]); a['only']=set(a['only']) if a['only'] else None\n"
+            "try:\n"
+            "    r=bootstrap._do_build_here(**a); print('__BOOT_OK__'+json.dumps(r))\n"
+            "except Exception as e:\n"
+            "    print('__BOOT_ERR__'+json.dumps(str(e))); sys.exit(3)\n")
+    env = dict(os.environ)
+    env[_CHILD_FLAG] = "1"
+    b64 = _sa_b64_for_child()
+    if b64:
+        env[_SA_ENV] = b64
+    try:
+        pr = subprocess.run([sys.executable, "-c", code, args], cwd=str(BASE), env=env,
+                            capture_output=True, text=True, timeout=1800)
+    except Exception:
+        return _do_build_here(include_sales=include_sales, force=force, only=only)
+    out = pr.stdout or ""
+    for ln in reversed(out.splitlines()):
+        if ln.startswith("__BOOT_OK__"):
+            return json.loads(ln[len("__BOOT_OK__"):])
+        if ln.startswith("__BOOT_ERR__"):
+            raise RuntimeError(json.loads(ln[len("__BOOT_ERR__"):]))
+    # 자식이 결과를 못 남기고 끝남(메모리 부족 등) → 예전 방식으로 한 번 더
+    return _do_build_here(include_sales=include_sales, force=force, only=only)
 
 # ── 갱신 진입점 ────────────────────────────────────────────────────────────
 # 자료가 이미 있으면 화면을 멈추지 않는다. 오래된 자료는 뒤에서 조용히 새로 만들고,

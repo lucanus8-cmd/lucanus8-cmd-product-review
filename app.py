@@ -137,9 +137,29 @@ def build_cache(which):
 
 # ── 빠른 로드 (pickle 캐시에서) ─────────────────────────────────────────────
 
-@st.cache_data(show_spinner="IQVIA 로딩 중…", max_entries=1)
-def load_iqvia(cache_mtime):
-    df = pd.read_pickle(IQVIA_CACHE)
+# 매출 표는 한 벌만 둔다: 제품 검토 앱 안에서는 scout_sources 가 들고 있는 표를 종합분석 탭과 같이 쓴다.
+# (st.cache_data 는 표를 직렬화해 따로 보관하고 부를 때마다 복사본을 만들어 메모리를 많이 쓴다)
+try:
+    import scout_sources as _ss
+except Exception:
+    _ss = None
+
+def _read_sales(path):
+    if _ss is not None:
+        try:
+            return _ss.load_sales_pickle(path)
+        except Exception:
+            pass
+    return pd.read_pickle(path)
+
+def _share_df(df):
+    if _ss is not None:
+        return _ss._share(df)
+    return df.copy()
+
+@st.cache_resource(show_spinner="IQVIA 로딩 중…", max_entries=1)
+def _load_iqvia_res(cache_mtime):
+    df = _read_sales(IQVIA_CACHE)
     try:   # 복합제: 원자료 '용량'은 첫 성분만 있어(40MG) 팩명의 40MG/10을 읽어 40MG/10MG로 나눈다
         df, _ = fix_iqvia_dose(df)
     except Exception:
@@ -148,12 +168,20 @@ def load_iqvia(cache_mtime):
     lc_yr  = [c for c in df.columns if re.match(r"\d{4}년$", c)]
     return df, lc_qtr, lc_yr
 
-@st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
-def load_ubist(cache_mtime):
-    df = pd.read_pickle(UBIST_CACHE)
+def load_iqvia(cache_mtime):
+    df, lc_qtr, lc_yr = _load_iqvia_res(cache_mtime)
+    return _share_df(df), list(lc_qtr), list(lc_yr)
+
+@st.cache_resource(show_spinner="UBIST 로딩 중…", max_entries=1)
+def _load_ubist_res(cache_mtime):
+    df = _read_sales(UBIST_CACHE)
     # 연간 컬럼만 기본 num_cols로 (분기·연간 혼합 중복합산 방지)
     num_cols = [c for c in df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
     return df, num_cols
+
+def load_ubist(cache_mtime):
+    df, num_cols = _load_ubist_res(cache_mtime)
+    return _share_df(df), list(num_cols)
 
 @st.cache_data(show_spinner=False, max_entries=1)
 def _u_partial_cached(cache_mtime):

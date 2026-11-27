@@ -135,6 +135,19 @@ def _ensure(name):
     except Exception:
         pass
 
+# pandas 3 은 copy-on-write 가 기본이라 얕은 복사본을 고쳐도 공유 원본은 그대로다.
+# 그보다 옛 pandas 면 안전하게 깊은 복사본을 준다(메모리 절약은 줄지만 결과는 같다).
+try:
+    _COW = int(pd.__version__.split(".")[0]) >= 3 or pd.get_option("mode.copy_on_write") is True
+except Exception:
+    _COW = False
+
+def _share(df):
+    """공유해 둔 표를 받은 쪽이 마음대로 고쳐도 원본이 안 바뀌게 넘긴다."""
+    if df is None:
+        return df
+    return df.copy(deep=not _COW)
+
 def _mtime(path):
     """파일 수정시각(없으면 0). 캐시 키로 써서 파일이 바뀌면 자동으로 다시 읽는다."""
     try:
@@ -239,13 +252,13 @@ def listed_patent_mask(pt):
         return pd.Series(True, index=pt.index)
     return pt[PATENT_PAGE_COL].astype(str).str.contains("제품", na=False)
 
-@st.cache_data(show_spinner="허가 로딩 중…", max_entries=1)
+@st.cache_resource(show_spinner="허가 로딩 중…", max_entries=1)
 def _load_approval(_mt):
     return enrich_approval(pd.read_parquet(SD / "approval.parquet"))
 
 def load_approval():
     _ensure("approval")
-    return _load_approval(_mtime(SD / "approval.parquet"))
+    return _share(_load_approval(_mtime(SD / "approval.parquet")))
 
 def build_kor_core_key_map(pairs):
     """[(한글성분 시리즈, 영문성분 시리즈), …] → {한글코어: 영문키}.
@@ -348,7 +361,7 @@ def enrich_price(df):
         df["_core"] = ing_core_series(df["주성분명"]) if "주성분명" in df.columns else ""
     return df
 
-@st.cache_data(show_spinner="특허 로딩 중…", max_entries=1)
+@st.cache_resource(show_spinner="특허 로딩 중…", max_entries=1)
 def _load_patent(_mt):
     # 파일이 없어도(시트 연결 실패 등) 앱이 죽지 않도록 빈 표를 돌려준다.
     # 각 화면은 patent_available()로 '미연결' 안내를 따로 표시한다.
@@ -365,9 +378,9 @@ def _load_patent(_mt):
 
 def load_patent():
     _ensure("patent")
-    return _load_patent(_mtime(SD / "patent.parquet"))
+    return _share(_load_patent(_mtime(SD / "patent.parquet")))
 
-@st.cache_data(show_spinner="임상 로딩 중…", max_entries=1)
+@st.cache_resource(show_spinner="임상 로딩 중…", max_entries=1)
 def _load_clinical(_mt):
     if not (SD / "clinical.parquet").exists():
         return pd.DataFrame({c: pd.Series(dtype="object") for c in ["제품명", "성분명", "CLINIC_STEP_NM", "_core"]})
@@ -375,7 +388,7 @@ def _load_clinical(_mt):
 
 def load_clinical():
     _ensure("clinical")
-    return _load_clinical(_mtime(SD / "clinical.parquet"))
+    return _share(_load_clinical(_mtime(SD / "clinical.parquet")))
 
 @st.cache_data
 def competition_by_key():
@@ -538,13 +551,41 @@ def original_products(keys):
 def price_available():
     return (SD / "price.parquet").exists()
 
-@st.cache_data(show_spinner="약가 로딩 중…", max_entries=1)
+@st.cache_resource(show_spinner="약가 로딩 중…", max_entries=1)
 def _load_price(_mt):
     return enrich_price(pd.read_parquet(SD / "price.parquet"))
 
 def load_price():
     _ensure("price")
-    return _load_price(_mtime(SD / "price.parquet"))
+    return _share(_load_price(_mtime(SD / "price.parquet")))
+
+
+# ── 큰 표는 한 벌만 둔다 ─────────────────────────────────────────────────────
+# st.cache_data 는 표를 직렬화해 따로 보관하고, 부를 때마다 새 복사본을 만든다(큰 표는 수십~백 MB씩).
+# 위 load_* 는 st.cache_resource 로 한 벌만 두고, 부를 때는 얕은 복사본(.copy(deep=False))을 준다.
+# pandas 3 은 copy-on-write 라, 받은 쪽이 칸을 더하거나 값을 바꿔도 공유 원본은 바뀌지 않는다.
+@st.cache_resource(show_spinner=False, max_entries=1)
+def _iqvia_pickle(path_str, mt):
+    return pd.read_pickle(path_str)
+
+@st.cache_resource(show_spinner=False, max_entries=1)
+def _ubist_pickle(path_str, mt):
+    return pd.read_pickle(path_str)
+
+def load_sales_pickle(path):
+    """매출 pkl(IQVIA·UBIST)을 한 벌만 읽어 두고 얕은 복사본을 준다.
+    종합분석(scouting)과 매출 분석(app.py)이 같은 한 벌을 같이 쓴다.
+    파일 수정시각이 캐시 열쇠라, 파일이 새로 만들어지면 다음에 부를 때 새로 읽는다(옛 표는 빠진다)."""
+    fn = _ubist_pickle if "ubist" in Path(path).name.lower() else _iqvia_pickle
+    return _share(fn(str(path), _mtime(Path(path))))
+
+def drop_sales_pickles():
+    """'매출 데이터 닫기' 용: 공유해 둔 매출 표를 메모리에서 뺀다."""
+    for fn in (_iqvia_pickle, _ubist_pickle):
+        try:
+            fn.clear()
+        except Exception:
+            pass
 
 def load_slim(name, cols):
     """자료 파일에서 '필요한 열만' 읽어 돌려준다.

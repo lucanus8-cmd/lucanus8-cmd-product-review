@@ -93,15 +93,14 @@ def _file_mtime(p):
 
 # 매출 파일의 수정시각을 캐시 열쇠로 쓴다: 파일이 새로 만들어지면 다음에 열 때 자동으로 새로 읽고,
 # max_entries=1 이라 예전 표는 메모리에서 빠진다.
-@st.cache_data(show_spinner="IQVIA 로딩 중…", max_entries=1)
+# 매출 표는 scout_sources 가 한 벌만 들고 있고(매출 분석 탭 app.py 와 같이 씀), 여기서는 얕은 복사본을 받는다.
 def _load_iqvia_file(_mt):
-    df = pd.read_pickle(DATA_DIR / "iqvia.pkl")
+    df = ss.load_sales_pickle(DATA_DIR / "iqvia.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^\d{4}년$", str(c))])
     return df, yr
 
-@st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
 def _load_ubist_file(_mt):
-    df = pd.read_pickle(DATA_DIR / "ubist.pkl")
+    df = ss.load_sales_pickle(DATA_DIR / "ubist.pkl")
     yr = sorted([c for c in df.columns if re.match(r"^처방조제액\(원\)_\d{4}년$", str(c))])
     return df, yr
 
@@ -232,7 +231,7 @@ def sales_agg(df, yr, key, maker):
     out = out.join(g[maker].nunique().rename("제조사수")).join(g.size().rename("품목수"))
     return out.reset_index()
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=16)
 def sales_agg_cached(src, key, maker):
     """집계 결과 캐시. 위젯을 만질 때마다 수천 그룹을 다시 집계하지 않도록."""
     df, yr, _ = get(src)
@@ -454,9 +453,7 @@ def fetch_sales_now():
     with st.spinner("매출 자료(IQVIA·UBIST)를 받아오는 중… 처음엔 1~2분 걸릴 수 있습니다"):
         ok, err = bootstrap.fetch_sales()
     if ok:
-        for _ld in (_load_iqvia_file, _load_ubist_file):   # 새로 받은 파일을 읽도록 캐시만 비운다
-            try: _ld.clear()
-            except Exception: pass
+        ss.drop_sales_pickles()   # 새로 받은 파일을 읽도록 공유 표만 비운다
         return True
     st.error("매출 자료를 불러오지 못했습니다. 잠시 뒤 다시 눌러 보시고, 계속 안 되면 "
              "원본 엑셀(IQVIA·UBIST)의 구글 드라이브 공유 설정을 확인해 주세요.")
@@ -660,7 +657,7 @@ def _price_products():
         ["제품코드", "제품명", "업체명", "제제코드", "금액"]].reset_index(drop=True)
 
 
-@st.cache_data(show_spinner="같은 성분의 다른 함량 품목을 찾는 중…")
+@st.cache_data(show_spinner="같은 성분의 다른 함량 품목을 찾는 중…", max_entries=64)
 def _dose_peers(code):
     """같은 성분·투여경로의 품목 목록(함량별). 함량배수 산식의 '비교 제품' 후보다.
 
@@ -705,7 +702,7 @@ def _dose_peers(code):
         ["함량", "금액"], ascending=[True, False]).reset_index(drop=True)
 
 
-@st.cache_data(show_spinner="오리지널 약가 이력 보는 중…")
+@st.cache_data(show_spinner="오리지널 약가 이력 보는 중…", max_entries=64)
 def _orig_cuts(code, drop=0.20):
     """제제(성분·함량·제형) 안에서 오리지널 한 품목을 짚고, 그 품목의 인하 시점을 돌려준다.
 
@@ -4081,6 +4078,7 @@ if PAGE == "sales":
         if st.button("🧹 매출 데이터 닫기(메모리 절약)", key="btn_unload_sales"):
             st.session_state["_load_sales"] = False
             st.cache_data.clear()
+            ss.drop_sales_pickles()
             st.rerun()
     else:
         st.info("매출 분석 데이터(IQVIA·UBIST)는 용량이 커서 필요할 때만 불러옵니다.\n\n"
