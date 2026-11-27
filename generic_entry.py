@@ -170,8 +170,14 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
     last = p.sort_values("적용일자").drop_duplicates("_pc", keep="last").set_index("_pc")
     now = last["금액"].where(last["급여구분"] == "급여")
 
+    def _co(x):
+        return re.sub(r"\(주\)|주식회사|㈜|\(유\)|\s+", "", str(x))
+    ocos = {_co(oco)} | set(orow["업체명"].map(_co))
+
     def table(rows, kind):
-        rows = rows[~rows["_pc"].isin(e) & (rows["_nn"].map(brand) != ob)]
+        # 오리지널 자기 제품은 뺀다: 같은 상표로 시작(서방·XR·OD 등)하거나 오리지널 회사 제품
+        rows = rows[~rows["_pc"].isin(e) & ~rows["_nn"].map(brand).str.startswith(ob)
+                    & ~rows["업체명"].map(_co).isin(ocos)]
         if rows.empty:
             return pd.DataFrame()
         g = rows.sort_values("적용일자")
@@ -189,7 +195,8 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
     if len(want) == 1:      # 단일제를 볼 때 빼낸 복합제 수 (이 성분이 든 복합제 품목)
         combo = a[a["_cores"].map(lambda cs: len(cs) > 1 and any(any(c == w or c.startswith(w) for c in cs)
                                                                    for w in want))]
-        out["n_combo"] = int(p[p["_nn"].isin(set(combo["_nn"]))]["_pc"].nunique()) if not combo.empty else 0
+        cur = last[last["급여구분"] == "급여"]
+        out["n_combo"] = int(cur[cur["_nn"].isin(set(combo["_nn"]))].index.nunique()) if not combo.empty else 0
 
     # 주의문구 (오래된 오리지널만, 자료 시작일 가격으로 같은 함량·제형 비교)
     og = gy[gy["_pc"].isin(e)]
