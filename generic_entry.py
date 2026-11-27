@@ -183,7 +183,8 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
     def table(rows, kind):
         # 오리지널 자기 제품만 뺀다 (같은 제품코드, 또는 품목명이 같은 제품 — 예전 코드·예전 회사명).
         # 오리지널 회사가 낸 다른 제품(XR·OD·개량 등)도 약가를 받았으면 표시하고 '오리지널 회사'로 표시한다.
-        rows = rows[~rows["_pc"].isin(e) & ~rows["_nn"].isin(fam_nn)]
+        #  상표가 오리지널과 똑같은 제품(예: 예전 회사명으로 남은 '자누비아정50mg')도 오리지널 자신으로 본다.
+        rows = rows[~rows["_pc"].isin(e) & ~rows["_nn"].isin(fam_nn) & (rows["_nn"].map(brand) != ob)]
         if rows.empty:
             return pd.DataFrame()
         g = rows.sort_values("적용일자")
