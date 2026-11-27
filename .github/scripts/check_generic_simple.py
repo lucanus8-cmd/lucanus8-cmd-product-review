@@ -71,6 +71,18 @@ def main():
     pr["_pc"] = pr["제품코드"].astype(str).str.strip()
     # 약가 제품명 = 허가 품목명 + '_(규격)' → 규격을 떼고 띄어쓰기를 없애 허가 품목명과 정확히 맞춘다
     pr["_nm"] = pr["제품명"].astype(str).str.split("_(", regex=False).str[0].str.replace(r"\s+", "", regex=True)
+
+    def nn(x):
+        """제품명 정리: 규격(_(…)) 떼기 · 괄호 속 성분명 떼기 · 띄어쓰기 없애기 · 단위 표기 통일"""
+        t = str(x).split("_(")[0]
+        t = re.sub(r"\([^)]*\)", "", t)
+        t = re.sub(r"\s+", "", t).lower()
+        for a_, b_ in (("마이크로그램", "mcg"), ("마이크로그람", "mcg"), ("밀리그램", "mg"), ("밀리그람", "mg"),
+                       ("㎎", "mg"), ("㎍", "mcg"), ("μg", "mcg"), ("밀리리터", "ml"), ("㎖", "ml"),
+                       ("그램", "g"), ("그람", "g"), ("·", ""), (".0mg", "mg")):
+            t = t.replace(a_, b_)
+        return t
+    pr["_nn"] = pr["제품명"].map(nn)
     gy = pr[pr["급여구분"] == "급여"]
     vc = pr.groupby("제품명")["적용일자"].min().value_counts()
     bulk = set(vc[vc >= 3000].index)
@@ -102,18 +114,16 @@ def main():
         ob = brand(o["품목명"])
         fam = a[(a["업체명"].astype(str) == str(o["업체명"])) & (a["품목명"].map(brand) == ob)]
         r["오리지널 품목(함량)"] = len(fam)
-        e = set().union(*fam["_edi"].tolist())
-        orow = pr[pr["_pc"].isin(e)]
-        how = "EDI"
-        names = {re.sub(r"\s+", "", str(x)) for x in fam["품목명"]}
-        byname = pr[pr["_nm"].isin(names)]
+        names = {nn(x) for x in fam["품목명"]}
+        orow = pr[pr["_nn"].isin(names)]
+        exact = pr[pr["_nm"].isin({re.sub(r"\s+", "", str(x)) for x in fam["품목명"]})]
+        r["약가 연결"] = ("제품명(그대로 일치)" if not exact.empty and set(exact["_pc"]) == set(orow["_pc"])
+                       else "제품명(정리해서 일치)") if not orow.empty else "-"
         if orow.empty:
-            orow, how = byname, "품목명"
-        elif not byname.empty and not set(byname["_pc"]) <= set(orow["_pc"]):
-            orow, how = pr[pr["_pc"].isin(set(orow["_pc"]) | set(byname["_pc"]))], "EDI+품목명"
-        r["약가 연결"] = how if not orow.empty else "-"
-        if orow.empty:
-            r["결과"] = "약가에서 오리지널 못 찾음 (EDI 없음·이름 다름·비급여)"; rows.append(r); continue
+            cand = pr[pr["_nn"].str.startswith(ob.lower())]["제품명"].drop_duplicates().head(4).tolist()
+            r["허가 품목명"] = " / ".join(str(x)[:30] for x in fam["품목명"].head(3))
+            r["약가에 있는 비슷한 이름"] = " / ".join(str(x)[:34] for x in cand) or "(상표로도 없음 → 비급여일 수 있음)"
+            r["결과"] = "약가에서 오리지널 못 찾음"; rows.append(r); continue
         e = set(orow["_pc"])
         codes = sorted({c for c in orow["_cd"] if c})
         r["약가코드"] = ",".join(codes)
