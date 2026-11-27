@@ -37,11 +37,6 @@ def _creds():
     import base64
     import json
     from google.oauth2 import service_account
-    # -1) 따로 띄운 자료 만들기 작업: 부모가 환경변수로 넘겨준 키
-    _env_b64 = os.environ.get(_SA_ENV) if os.environ.get(_CHILD_FLAG) else None
-    if _env_b64:
-        info = json.loads(base64.b64decode(_env_b64))
-        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     # 0) 가장 견고한 방식: 전체 JSON을 base64로 인코딩한 단일 값.
     #    (여러 줄 PEM 붙여넣기에서 생기는 문자 손상/스마트문장부호 문제를 원천 차단)
     b64 = None
@@ -423,8 +418,91 @@ def _stale(name):
     except Exception:
         return True
 
-def _do_build_here(include_sales=False, force=False, only=None):
-    """실제 생성 작업 (이 프로세스 안에서). 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다.
+
+# ── 로봇이 만든 완성본 받기 ───────────────────────────────────────────────────
+# 원본(엑셀·시트)을 받아 표로 만드는 일은 메모리를 수백 MB 쓴다(매출 IQVIA 는 +700 MB).
+# GitHub 로봇이 같은 코드로 미리 만들어 둔 완성본이 있으면 사이트는 그 파일을 받아 저장만 한다.
+# 내용은 사이트가 직접 만든 것과 같다(로봇 시험에서 바이트 단위로 같음을 확인).
+# 완성본이 없거나, 기준시각보다 오래됐거나, 못 받으면 예전처럼 직접 만든다.
+#   · Streamlit Secrets 의 [prebuilt] 표: 자료이름 = "구글 드라이브 파일 ID" (비공개 파일, 서비스계정에 공유)
+#   · 환경변수 PREBUILT_DIR: 로봇 시험용 폴더(사이트에서는 쓰지 않음)
+PREBUILT_EXTRA = {"patent": ["keymap"]}      # 특허를 받을 때 같이 받는 작은 파일
+
+
+def _prebuilt_path(name):
+    return SD / "keymap.parquet" if name == "keymap" else _cache_path(name)
+
+
+def _prebuilt_ids():
+    try:
+        t = st.secrets.get("prebuilt", None)
+        return {str(k): str(v).strip() for k, v in dict(t).items() if str(v).strip()} if t else {}
+    except Exception:
+        return {}
+
+
+def _looks_ok(path, data):
+    """받은 파일이 온전한지 가볍게 본다(내용 전체를 펼치지 않음)."""
+    if not data or len(data) < 16:
+        return False
+    if str(path).endswith(".parquet"):
+        return data[:4] == b"PAR1" and data[-4:] == b"PAR1"
+    return data[:1] == b"\x80"            # pickle
+
+
+def _put(path, data):
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _fetch_prebuilt(name, drive=None):
+    """완성본을 받아 저장했으면 True. 없거나 오래됐거나 이상하면 False(→ 직접 만든다)."""
+    path = _prebuilt_path(name)
+    deadline = _last_refresh_deadline(name in WEEKLY)
+    d = os.environ.get("PREBUILT_DIR")
+    if d:
+        src = Path(d) / path.name
+        try:
+            if src.exists() and src.stat().st_mtime >= deadline:
+                data = src.read_bytes()
+                if _looks_ok(path, data):
+                    _put(path, data)
+                    return True
+        except Exception:
+            pass
+        return False
+    fid = _prebuilt_ids().get(name)
+    if not (fid and drive is not None):
+        return False
+    try:
+        import datetime as _dt
+        m = drive.files().get(fileId=fid, fields="modifiedTime,size", supportsAllDrives=True).execute()
+        mt = _dt.datetime.fromisoformat(m["modifiedTime"].replace("Z", "+00:00")).timestamp()
+        if mt < deadline or int(m.get("size") or 0) < 16:
+            return False
+        data = drive.files().get_media(fileId=fid, supportsAllDrives=True).execute()
+        if _looks_ok(path, data):
+            _put(path, data)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _take_prebuilt(want, need, drive, rebuilt):
+    """필요한 자료 중 완성본이 있는 것은 받아 두고 need 에서 뺀다."""
+    for n in want:
+        if need.get(n) and _fetch_prebuilt(n, drive):
+            need[n] = False
+            rebuilt.append(n)
+            for x in PREBUILT_EXTRA.get(n, []):
+                _fetch_prebuilt(x, drive)
+
+def _do_build(include_sales=False, force=False, only=None):
+    """실제 생성 작업. 화면(st.*)을 쓰지 않으므로 백그라운드 스레드에서도 돌릴 수 있다.
     only={"patent"} 처럼 주면 그 자료만 만든다(필요한 화면의 자료만 받기 위함)."""
     SD.mkdir(exist_ok=True); SAVED.mkdir(exist_ok=True)
     # 자가복구: 이전 버전이 '투여' 등 컬럼을 누락한 채 저장한 price.parquet면 삭제해 재생성 유도
@@ -449,6 +527,11 @@ def _do_build_here(include_sales=False, force=False, only=None):
     if not any(need[n] for n in WANT):
         return "local"
 
+    rebuilt = []
+    _take_prebuilt(WANT, need, None, rebuilt)          # 로봇 시험 폴더(있을 때만)
+    if not any(need[n] for n in WANT):
+        return "built"
+
     have_all = all(_cache_path(n).exists() for n in WANT)
     try:
         from googleapiclient.discovery import build
@@ -460,7 +543,9 @@ def _do_build_here(include_sales=False, force=False, only=None):
             return "local"      # 로컬/자격증명 없음 → 기존 데이터 그대로 사용
         raise
 
-    rebuilt = []
+    _take_prebuilt(WANT, need, drive, rebuilt)         # 드라이브의 완성본(Secrets 에 적어 둔 것만)
+    if not any(need[n] for n in WANT):
+        return "built"
 
     def _try(name, fn):
         """갱신 시도. 실패해도 기존 파일이 있으면 유지하고, 다음 주기까지 재시도를 미룬다."""
@@ -591,68 +676,9 @@ def _do_build_here(include_sales=False, force=False, only=None):
     return "built" if rebuilt else "local"
 
 
-# ── 자료 만들기는 따로 띄운 작업(자식 프로세스)에서 한다 ───────────────────────
-# 엑셀·시트를 받아 표로 만드는 동안 수백 MB를 쓰는데, 같은 프로세스에서 하면 다 만든 뒤에도
-# 그 메모리를 운영체제에 돌려주지 않아 사이트가 계속 무겁다. 따로 띄운 작업은 끝나면
-# 메모리를 전부 돌려준다. 따로 띄우지 못하면(어떤 이유든) 예전처럼 이 프로세스 안에서 만든다.
-_CHILD_FLAG = "_BOOT_CHILD"
-_SA_ENV = "_BOOT_SA_B64"
-# 자료 만들기 작업은 한 번에 하나만 띄운다(여럿이 겹치면 각자 pandas 를 올려 합계가 커진다).
-_BUILD_LOCK = threading.Lock()
-
-
-def _sa_b64_for_child():
-    """자식 작업에 넘길 서비스계정 키(base64). 화면·파일에는 쓰지 않고 자식의 환경변수로만 넘긴다."""
-    import base64
-    import json
-    try:
-        b64 = st.secrets.get("gcp_service_account_b64", None)
-        if b64:
-            return str(b64).strip()
-    except Exception:
-        pass
-    try:
-        raw = st.secrets["gcp_service_account"]
-        return base64.b64encode(json.dumps(dict(raw)).encode()).decode()
-    except Exception:
-        return None      # 로컬: 자식도 secrets/service-account.json 을 그대로 읽는다
-
-
-def _do_build(include_sales=False, force=False, only=None):
-    """자료 만들기. 따로 띄운 작업에서 돌리고 결과('built'/'local')만 받는다."""
-    import json
-    import subprocess
-    import sys
-    if os.environ.get(_CHILD_FLAG) or os.environ.get("BOOT_BUILD_INPROC"):
-        return _do_build_here(include_sales=include_sales, force=force, only=only)
-    args = json.dumps({"include_sales": bool(include_sales), "force": bool(force),
-                       "only": sorted(only) if only else None})
-    code = ("import json,sys\n"
-            "import bootstrap\n"
-            "a=json.loads(sys.argv[1]); a['only']=set(a['only']) if a['only'] else None\n"
-            "try:\n"
-            "    r=bootstrap._do_build_here(**a); print('__BOOT_OK__'+json.dumps(r))\n"
-            "except Exception as e:\n"
-            "    print('__BOOT_ERR__'+json.dumps(str(e))); sys.exit(3)\n")
-    env = dict(os.environ)
-    env[_CHILD_FLAG] = "1"
-    b64 = _sa_b64_for_child()
-    if b64:
-        env[_SA_ENV] = b64
-    try:
-        with _BUILD_LOCK:
-            pr = subprocess.run([sys.executable, "-c", code, args], cwd=str(BASE), env=env,
-                                capture_output=True, text=True, timeout=1800)
-    except Exception:
-        return _do_build_here(include_sales=include_sales, force=force, only=only)
-    out = pr.stdout or ""
-    for ln in reversed(out.splitlines()):
-        if ln.startswith("__BOOT_OK__"):
-            return json.loads(ln[len("__BOOT_OK__"):])
-        if ln.startswith("__BOOT_ERR__"):
-            raise RuntimeError(json.loads(ln[len("__BOOT_ERR__"):]))
-    # 자식이 결과를 못 남기고 끝남(메모리 부족 등) → 예전 방식으로 한 번 더
-    return _do_build_here(include_sales=include_sales, force=force, only=only)
+# 예전 이름(로봇 시험 스크립트용)
+def _do_build_here(include_sales=False, force=False, only=None):
+    return _do_build(include_sales=include_sales, force=force, only=only)
 
 # ── 갱신 진입점 ────────────────────────────────────────────────────────────
 # 자료가 이미 있으면 화면을 멈추지 않는다. 오래된 자료는 뒤에서 조용히 새로 만들고,
