@@ -60,6 +60,8 @@ def main():
     alt = pr["제제코드"].map(_c)
     pr["_cd"] = pr["_cd"].where(pr["_cd"].str.len() > 0, alt)
     pr["_pc"] = pr["제품코드"].astype(str).str.strip()
+    # 약가 제품명 = 허가 품목명 + '_(규격)' → 규격을 떼고 띄어쓰기를 없애 허가 품목명과 정확히 맞춘다
+    pr["_nm"] = pr["제품명"].astype(str).str.split("_(", regex=False).str[0].str.replace(r"\s+", "", regex=True)
     gy = pr[pr["급여구분"] == "급여"]
     vc = pr.groupby("제품명")["적용일자"].min().value_counts()
     bulk = set(vc[vc >= 3000].index)
@@ -77,11 +79,12 @@ def main():
             r["결과"] = "허가에서 못 찾음"; rows.append(r); continue
         o = a.iloc[0]
         r["오리지널(최초허가)"] = f"{str(o['품목명'])[:16]} · {str(o['업체명'])[:8]} · {o['_d'].date()}"
-        e = o["_edi"]
-        r["EDI"] = ",".join(sorted(e))[:20] or "(없음)"
-        orow = pr[pr["_pc"].isin(e)]
+        onm = re.sub(r"\s+", "", str(o["품목명"]))
+        orow = pr[pr["_nm"] == onm]
+        r["약가 연결"] = "품목명 일치" if not orow.empty else "-"
         if orow.empty:
-            r["결과"] = "약가에서 오리지널 EDI 못 찾음"; rows.append(r); continue
+            r["결과"] = "약가에서 오리지널 품목명 못 찾음 (비급여이거나 이름이 다름)"; rows.append(r); continue
+        e = set(orow["_pc"])
         codes = sorted({c for c in orow["_cd"] if c})
         r["약가코드"] = ",".join(codes)
         r["오리지널 첫급여"] = str(orow[orow["급여구분"] == "급여"]["적용일자"].min().date()) if (orow["급여구분"] == "급여").any() else "-"
@@ -96,7 +99,7 @@ def main():
             r["첫 등재(날짜 아는 것 중)"] = f"{k['d'].date()} {str(known.sort_values('d').index[0])[:18]} · {str(k['co'])[:8]}"
         # 참고: 같은 회사가 같은 성분으로 받은 다른 함량 품목까지 넣으면
         same_co = a[a["업체명"].astype(str) == str(o["업체명"])]
-        e2 = set().union(*same_co["_edi"].tolist()) if not same_co.empty else set()
+        e2 = set(pr[pr["_nm"].isin({re.sub(r"\s+", "", str(x)) for x in same_co["품목명"]})]["_pc"])
         codes2 = sorted({c for c in pr[pr["_pc"].isin(e2)]["_cd"] if c})
         if set(codes2) != set(codes):
             oth2 = gy[gy["_cd"].isin(codes2) & ~gy["_pc"].isin(e2)]
