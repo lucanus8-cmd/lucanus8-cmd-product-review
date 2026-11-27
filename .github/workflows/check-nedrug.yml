@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -372,6 +372,14 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt requests
           python .github/scripts/check_sales_combo2.py
+
+      - name: 드라이브 HIRA 약가 폴더 파일 보기 (읽기만)
+        if: inputs.what == 'hirafolder'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet pandas pyarrow openpyxl streamlit google-auth google-api-python-client requests
+          python .github/scripts/check_hira_folder.py
 
       - name: 일본 검토 표 남기기
         if: always() && inputs.what == 'jpind'
