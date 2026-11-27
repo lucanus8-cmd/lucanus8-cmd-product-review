@@ -142,23 +142,32 @@ def main():
             r["약가에 있는 비슷한 이름"] = " / ".join(str(x)[:34] for x in cand) or "(상표로도 없음 → 비급여일 수 있음)"
             r["결과"] = "약가에서 오리지널 못 찾음"; rows.append(r); continue
         e = set(orow["_pc"])
-        # ── 주의문구: 같은 성분(염 무관) 허가 품목 중, 같은 함량·제형에서 지금 상한가가 오리지널보다 높은 품목
-        ocur = cur[cur["_pc"].isin(e) & (cur["_st"] != "")]
+        # ── 주의문구 (2안): 오리지널이 자료 시작일(묶음 날짜)에 이미 있던 오래된 약일 때만,
+        #    그날의 상한가를 같은 함량·제형끼리 비교해 오리지널보다 비싼 품목이 있으면 보여 준다.
+        #    (지금 가격은 오리지널이 인하·재평가를 먼저 맞아 제네릭보다 싸진 경우가 많아 쓰지 않는다)
+        og_all = gy[gy["_pc"].isin(e)]
+        d0 = og_all["적용일자"].min() if not og_all.empty else None
         allnames = {nn(x): (str(x), str(c), d) for x, c, d in zip(a["품목명"], a["업체명"], a["_d"])}
-        cand = cur[cur["_nn"].isin(allnames.keys()) & ~cur["_pc"].isin(e) & (cur["_nn"].map(lambda t: brand(t)) != ob.lower())]
-        warn = []
-        for (st, fm), og in ocur.groupby(["_st", "_form"]):
-            op = og["금액"].max()
-            hi = cand[(cand["_st"] == st) & (cand["_form"] == fm) & (cand["금액"] > op)]
-            for _, h in hi.iterrows():
-                nm0, co0, d0 = allnames[h["_nn"]]
-                warn.append((h["금액"], brand(nm0), co0[:10], str(d0.date()), st, int(op)))
-        seen_b, top = set(), []
-        for w in sorted(warn, reverse=True):
-            if w[1] not in seen_b:
-                seen_b.add(w[1]); top.append(w)
-        r["⚠️ 주의문구"] = (" / ".join(f"{b}({co}, 허가 {d}) {st} {int(pz)}원 > 오리지널 {op}원" for pz, b, co, d, st, op in top[:3])
-                         if top else "없음")
+        top = []
+        if d0 is not None and d0 in bulk:
+            snap = gy[(gy["적용일자"] == d0) & gy["_nn"].isin(allnames.keys())].copy()
+            snap["_st"] = snap["제품명"].map(strength)
+            snap["_form"] = snap["_cd"].str[-3:]
+            osn = snap[snap["_pc"].isin(e) & (snap["_st"] != "")]
+            cand = snap[~snap["_pc"].isin(e) & (snap["_nn"].map(brand) != ob.lower())]
+            warn = []
+            for (st, fm), og in osn.groupby(["_st", "_form"]):
+                op = og["금액"].max()
+                hi = cand[(cand["_st"] == st) & (cand["_form"] == fm) & (cand["금액"] > op * 1.05)]
+                for _, h in hi.iterrows():
+                    nm0, co0, dd = allnames[h["_nn"]]
+                    warn.append((h["금액"], brand(nm0), co0[:10], str(dd.date()), st, int(op)))
+            seen_b = set()
+            for w in sorted(warn, reverse=True):
+                if w[1] not in seen_b:
+                    seen_b.add(w[1]); top.append(w)
+        r["⚠️ 주의문구"] = (" / ".join(f"{b}({co}, 허가 {dd}) {st} {int(pz)}원 > 오리지널 {op}원"
+                                     for pz, b, co, dd, st, op in top[:3]) if top else "없음")
         flags.append((item, ob, [t[1] for t in top[:3]]))
         codes = sorted({c for c in orow["_cd"] if c})
         r["약가코드"] = ",".join(codes)
