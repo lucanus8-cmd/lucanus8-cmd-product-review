@@ -97,6 +97,9 @@ def main():
         a = ap[ap["_cores"].map(ok) & ap["_d"].notna()].sort_values("_d")
         r = {"성분": item, "허가 품목수": len(a)}
         if a.empty:
+            hit = ap[ap["주성분"].astype(str).map(lambda t: all(w in t for w in want))]
+            r["(참고) 성분 글자가 모두 들어간 허가"] = " / ".join(
+                f"{str(x)[:16]}[{','.join(sorted(c))[:40]}]" for x, c in zip(hit["품목명"].head(3), hit["_cores"].head(3))) or "없음"
             r["결과"] = "허가에서 못 찾음"; rows.append(r); continue
         o = a.iloc[0]
         r["오리지널"] = f"{str(o['품목명'])[:16]} · {str(o['업체명'])[:8]} · {o['_d'].date()} (최초허가)"
