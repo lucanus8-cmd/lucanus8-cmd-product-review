@@ -52,6 +52,9 @@ def main():
     cnt = Counter(zip(dis["성분"].astype(str), u[dis.index], ref[dis.index]))
     for (t, a, b), c in cnt.most_common(15):
         print(f"   {c:>4}행 | {a} | 약가 {b}개 | {t[:110]}")
+    u2 = ubist_combo(ub, {k: int(str(v).split(".")[0]) for k, v in code_n.items() if str(v).split(".")[0].isdigit()})
+    agree2 = (ref_kind[hv] == u2[hv])
+    print(f"[약가 성분 수 먼저 쓰는 판정] 일치 {int(agree2.sum()):,}/{int(hv.sum()):,} ({agree2.mean()*100:.2f}%) · 전체 판정 {u2.value_counts().to_dict()}")
     nh = ub[~hv]
     print(f"  약가코드로 못 찾은 행 {len(nh):,} · 그중 우리 판정:", u[nh.index].value_counts().to_dict())
     return 0

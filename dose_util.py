@@ -127,12 +127,46 @@ def ubist_ingredients(text):
     return names
 
 
-def ubist_combo(df):
-    """UBIST: 성분 칸에 서로 다른 성분이 2개 이상이면 복합제."""
+def price_ingredient_counts(path):
+    """심평원 약가 자료(price.parquet)에서 약가코드 → 성분 수. 못 읽으면 빈 사전."""
+    try:
+        import pyarrow.parquet as pq
+        have = set(pq.read_schema(path).names)
+        cols = [c for c in ("제제코드", "주성분코드", "성분수") if c in have]
+        if "성분수" not in cols:
+            return {}
+        p = pd.read_parquet(path, columns=cols)
+    except Exception:
+        return {}
+
+    def _s(x):
+        x = "" if x is None or (isinstance(x, float) and x != x) else str(x).strip()
+        return "" if x in ("nan", "None", "<NA>") else x
+    out = {}
+    for col in ("제제코드", "주성분코드"):
+        if col not in p.columns:
+            continue
+        for cd, n in zip(p[col].tolist(), p["성분수"].tolist()):
+            cd, n = _s(cd).upper(), _s(n).split(".")[0]
+            if cd and n.isdigit() and cd not in out:
+                out[cd] = int(n)
+    return out
+
+
+def ubist_combo(df, code_n=None):
+    """UBIST: 성분 끝 [약가코드]로 심평원 '성분 수'를 먼저 쓰고(2개 이상 = 복합제),
+    코드가 없거나 못 찾으면 성분 글자에서 서로 다른 성분이 2개 이상이면 복합제."""
     col = "성분" if "성분" in df.columns else ("성분명" if "성분명" in df.columns else None)
     if col is None:
         return pd.Series("단일제", index=df.index, dtype=object)
     s = df[col].astype(str)
     uniq = pd.Series(s.unique())
-    kind = dict(zip(uniq, uniq.map(lambda x: "복합제" if len(ubist_ingredients(x)) >= 2 else "단일제")))
+    code_n = code_n or {}
+
+    def one(x):
+        m = re.search(r"\[([0-9A-Za-z]{9})\]", x)
+        if m and m.group(1).upper() in code_n:
+            return "복합제" if code_n[m.group(1).upper()] >= 2 else "단일제"
+        return "복합제" if len(ubist_ingredients(x)) >= 2 else "단일제"
+    kind = dict(zip(uniq, uniq.map(one)))
     return s.map(kind)

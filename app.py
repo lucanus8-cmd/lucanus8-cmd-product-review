@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from io import BytesIO
 from openpyxl import Workbook
-from dose_util import fix_iqvia_dose, dose_match, iqvia_combo, ubist_combo, COMBO_LABELS
+from dose_util import fix_iqvia_dose, dose_match, iqvia_combo, ubist_combo, price_ingredient_counts, COMBO_LABELS
 from openpyxl.chart import BarChart, PieChart, LineChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -155,8 +155,8 @@ def load_iqvia(cache_mtime):
 @st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
 def load_ubist(cache_mtime):
     df = pd.read_pickle(UBIST_CACHE)
-    try:   # 단일제/복합제 (성분 글자에서 서로 다른 성분이 2개 이상이면 복합제)
-        df["_구성"] = ubist_combo(df)
+    try:   # 단일제/복합제: 성분 끝 [약가코드]의 심평원 성분 수 → 없으면 성분 글자(서로 다른 성분 2개 이상)
+        df["_구성"] = ubist_combo(df, price_ingredient_counts(Path(__file__).parent / "scout_data" / "price.parquet"))
     except Exception:
         pass
     # 연간 컬럼만 기본 num_cols로 (분기·연간 혼합 중복합산 방지)
