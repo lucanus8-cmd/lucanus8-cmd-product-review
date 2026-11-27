@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -389,6 +389,14 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt requests
           python .github/scripts/check_one_product.py
+
+      - name: 사이트 메모리 측정 (읽기만, 매출 숫자 안 적음)
+        if: inputs.what == 'memcheck'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet -r requirements.txt requests
+          python .github/scripts/check_memory.py
 
       - name: 일본 검토 표 남기기
         if: always() && inputs.what == 'jpind'
