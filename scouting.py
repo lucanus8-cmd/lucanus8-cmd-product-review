@@ -2388,9 +2388,11 @@ def _price_name_opts():
     s = ss.load_price()["제품명"].dropna().astype(str).str.strip()
     return sorted({x for x in s if x})
 
-@st.cache_data(show_spinner="제네릭 등재 계산 준비 중…", max_entries=1)
+@st.cache_resource(show_spinner="제네릭 등재 계산 준비 중…", max_entries=1)
 def _ge_base(pmt, amt):
-    """약가·허가 자료를 제네릭 등재 계산용으로 정리 (자료 파일이 바뀔 때만 다시)."""
+    """cache_resource: 서버에 한 벌만 두고 같이 쓴다 (cache_data 는 부를 때마다 표 전체를 복사해
+    메모리를 크게 먹는다 — 2026-11-27 앱이 멈춘 원인 후보). 돌려준 표는 읽기만 한다.
+    약가·허가 자료를 제네릭 등재 계산용으로 정리 (자료 파일이 바뀔 때만 다시)."""
     p = ge.prep_price(ss.load_price())
     a = ge.prep_approval(ss.load_approval(), ss.ing_core, ss._ap_date)
     return p, a, ge.bulk_dates(p), ge.ingredient_options(a)
@@ -2398,7 +2400,7 @@ def _ge_base(pmt, amt):
 def _ge_mt():
     return (_file_mtime(ss.SD / "price.parquet"), _file_mtime(ss.SD / "approval.parquet"))
 
-@st.cache_data(show_spinner=False, max_entries=64)
+@st.cache_data(show_spinner=False, max_entries=12)
 def _ge_run(term, pick, mt):
     p, a, bulk, _ = _ge_base(*mt)
     return ge.analyze(p, a, bulk, term, ss.ing_core, pick)
