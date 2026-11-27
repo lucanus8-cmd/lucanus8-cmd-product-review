@@ -84,6 +84,25 @@ def main():
         return t
     pr["_nn"] = pr["제품명"].map(nn)
     gy = pr[pr["급여구분"] == "급여"]
+    last = pr.sort_values("적용일자").drop_duplicates("제품코드", keep="last")
+    cur = last[last["급여구분"] == "급여"].copy()          # 지금 급여 중인 제품의 최신 상한가
+
+    def strength(name):
+        """함량: 이름에서 '5mg', '40/10mg' 꼴. 이름에 없으면 규격 _(…) 에서."""
+        base = nn(name)
+        m = re.search(r"(\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)*)(mg|mcg|g|ml)", base)
+        if m:
+            return m.group(1) + m.group(2)
+        sp = re.search(r"_\(([^)]*)\)", str(name))
+        if sp:
+            t = nn("x" + sp.group(1)).lstrip("x")
+            m = re.search(r"(\d+(?:\.\d+)?)(mg|mcg|g|ml)", t)
+            if m:
+                return m.group(1) + m.group(2)
+        return ""
+    cur["_st"] = cur["제품명"].map(strength)
+    cur["_form"] = cur["_cd"].str[-3:]
+    flags = []
     vc = pr.groupby("제품명")["적용일자"].min().value_counts()
     bulk = set(vc[vc >= 3000].index)
     print("자료 묶음 날짜(그날 처음 나온 품목은 실제 등재일 모름):", sorted(str(d.date()) for d in bulk))
@@ -128,6 +147,24 @@ def main():
             r["약가에 있는 비슷한 이름"] = " / ".join(str(x)[:34] for x in cand) or "(상표로도 없음 → 비급여일 수 있음)"
             r["결과"] = "약가에서 오리지널 못 찾음"; rows.append(r); continue
         e = set(orow["_pc"])
+        # ── 주의문구: 같은 성분(염 무관) 허가 품목 중, 같은 함량·제형에서 지금 상한가가 오리지널보다 높은 품목
+        ocur = cur[cur["_pc"].isin(e) & (cur["_st"] != "")]
+        allnames = {nn(x): (str(x), str(c), d) for x, c, d in zip(a["품목명"], a["업체명"], a["_d"])}
+        cand = cur[cur["_nn"].isin(allnames.keys()) & ~cur["_pc"].isin(e) & (cur["_nn"].map(lambda t: brand(t)) != ob.lower())]
+        warn = []
+        for (st, fm), og in ocur.groupby(["_st", "_form"]):
+            op = og["금액"].max()
+            hi = cand[(cand["_st"] == st) & (cand["_form"] == fm) & (cand["금액"] > op)]
+            for _, h in hi.iterrows():
+                nm0, co0, d0 = allnames[h["_nn"]]
+                warn.append((h["금액"], brand(nm0), co0[:10], str(d0.date()), st, int(op)))
+        seen_b, top = set(), []
+        for w in sorted(warn, reverse=True):
+            if w[1] not in seen_b:
+                seen_b.add(w[1]); top.append(w)
+        r["⚠️ 주의문구"] = (" / ".join(f"{b}({co}, 허가 {d}) {st} {int(pz)}원 > 오리지널 {op}원" for pz, b, co, d, st, op in top[:3])
+                         if top else "없음")
+        flags.append((item, ob, [t[1] for t in top[:3]]))
         codes = sorted({c for c in orow["_cd"] if c})
         r["약가코드"] = ",".join(codes)
         r["오리지널 첫급여"] = str(orow[orow["급여구분"] == "급여"]["적용일자"].min().date()) if (orow["급여구분"] == "급여").any() else "-"
@@ -143,6 +180,10 @@ def main():
             r["첫 등재(날짜 아는 것 중)"] = f"{k['d'].date()} {str(known.sort_values('d').index[0])[:18]} · {str(k['co'])[:8]}"
         r["결과"] = "찾음"
         rows.append(r)
+    print("\n===== 주의문구 요약 (성분 · 자동 오리지널 · 더 비싼 품목) =====")
+    for it, ob_, tops in flags:
+        print(f"  {'⚠️' if tops else '  '} {it} · {ob_} · {', '.join(tops) if tops else '-'}")
+    print(f"주의문구 뜬 성분 {sum(1 for f in flags if f[2])} / 오리지널 연결된 {len(flags)}")
     pd.set_option("display.width", 320); pd.set_option("display.max_colwidth", 60)
     for r in rows:
         print("—" * 70)
