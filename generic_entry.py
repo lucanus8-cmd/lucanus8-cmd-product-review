@@ -171,8 +171,13 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
     now = last["금액"].where(last["급여구분"] == "급여")
 
     def _co(x):
-        return re.sub(r"\(주\)|주식회사|㈜|\(유\)|\s+", "", str(x))
-    ocos = {_co(oco)} | set(orow["업체명"].map(_co))
+        if x is None or (isinstance(x, float) and x != x):
+            return ""
+        t = re.sub(r"\(주\)|주식회사|㈜|\(유\)|\s+", "", str(x))
+        return "" if t.lower() in ("nan", "none", "<na>") else t
+    # 회사 비교는 업체명이 있는 경우만 (최신 고시 행은 업체명이 비어 있을 수 있다 — 빈 값끼리 같은 회사로 보면 안 됨)
+    ocos = ({_co(oco)} | set(orow["업체명"].map(_co))) - {""}
+    ap_co = {n: c for n, c in zip(hit["_nn"], hit["업체명"])}     # 약가에 업체명이 비면 허가 자료로 채운다
 
     def table(rows, kind):
         # 오리지널 자기 제품은 뺀다: 같은 상표로 시작(서방·XR·OD 등)하거나 오리지널 회사 제품
@@ -184,6 +189,9 @@ def analyze(p, a, bulk, term, ing_core, pick=None):
         first = g.groupby("제품명").agg(등재일=("적용일자", "min"), 업체=("업체명", "first"),
                                      _pc=("_pc", "last"), 첫상한가=("금액", "first")).reset_index()
         first["지금상한가"] = first["_pc"].map(now)
+        blank = first["업체"].map(_co) == ""
+        if blank.any():
+            first.loc[blank, "업체"] = first.loc[blank, "제품명"].map(lambda n: ap_co.get(nn(n), "")).replace("", "(업체 정보 없음)")
         first["날짜모름"] = first["등재일"].isin(bulk)
         first["구분"] = kind
         return first.sort_values("등재일").drop(columns=["_pc"])
