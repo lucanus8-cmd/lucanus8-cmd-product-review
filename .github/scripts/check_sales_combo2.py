@@ -33,12 +33,14 @@ def main():
     ss._ensure = lambda *a, **k: None
     pr = ss.load_price()
     code_n = {}
-    for cd, n in zip(pr["제제코드"].astype(str), pr["성분수"].astype(str)):
-        if cd and n and n not in ("nan", "None", ""):
-            code_n[cd.strip().upper()] = n
-    for cd, n in zip(pr["주성분코드"].astype(str), pr["성분수"].astype(str)):
-        if cd and n and n not in ("nan", "None", "") and cd.strip().upper() not in code_n:
-            code_n[cd.strip().upper()] = n
+    def _s(x):
+        x = "" if x is None or (isinstance(x, float) and x != x) else str(x).strip()
+        return "" if x in ("nan", "None", "<NA>") else x
+    for col in ("제제코드", "주성분코드"):
+        for cd, n in zip(pr[col].tolist(), pr["성분수"].tolist()):
+            cd, n = _s(cd).upper(), _s(n)
+            if cd and n and cd not in code_n:
+                code_n[cd] = n
     ucode = ub["성분"].astype(str).str.extract(r"\[([0-9A-Z]{9})\]", expand=False).str.upper()
     ref = ucode.map(code_n)
     hv = ref.notna()
