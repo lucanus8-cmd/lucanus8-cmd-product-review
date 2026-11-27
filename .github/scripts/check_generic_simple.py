@@ -87,7 +87,14 @@ def main():
         if a.empty:
             r["결과"] = "허가에서 못 찾음"; rows.append(r); continue
         o = a.iloc[0]
-        r["오리지널(최초허가)"] = f"{str(o['품목명'])[:16]} · {str(o['업체명'])[:8]} · {o['_d'].date()}"
+        r["오리지널"] = f"{str(o['품목명'])[:16]} · {str(o['업체명'])[:8]} · {o['_d'].date()} (최초허가)"
+        # 예외: 더 늦게 허가됐어도 '신약' 표시가 있는 품목이 있으면 그 품목으로
+        new = a[a["신약구분"].astype(str).str.strip() == "신약"] if "신약구분" in a.columns else a.iloc[0:0]
+        if not new.empty and str(new.iloc[0]["품목기준코드"]) != str(o["품목기준코드"]):
+            was = f"{str(o['품목명'])[:12]}({o['_d'].date()})"
+            o = new.iloc[0]
+            r["오리지널"] = (f"{str(o['품목명'])[:16]} · {str(o['업체명'])[:8]} · {o['_d'].date()} "
+                          f"(신약 표시로 바꿈 · 최초허가는 {was})")
         def brand(n):
             t = re.sub(r"\s+", "", str(n))
             t = re.split(r"[0-9(_\[]", t)[0]
