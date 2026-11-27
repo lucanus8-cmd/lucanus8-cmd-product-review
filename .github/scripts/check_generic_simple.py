@@ -94,6 +94,16 @@ def main():
         if not known.empty:
             k = known.sort_values("d").iloc[0]
             r["첫 등재(날짜 아는 것 중)"] = f"{k['d'].date()} {str(known.sort_values('d').index[0])[:18]} · {str(k['co'])[:8]}"
+        # 참고: 같은 회사가 같은 성분으로 받은 다른 함량 품목까지 넣으면
+        same_co = a[a["업체명"].astype(str) == str(o["업체명"])]
+        e2 = set().union(*same_co["_edi"].tolist()) if not same_co.empty else set()
+        codes2 = sorted({c for c in pr[pr["_pc"].isin(e2)]["_cd"] if c})
+        if set(codes2) != set(codes):
+            oth2 = gy[gy["_cd"].isin(codes2) & ~gy["_pc"].isin(e2)]
+            f2 = oth2.groupby("제품명")["적용일자"].min()
+            k2 = f2[~f2.isin(bulk)]
+            r["(참고) 같은 회사 다른 함량 포함"] = (f"약가코드 {len(codes2)}개 · 제품 {len(f2)}개 · 첫 "
+                                         f"{k2.min().date() if not k2.empty else '-'}")
         r["결과"] = "찾음"
         rows.append(r)
     pd.set_option("display.width", 320); pd.set_option("display.max_colwidth", 60)
