@@ -597,6 +597,8 @@ def _do_build_here(include_sales=False, force=False, only=None):
 # 메모리를 전부 돌려준다. 따로 띄우지 못하면(어떤 이유든) 예전처럼 이 프로세스 안에서 만든다.
 _CHILD_FLAG = "_BOOT_CHILD"
 _SA_ENV = "_BOOT_SA_B64"
+# 자료 만들기 작업은 한 번에 하나만 띄운다(여럿이 겹치면 각자 pandas 를 올려 합계가 커진다).
+_BUILD_LOCK = threading.Lock()
 
 
 def _sa_b64_for_child():
@@ -638,8 +640,9 @@ def _do_build(include_sales=False, force=False, only=None):
     if b64:
         env[_SA_ENV] = b64
     try:
-        pr = subprocess.run([sys.executable, "-c", code, args], cwd=str(BASE), env=env,
-                            capture_output=True, text=True, timeout=1800)
+        with _BUILD_LOCK:
+            pr = subprocess.run([sys.executable, "-c", code, args], cwd=str(BASE), env=env,
+                                capture_output=True, text=True, timeout=1800)
     except Exception:
         return _do_build_here(include_sales=include_sales, force=force, only=only)
     out = pr.stdout or ""

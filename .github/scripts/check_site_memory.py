@@ -55,6 +55,34 @@ class Sampler:
         self.peak_p, self.peak_t = rss_tree(self.pid)
 
 
+def cpu_tree(pid):
+    """pid 와 자식들의 누적 CPU 시간(초)과 자식 수."""
+    tot, kids = 0.0, []
+    try:
+        kids = [int(x) for x in subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True).stdout.split()]
+    except Exception:
+        pass
+    for p in [pid] + kids:
+        try:
+            f = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()
+            tot += (int(f[11]) + int(f[12])) / os.sysconf("SC_CLK_TCK")
+        except Exception:
+            pass
+    return tot, len(kids)
+
+
+def wait_quiet(pid, limit=1200):
+    """뒤에서 하는 자료 만들기가 끝날 때까지(자식 없음 + 10초 동안 CPU 거의 안 씀) 기다린다."""
+    t0 = time.time()
+    while time.time() - t0 < limit:
+        c1, k = cpu_tree(pid)
+        time.sleep(10)
+        c2, k2 = cpu_tree(pid)
+        if k == 0 and k2 == 0 and c2 - c1 < 0.5:
+            return time.time() - t0
+    return time.time() - t0
+
+
 def wait_idle(page, extra=1.5, limit=600):
     """Streamlit 이 다 그릴 때까지 기다린다 (실행 중 표시가 사라질 때까지)."""
     t0 = time.time()
@@ -137,34 +165,47 @@ def main():
             except Exception as e:
                 return "못 고름(" + type(e).__name__ + ")"
 
+        import re as _re
+
+        def load_sales():
+            """'매출 분석 불러오기'를 누르고 매출 탭이 실제로 뜰 때까지 기다린다."""
+            try:
+                pg.get_by_role("button", name="📊 매출 분석 불러오기").click()
+            except Exception as e:
+                return "못 누름(" + type(e).__name__ + ")"
+            try:
+                pg.get_by_role("tab", name=_re.compile("시장 분석")).first.wait_for(timeout=1200000)
+                wait_idle(pg, 2.0, limit=900)
+                return "매출 탭 뜸"
+            except Exception as e:
+                return "매출 탭 안 뜸(" + type(e).__name__ + ")"
+
         rec("0. 서버 켬", 0)
         s = go(""); rec("1. 홈", s)
-        s = go("?page=search"); rec("2. 종합분석 열기 (허가·약가 준비)", s)
-        t = time.time(); ok = pick(r"검색어", "릭시아나", "릭시아나"); rec("3. 종합분석 '릭시아나' (IQVIA)", time.time() - t, ok)
-        s = go("?page=price"); rec("4. 약가 분석 열기", s)
-        t = time.time(); ok = pick(r"검색어", "에독사반", "에독사반"); rec("5. 약가 '에독사반' 성분", time.time() - t, ok)
-        s = go("?page=sales"); rec("6. 매출 분석 화면", s)
+        s = go("?page=search"); rec("2. 종합분석 열기 (자료 받기 시작)", s)
+        s = wait_quiet(srv.pid); rec("3. 뒤에서 자료 다 만들 때까지", s)
+        t = time.time(); ok = pick(r"검색어", "릭시아나", "릭시아나"); rec("4. 종합분석 '릭시아나' (IQVIA)", time.time() - t, ok)
+        s = go("?page=price"); rec("5. 약가 분석 열기", s)
+        t = time.time(); ok = pick(r"검색어", "에독사반", "에독사반"); rec("6. 약가 '에독사반' 성분", time.time() - t, ok)
+        s = go("?page=sales"); t = time.time(); ok = load_sales(); rec("7. 매출 분석 처음 불러오기 (받기 포함)", s + time.time() - t, ok)
+        s = wait_quiet(srv.pid); rec("8. 매출 자료 다 만들 때까지", s)
         t = time.time()
         try:
-            pg.get_by_role("button", name="📊 매출 분석 불러오기").click(); wait_idle(pg, 2.0, limit=900); ok = "불러옴"
-        except Exception as e:
-            ok = "못 누름(" + type(e).__name__ + ")"
-        rec("7. 매출 분석 불러오기 (IQVIA·UBIST)", time.time() - t, ok)
-        t = time.time()
-        try:
-            pg.get_by_role("tab", name=__import__("re").compile("시장")).first.click(); wait_idle(pg); ok = "시장 분석 탭"
+            pg.get_by_role("tab", name=_re.compile("시장 분석")).first.click(); wait_idle(pg); ok = "시장 분석 탭"
         except Exception as e:
             ok = "탭 못 누름(" + type(e).__name__ + ")"
-        rec("8. 매출 시장 분석 탭", time.time() - t, ok)
-        s = go("?page=search"); rec("9. 다시 종합분석", s)
-        t = time.time(); ok = pick(r"검색어", "리피토", "리피토"); rec("10. 종합분석 '리피토'", time.time() - t, ok)
-        s = go("?page=sales"); t = time.time()
+        rec("9. 매출 시장 분석 탭", time.time() - t, ok)
+        s = go("?page=search"); rec("10. 다시 종합분석", s)
+        t = time.time(); ok = pick(r"검색어", "리피토", "리피토"); rec("11. 종합분석 '리피토'", time.time() - t, ok)
+        s = go("?page=sales"); t = time.time(); ok = load_sales(); rec("12. 매출 분석 다시 열기", s + time.time() - t, ok)
+        t = time.time()
         try:
-            pg.get_by_role("button", name="📊 매출 분석 불러오기").click(); wait_idle(pg, 2.0, limit=900); ok = "불러옴"
+            pg.get_by_role("tab", name=_re.compile("시장 분석")).first.click(); wait_idle(pg); ok = "시장 분석 탭"
         except Exception as e:
-            ok = "못 누름(" + type(e).__name__ + ")"
-        rec("11. 매출 분석 한 번 더", s + time.time() - t, ok)
-        time.sleep(20); rec("12. 20초 쉬고 나서", 20)
+            ok = "탭 못 누름(" + type(e).__name__ + ")"
+        rec("13. 매출 시장 분석 탭 다시", time.time() - t, ok)
+        s = go("?page=price"); t = time.time(); ok = pick(r"검색어", "로수바스타틴", "로수바스타틴"); rec("14. 약가 '로수바스타틴'", s + time.time() - t, ok)
+        time.sleep(20); rec("15. 20초 쉬고 나서", 20)
         br.close()
     sm.stop = True
     peak = max(r[3] for r in rows)
