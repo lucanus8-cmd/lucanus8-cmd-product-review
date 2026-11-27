@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from io import BytesIO
 from openpyxl import Workbook
-from dose_util import fix_iqvia_dose, dose_match, iqvia_combo, ubist_combo, price_ingredient_counts, COMBO_LABELS
+from dose_util import fix_iqvia_dose, dose_match
 from openpyxl.chart import BarChart, PieChart, LineChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -144,10 +144,6 @@ def load_iqvia(cache_mtime):
         df, _ = fix_iqvia_dose(df)
     except Exception:
         pass
-    try:   # 단일제/복합제 (원자료의 '단일제/복합제' 칸)
-        df["_구성"] = iqvia_combo(df)
-    except Exception:
-        pass
     lc_qtr = [c for c in df.columns if re.match(r"LC-\d{2}Q\d", c)]
     lc_yr  = [c for c in df.columns if re.match(r"\d{4}년$", c)]
     return df, lc_qtr, lc_yr
@@ -155,10 +151,6 @@ def load_iqvia(cache_mtime):
 @st.cache_data(show_spinner="UBIST 로딩 중…", max_entries=1)
 def load_ubist(cache_mtime):
     df = pd.read_pickle(UBIST_CACHE)
-    try:   # 단일제/복합제: 성분 끝 [약가코드]의 심평원 성분 수 → 없으면 성분 글자(서로 다른 성분 2개 이상)
-        df["_구성"] = ubist_combo(df, price_ingredient_counts(Path(__file__).parent / "scout_data" / "price.parquet"))
-    except Exception:
-        pass
     # 연간 컬럼만 기본 num_cols로 (분기·연간 혼합 중복합산 방지)
     num_cols = [c for c in df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
     return df, num_cols
@@ -687,19 +679,6 @@ def _prod_opts(cache_mtime, kind):
 
 iqvia_prod_opts = _prod_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
 ubist_prod_opts = _prod_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists() else 0, "ubist") if ubist_df is not None else []
-
-# ── 구성(단일제·복합제) 선택 — 아래 모든 탭에 적용 ─────────────────────────────
-_combo_sel = st.multiselect("💊 구성 (단일제 · 복합제 — 둘 다 고르면 전체, 아래 모든 탭에 적용)",
-                            COMBO_LABELS, default=COMBO_LABELS, key="sales_combo")
-if not _combo_sel:
-    st.caption("구성을 하나도 고르지 않아 단일제·복합제 전체를 봅니다.")
-elif set(_combo_sel) != set(COMBO_LABELS):
-    if iqvia_df is not None and "_구성" in iqvia_df.columns:
-        iqvia_df = iqvia_df[iqvia_df["_구성"].isin(_combo_sel)]
-    if ubist_df is not None and "_구성" in ubist_df.columns:
-        ubist_df = ubist_df[ubist_df["_구성"].isin(_combo_sel)]
-    st.caption(f"**{', '.join(_combo_sel)}**만 분석합니다 · IQVIA는 원자료의 '단일제/복합제' 칸, "
-               "UBIST는 성분 글자(서로 다른 성분 2개 이상 = 복합제)로 구분합니다.")
 
 # ── 탭 구성 ──────────────────────────────────────────────────────────────────
 
