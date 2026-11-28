@@ -8,7 +8,6 @@
   · 조건 검색(make_filter_mask)은 SQL 로 '넉넉히' 먼저 거르고, 마지막에 원래 코드로 한 번 더 정확히 거른다.
 """
 import re
-import threading
 
 import numpy as np
 import pandas as pd
@@ -18,6 +17,13 @@ from core import data
 from dose_util import COMBO_LABELS, fix_iqvia_dose, iqvia_combo, price_ingredient_counts, ubist_combo
 
 KINDS = ("iqvia", "ubist")
+
+try:    # arrow 가 다 쓴 메모리를 오래 쥐고 있지 않게 (기본 할당기는 돌려주는 게 늦다)
+    import pyarrow as _pa
+    if _pa.default_memory_pool().backend_name != "system":
+        _pa.set_memory_pool(_pa.system_memory_pool())
+except Exception:
+    pass
 _LOCK = data._LOCK
 
 
@@ -38,13 +44,10 @@ def _src(kind):
 @st.cache_resource(show_spinner=False, max_entries=4)
 def _schema(kind, _mt):
     """(칸 이름 목록, 칸별 원래 형식) — 원래 형식은 파일에 적힌 pandas 형식 정보로 읽는다(앞 몇 줄만)."""
-    import pyarrow as pa
     import pyarrow.parquet as pq
     p = path(kind)
-    pf = pq.ParquetFile(p)
-    b = next(pf.iter_batches(batch_size=64), None)
-    t = pa.Table.from_batches([b], schema=pf.schema_arrow) if b is not None else pf.schema_arrow.empty_table()
-    ref = t.to_pandas()
+    # 줄은 하나도 읽지 않는다(파일 머리의 형식 정보만) — 앞 몇 줄을 읽으려 해도 묶음 전체를 읽게 되어 무겁다
+    ref = pq.ParquetFile(p).schema_arrow.empty_table().to_pandas()
     return list(ref.columns), {c: ref[c].dtype for c in ref.columns}
 
 
