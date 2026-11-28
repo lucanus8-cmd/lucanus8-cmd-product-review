@@ -193,7 +193,7 @@ def _dmf_ee_filter(t):
 
 def _dmf_view(m, name, unit, yr=()):
     import dmf_trend as _dt
-    st.markdown("#### 🧪 원료사 동향 — DMF가 몰리는 성분")
+    st.markdown("#### ③ 경쟁사 현황 — 원료(DMF) 등록과 생동시험이 몰리는 성분")
     x = _dmf_prep()
     if x is None or x.empty:
         st.info("식약처 최신 DMF 목록을 아직 읽지 못했습니다. 잠시 뒤 다시 열어 주세요. "

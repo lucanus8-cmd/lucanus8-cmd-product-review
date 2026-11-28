@@ -69,7 +69,7 @@ def main():
         idle(pg)
         rec("1. 제품 제안 (조건 필터)", t, f"오류 {exc(pg)}")
         try:
-            t = time.time(); pg.get_by_text("🧪 원료사 동향(DMF)", exact=True).first.click(); idle(pg, 2)
+            t = time.time(); pg.get_by_text("③ 경쟁사 현황 (DMF·생동)", exact=True).first.click(); idle(pg, 2)
             dmf_read(pg, "2. DMF 기본(원료사 12개월)", t)
             t = time.time(); pg.get_by_text("추가 신청 증가", exact=True).first.click(); idle(pg, 2)
             dmf_read(pg, "3. DMF 추가 신청 증가", t)
@@ -84,7 +84,7 @@ def main():
                              ("7. 재창출 질환 'Raynaud disease'", "🩺 질환으로", "Raynaud disease")]:
             t = time.time()
             try:
-                pg.get_by_text("🧬 약물 재창출", exact=True).first.click(); idle(pg)
+                pg.get_by_text("④ 약물 재창출", exact=True).first.click(); idle(pg)
                 pg.get_by_text(mode, exact=True).first.click(); idle(pg)
                 pg.get_by_label(re.compile("약 이름|질환 이름")).first.fill(q); pg.keyboard.press("Enter"); idle(pg)
                 pg.get_by_role("button", name=re.compile("지도 그리기")).first.click(); idle(pg, 3, 300)

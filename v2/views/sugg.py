@@ -100,11 +100,20 @@ st.subheader("🎯 제품 제안")
 a, b, c = st.columns([1, 1, 2])
 src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
 unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
-_VIEW_Q = {"dmf": "🧪 원료사 동향(DMF)", "rp": "🧬 약물 재창출", "ovs": "해외 허가 비교"}
+# 보기 순서 = 발표 자료의 개발 흐름 순서 (① 해외 허가 → ② 국내 오리지널 → ③ 경쟁사 → ④ 새 적응증)
+V_OVS, V_ORIG, V_COMP, V_RP = ("① 해외 허가 비교", "② 국내 오리지널 현황 (특허·매출)",
+                               "③ 경쟁사 현황 (DMF·생동)", "④ 약물 재창출")
+VIEWS = [V_OVS, V_ORIG, V_COMP, V_RP]
+_OLD = {"🎯 조건 필터": V_ORIG, "🧪 원료사 동향(DMF)": V_COMP, "🧬 약물 재창출": V_RP, "해외 허가 비교": V_OVS,
+        "FDA 비교": V_OVS}
+if st.session_state.get("sugg_view") in _OLD:            # 예전 이름으로 열려 있던 화면
+    st.session_state["sugg_view"] = _OLD[st.session_state["sugg_view"]]
+_VIEW_Q = {"ovs": V_OVS, "orig": V_ORIG, "dmf": V_COMP, "rp": V_RP}
 if "sugg_view" not in st.session_state and st.query_params.get("view") in _VIEW_Q:   # 주소로 바로 열기 (?view=dmf)
     st.session_state["sugg_view"] = _VIEW_Q[st.query_params.get("view")]
-view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "해외 허가 비교"], horizontal=True, key="sugg_view")
-if view == "해외 허가 비교":
+view = c.radio("보기", VIEWS, horizontal=True, key="sugg_view")
+if view == V_OVS:
+    st.markdown("#### ① 해외 허가 비교 — 해외에서는 허가됐지만 국내에는 아직 없는 약")
     ag = st.radio("허가 기관", ["미국 FDA", "유럽 EMA"], horizontal=True, key="ovs_agency")
     if ag == "유럽 EMA":
         import ema_view
@@ -113,14 +122,14 @@ if view == "해외 허가 비교":
         import fda_view
         fda_view.render()
     st.stop()
-if view.startswith("🧬"):
+if view == V_RP:
     # 약물 재창출은 매출 자료 없이도 돈다(매출은 있을 때만 덧붙인다)
     data.ensure("approval")
     from views import repurpose_mod
     repurpose_mod._repurpose_view(src2)
     st.stop()
-if view.startswith("🧪") and unit != "성분별":
-    st.caption("원료사 동향은 성분 단위로 봅니다 — 분석 단위와 상관없이 성분별 매출을 씁니다.")
+if view == V_COMP and unit != "성분별":
+    st.caption("경쟁사 현황은 성분 단위로 봅니다 — 분석 단위와 상관없이 성분별 매출을 씁니다.")
     unit = "성분별"
 
 S, cfg, yr = data.sales(src2)
@@ -153,8 +162,8 @@ if blank.any():
             k.loc[still] = ik
 m["_key"] = k.fillna("")
 
-if view.startswith("🧪"):
-    # 원료사 동향은 특허를 따로(성분키별 만료일 작은 표) 붙이므로 아래 특허 병합을 건너뛴다(가볍게)
+if view == V_COMP:
+    # 경쟁사 현황은 특허를 따로(성분키별 만료일 작은 표) 붙이므로 아래 특허 병합을 건너뛴다(가볍게)
     for col in atc_lv:
         m[col] = m[col].fillna("").astype(str) if col in m.columns else ""
     if atc_lv:
@@ -200,6 +209,7 @@ for col in atc_lv:
 if atc_lv:
     m["ATC"] = m[atc_lv[0]]
 
+st.markdown("#### ② 국내 오리지널 현황 — 특허 만료와 시장 규모")
 st.markdown("**필터 조건**")
 f1, f2, f3 = st.columns(3)
 min_size = f1.number_input("① 최소 시장규모(억, 최신연도)", value=50, step=10, min_value=0)

@@ -201,7 +201,7 @@ def _rp_bars(dts):
 
 def _repurpose_view(src):
     ss_state = st.session_state
-    st.markdown("#### 🧬 약물 재창출")
+    st.markdown("#### ④ 약물 재창출 — 새 적응증 찾기")
     _ver = _rp_version()
     st.caption("Open Targets 공개 자료" + (f"({_ver} 판)" if _ver else "") + "와 사이트의 특허·허가·식약처 임상 자료를 묶어 그립니다. "
                "가설 탐색용이며 효능 근거가 아닙니다.")

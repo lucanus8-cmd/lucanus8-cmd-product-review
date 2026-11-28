@@ -74,7 +74,7 @@ def main():
             rec(lab, t, "못 함 " + type(e).__name__ + " " + str(e).splitlines()[0][:70])
 
     def rp(pg):
-        click_text(pg, "🧬 약물 재창출")
+        click_text(pg, "④ 약물 재창출")
         click_text(pg, "💊 약으로")
         pg.get_by_label(re.compile("약 이름")).first.fill("실데나필"); pg.keyboard.press("Enter"); idle(pg)
         pg.get_by_role("button", name=re.compile("지도 그리기")).first.click(); idle(pg, 3, 300)
@@ -104,8 +104,8 @@ def main():
         if mode == "full":
             step(pg, "1. 홈", lambda: go(pg, "home"))
             step(pg, "2. 종합분석 '리피토'", lambda: (go(pg, "search"), pick(pg, "리피토", "^리피토정10")))
-            step(pg, "3. 제품 제안 (조건 필터)", lambda: go(pg, "sugg"))
-            step(pg, "4. 원료사 동향(DMF)", lambda: click_text(pg, "🧪 원료사 동향(DMF)"))
+            step(pg, "3. 제품 제안 (② 국내 오리지널)", lambda: (go(pg, "sugg"), click_text(pg, "② 국내 오리지널 현황 (특허·매출)")))
+            step(pg, "4. 원료사 동향(DMF)", lambda: click_text(pg, "③ 경쟁사 현황 (DMF·생동)"))
             step(pg, "5. 약물 재창출 '실데나필'", lambda: rp(pg))
             step(pg, "6. 매출 분석 (시장 분석)", lambda: sales(pg))
             if kind == "v2":
@@ -116,7 +116,7 @@ def main():
             step(pg, "9. 약가 '로수바스타틴'", lambda: (go(pg, "price"), pick(pg, "로수바스타틴", "로수바스타틴")))
         elif mode == "dmf":
             step(pg, "1. 제품 제안 → 원료사 동향", lambda: (go(pg, "sugg", "?view=dmf"),
-                                                     None if pg.get_by_text("원료사 동향 — DMF").count() else click_text(pg, "🧪 원료사 동향(DMF)")))
+                                                     None if pg.get_by_text("경쟁사 현황 — 원료").count() else click_text(pg, "③ 경쟁사 현황 (DMF·생동)")))
         elif mode == "gen":
             for t in ("에독사반", "리바록사반", "로수바스타틴", "텔미사르탄 + 암로디핀"):
                 def _g(t=t):
@@ -150,7 +150,7 @@ def main():
             def _rp():
                 go(pg, "sugg", "?view=rp")
                 if not pg.get_by_text("💊 약으로", exact=True).count():
-                    click_text(pg, "🧬 약물 재창출")
+                    click_text(pg, "④ 약물 재창출")
                 rp(pg)
             step(pg, "1. 제품 제안 → 약물 재창출", _rp)
         br.close()
