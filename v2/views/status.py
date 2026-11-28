@@ -2,7 +2,7 @@ import streamlit as st
 
 from core import data
 
-BUILD = "v2-2026-11-28-e"
+BUILD = "v2-2026-11-28-f"
 st.subheader("데이터 연결 상태 (v2)")
 st.caption(f"코드 버전: {BUILD}")
 rows = []
