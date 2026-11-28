@@ -85,7 +85,7 @@ def _trend_codes(basis, term):
     if pref:
         # 오리지널 품목명 앞부분(브랜드)으로 시작하는 약가 제품 — 띄어쓰기 무시
         r = data.q(f"""SELECT DISTINCT "제품코드" FROM {P}
-                       WHERE len(list_filter(?, p -> starts_with(
+                       WHERE len(list_filter(?, lambda p: starts_with(
                              regexp_replace(CAST("제품명" AS VARCHAR), '\\s', '', 'g'), p))) > 0""", [pref])
         return r["제품코드"].dropna().tolist(), f"{term} 오리지널(신약) 약가 변동"
     return [], f"{term} 오리지널(신약) 약가 변동"
