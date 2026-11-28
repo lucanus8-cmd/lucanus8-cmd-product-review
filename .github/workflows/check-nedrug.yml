@@ -498,6 +498,7 @@ jobs:
         if: inputs.what == 'eesave'
         run: |
           ls -la /tmp/efficacy_site
+          python -m pip install --quiet pandas pyarrow
           python - <<'PY'
           import json, pandas as pd
           d = "/tmp/efficacy_site/"
