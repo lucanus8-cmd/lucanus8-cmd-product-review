@@ -20,7 +20,12 @@ if not P:
 
 mode = st.radio("보기", ["약가 조회", "약가 산정"], horizontal=True, key="price_mode", label_visibility="collapsed")
 if mode == "약가 산정":
-    st.info("약가 산정은 다음 단계에서 옮깁니다. 지금은 기존 사이트에서 쓰실 수 있습니다.")
+    import scout_sources as ss
+    ss._ensure = lambda *a, **k: None          # 자료 확보는 v2 의 data.ensure 가 한다
+    data.ensure("approval")
+    from views import price_calc_mod
+    price_calc_mod._price_calc_page()
+    ss.release_memory()
     st.stop()
 
 mt = data._mtime(data.FILES["price"])
