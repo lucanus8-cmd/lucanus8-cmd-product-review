@@ -82,4 +82,8 @@ def run(term, pick, _mt_):
                       OR list_contains(?, upper(trim(CAST("제제코드" AS VARCHAR))))""", [cds, cds])
         pcs |= set(r2["제품코드"].astype(str).str.strip())
     p = ge.prep_price(_rows('list_contains(?, trim(CAST("제품코드" AS VARCHAR)))', [sorted(pcs)]))
-    return ge.analyze(p, a, bulk, term, ss.ing_core, pick)
+    r = ge.analyze(p, a, bulk, term, ss.ing_core, pick)
+    for k in ("same", "salt"):       # 표시 형식만 맞춤: 전체 표로 계산하면 '지금상한가'가 소수형(312.0)이 된다
+        if isinstance(r.get(k), pd.DataFrame) and "지금상한가" in r[k].columns:
+            r[k]["지금상한가"] = r[k]["지금상한가"].astype("float64")
+    return r
