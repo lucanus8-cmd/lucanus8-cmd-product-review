@@ -74,8 +74,8 @@ W2 = W + f" AND year({exp}) BETWEEN ? AND ?"
 prm2 = prm + [int(rng[0]), int(rng[1])]
 
 m = data.q(f"""SELECT count(*) AS n, count(DISTINCT "PATENTEE") AS ee,
-                      count(*) FILTER (WHERE datediff('day', ?::TIMESTAMP, {exp}) / 365.25 >= 0
-                                         AND datediff('day', ?::TIMESTAMP, {exp}) / 365.25 < 3) AS soon
+                      count(*) FILTER (WHERE round(datediff('day', ?::TIMESTAMP, {exp}) / 365.25, 1) >= 0
+                                         AND round(datediff('day', ?::TIMESTAMP, {exp}) / 365.25, 1) < 3) AS soon
                FROM {PT} WHERE {W2}""", [TODAY, TODAY] + prm2).iloc[0]
 k3 = st.columns(3)
 k3[0].metric("특허 건수", f"{int(m['n']):,}")
