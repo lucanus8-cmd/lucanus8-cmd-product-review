@@ -19,7 +19,7 @@ concurrency:
 jobs:
   wake:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +42,16 @@ jobs:
           APP_URL: ${{ vars.APP_URL || 'https://appuct-review-mwt63vloynbyw3uv2xbpft.streamlit.app/' }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
         run: python .github/scripts/wake_site.py
+
+      # v2 사이트(제품검토_v2)도 깨우고 자료 파일을 미리 만들어 둔다 — 지금 사이트가 실패해도 따로 돈다
+      - name: v2 사이트 깨우고 자료 미리 만들기
+        if: always()
+        env:
+          APP_URL: ${{ vars.APP_URL_V2 || 'https://k3xpfjhkk57x8l5kmxsxmw.streamlit.app/' }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: |
+          if [ -z "$APP_URL" ]; then echo "v2 주소가 없어 건너뜀"; exit 0; fi
+          python .github/scripts/wake_site.py
 
       # 공개 저장소는 60일 동안 활동이 없으면 예약이 멈출 수 있다 — 돌 때마다 다시 켠다
       - name: 예약 계속 켜 두기
