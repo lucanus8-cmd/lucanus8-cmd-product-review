@@ -680,7 +680,7 @@
 별표1,20050831-67-B-174-01(3),파모티딘,제일약품(주),IPCA Laboratories Limited.,"PLOT NO. 4722, 4723, 4731 & 4732, GIDC Estate, City: ANKLESHWAR, Dist. BHARUCH GUJARAT STATE, INDIA",인도,2023-02-20,,2025,정상,,,
 별표1,20050831-67-B-174-01(4),파모티딘,화일약품(주),SULESHVARI PHARMA PVT. LTD.,"Plot No. 4722, 4723, 4731 & 4732, GIDC Estate, Ankleshwar, District-Bharuch, Gujarat, 393 002, India",인도,2024-07-17,2026-10-02,2025,정상,,,
 별표1,20050831-67-B-175-02,파모티딘,화덕약품(주),SMS Lifesciences India Limited.,"Unit-IV, Plot No. 66/B-2, Phase-I, IDA, Jeedimetla, Medchal Malkajgiri Distrct, Hyderabad, Telangana, INDIA -50055(507 A,ADITYA ENCLAVE, NILGIRI BLOCK AMEERPET, HYDERABAD 500038, INDIA)",인도,2005-08-31,2010-04-20,2018,정상,,v1.0.0/2021,v1.0.0/2021
-별표1,20050831-68-A-133-03,파클리탁셀,(주)삼양바이오팜,(주)삼양바이오팜,대전광역시 대덕구 신일동로 79,대한민국,2005-08-31,2025-12-16,2025,정상,,v1.1.5/2025,v1.1.0/2025
+별표1,20050831-68-A-133-03,파클리탁셀,(주)삼양바이오팜,(주)삼양바이오팜,대전광역시 대덕구 신일동로 79,대한민국,2005-08-31,2025-12-16,2026,정상,,v1.1.6/2026,v1.1.0/2025
 별표1,20050831-68-A-137-04,파클리탁셀,(주)삼오제약,Indena S.p.A,"Via Don Minzoni, 6-20049 SETTALA (MI), Italy(n.12, Viale Ortles, Milano, Italy)",이탈리아,2005-08-31,,2022,정상,,v1.0.1/2022,v1.0.0/2021
 별표1,20050831-69-B-178-01,펠로디핀,한국아스트라제네카(주),Astrazeneca AB,"Forskargatan 18, Sodertalje, 151 85, Sweden",스웨덴,2005-08-31,2026-09-07,2025,취하,2026-09-07,v1.0.1/2025,v1.0.0/2021
 기타,20050831-69-B-178-01(1),펠로디핀,(주)유한양행,Astrazeneca AB,"Forskargatan 18, Sodertalje, 151 85, Sweden",스웨덴,2011-04-29,2026-08-19,2018,취하,2026-08-19,,
@@ -917,12 +917,12 @@
 별표1,20060707-48-B-224-08(2),테라조신염산염,일양약품(주),AbbVie Ireland NL B.V,"Manorhamilton Road, Sligo, Republic of Ireland",아일랜드,2013-04-11,2024-02-02,2024,취하,2024-02-02,,
 별표1,20060727-29-B-227-19,심바스타틴,한국오가논(주),MSD International GmbH (Singapore Branch),"21 Tuas South Avenue 6, Singapore 637766",싱가포르,2006-07-27,2021-06-25,2021,정상,,v1.0.1/2021,v1.0.0/2021
 별표1,20060727-61-C-220-05,케토롤락트로메타민염,하나제약(주),하나제약(주),"경기도 화성시 향남읍 제약공단 3길 133(서울시 강남구 테헤란로 218 나래빌딩 15, 16층)",대한민국,2006-07-27,2017-12-08,2017,정상,,v1.0.0/2021,v1.0.0/2021
-별표1,20061031-68-A-193-08,파클리탁셀,(주)상진상사,Fresenius Kabi Oncology Limited,"D-35, industrial Area, Kalyani, Nadia, West Bengal-741 235, INDIA",인도,2006-10-31,2025-09-08,2022,정상,,v1.3.1/2025,v1.2.0/2025
+별표1,20061031-68-A-193-08,파클리탁셀,(주)상진상사,Fresenius Kabi Oncology Limited,"D-35, industrial Area, Kalyani, Nadia, West Bengal-741 235, INDIA",인도,2006-10-31,2026-11-27,2022,정상,,v1.4.1/2026,v1.2.0/2025
 별표1,20061031-68-A-193-08(2),파클리탁셀,화일약품(주),Fresenius Kabi Oncology Limited,"D-35, Industrial Area, Kalyani, Nadia, West Bengal-741 235, India",인도,2015-05-22,2025-02-04,2022,취하,2025-02-04,,
 별표1,20061031-68-A-193-08(3),파클리탁셀,한국유나이티드제약(주),Fresenius Kabi Oncology Limited.,"D-35, Industrial Area, Kalyani, Nadia, West Bengal-741 235, India",인도,2015-11-20,,,정상,,,
 별표1,20061031-68-A-193-08(4),파클리탁셀,(주)경보제약,Fresenius Kabi Oncology Limited,"D-35, industrial Area, Kalyani, Nadia, West Bengal-741 235, INDIA",인도,2023-10-27,,,정상,,,
 별표1,20061031-68-A-193-08(5),파클리탁셀,(주)삼양바이오팜,Fresenius Kabi Oncology Limited,"D-35, industrial Area, Kalyani, Nadia, West Bengal-741 235, INDIA",인도,2024-08-13,2025-10-23,,취하,2025-10-23,,
-별표1,20061031-68-A-193-08(A),파클리탁셀,에이징생명과학(주),Fresenius Kabi Oncology Limited,"D-35, Industrial Area, Kalyani, Dist-Nadia, Pin-741235, India",인도,2022-01-19,2025-08-13,,정상,,v1.4.0/2025,v1.2.0/2024
+별표1,20061031-68-A-193-08(A),파클리탁셀,에이징생명과학(주),Fresenius Kabi Oncology Limited,"D-35, Industrial Area, Kalyani, Dist-Nadia, Pin-741235, India",인도,2022-01-19,2026-11-27,,정상,,v1.5.0/2026,v1.2.0/2024
 인태반 유래,20061103-01-HP-2-01,자하거가수분해물,(주)녹십자웰빙,㈜녹십자웰빙,충청북도 음성군 금왕읍 무극로65번길 26,대한민국,2006-11-03,2025-02-10,2022,취하,2025-02-10,v1.1.1/2022,v1.1.1/2022
 인태반 유래,20061228-01-HP-5-03,자하거가수분해물,경남제약(주),경남제약(주),경상남도 의령군 의령읍 구룡로4남길 79,대한민국,2006-12-28,2012-01-10,2020,정상,,v1.0.0/2021,v1.0.0/2021
 인태반 유래,20061228-01-HP-6-04,자하거추출물,경남제약(주),경남제약(주),경남 의령군 의령읍 구룡로4남길 79,대한민국,2006-12-28,2025-04-01,2025,정상,,v1.3.3/2025,v1.3.3/2025
@@ -4980,7 +4980,7 @@
 별표1,20201119-209-J-779,오르페나드린염산염,(주)삼오제약,R L Fine Chem Pvt Ltd,"Plots IP No. 27-29, KIADB Industrial Area, 1st Phase, Kudumalakunte Village, Gowribidanoor Taluk, Chikkaballapur District - 561 208, India",인도,2020-11-19,2026-07-27,,정상,,v1.7.0/2026,v1.7.0/2026
 별표1,20201119-209-J-784,레보도파,(주)국전,"Zhejiang Huahai Pharmaceutical Co., Ltd","Chuannan, Duqiao, Linhai, Zhejiang, China",중국,2020-11-19,2026-02-20,2023,정상,,v0.4.2/2026,
 별표1,20201119-211-J-783,세파졸린나트륨,에스피씨(주),"에스피씨(주) / Harbin Pharmaceutical Group Co., Ltd General Pharm, Factory",경기도 평택시 포승읍 평택항만길 386 / No. 109 Xuefu Road Nangang Dist. Harbin China,대한민국 / 중국,2020-11-19,2022-02-04,,정상,,v0.2.0/2022,
-별표1,20201123-210-J-592,이리노테칸염산염,(주)휴시드,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, 250100, P. R. China",중국,2020-11-23,2026-07-27,2023,정상,,v1.6.3/2026,v1.1.0/2022
+별표1,20201123-210-J-592,이리노테칸염산염,(주)휴시드,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, 250100, P. R. China",중국,2020-11-23,2026-07-27,2026,정상,,v1.6.4/2026,v1.1.0/2022
 별표1,20201123-210-J-592(1),이리노테칸염산염,(주)파마피아,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, 250100, P. R. China",중국,2021-05-14,2025-05-16,2023,정상,,,
 별표1,20201123-210-J-592(2),이리노테칸염산염,(주)보령,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, 250100, P. R. China",중국,2021-07-20,2026-03-24,2023,정상,,,
 별표1,20201123-210-J-592(4),이리노테칸염산염,(주)국전,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province 250100, People’s Republic of China",중국,2021-12-06,2024-12-30,2023,정상,,,
@@ -5967,7 +5967,7 @@
 별표1,20220517-209-J-1298,프라미펙솔염산염일수화물,한국베링거인겔하임(주),Boehringer Ingelheim Pharma GmbH & Co. KG,"Binger Strasse 173, 55216 Ingelheim am Rhien, Germany",독일,2022-05-17,2024-10-14,2025,정상,,v1.1.1/2025,
 별표1,20220517-209-J-1299,카르바마제핀,명인제약(주),명인제약(주),경기도 화성시 만세구 향남읍 발안공단로 17,대한민국,2022-05-17,2026-06-11,2026,정상,,v1.2.4/2026,v1.1.0/2023
 별표1,20220517-210-J-1297,이오헥솔,파마라인(주),Divi's Laboratories Ltd.,"Unit-2, Chippada Village, Annavaram Post – 531 162, Bheemunipatnam Mandal, Visakhapatnam District, Andhra Pradesh, INDIA",인도,2022-05-17,2026-04-13,2024,정상,,v1.4.1/2026,v1.1.0/2025
-별표1,20220517-210-J-1300,도세탁셀,(주)삼양바이오팜,Qilu Pharmaceutical Co. Ltd,"No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, P.R.China Post code: 250100",중국,2022-05-17,2025-12-16,2023,정상,,v1.2.2/2025,v1.1.0/2023
+별표1,20220517-210-J-1300,도세탁셀,(주)삼양바이오팜,Qilu Pharmaceutical Co. Ltd,"No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, P.R.China Post code: 250100",중국,2022-05-17,2025-12-16,2026,정상,,v1.2.3/2026,v1.1.0/2023
 별표1,20220517-210-J-1300(1),도세탁셀,(주)강일케미팜,Qilu Pharmaceutical Co. Ltd,"No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, P.R.China Post code: 250100",중국,2022-08-03,2025-03-11,2023,정상,,,
 별표1,20220517-210-J-1300(A),도세탁셀무수물,(주)엘텍파마켐,"Qilu Pharmaceutical Co., Ltd.","No. 23999 Gong Ye Bei Road, Jinan, Shandong Province, 250100, P. R. China",중국,2022-05-24,2026-02-04,2024,정상,,v0.1.2/2026,
 별표1,20220517-211-J-1295,후박75%에탄올 연조엑스(5:1),(주)에스터코퍼레이션,"Hunan Tianlong Pharmaceutical Co., Ltd.","No. 228, Wangcheng Avenue, Wangcheng Econonic and Technological Development Zone, Changsha City, China",중국,2022-05-17,,,정상,,v0.0.0/2022,
@@ -6393,7 +6393,7 @@
 별표1,20231027-209-J-1558,덱스트로메토르판브롬화수소산염수화물,고려제약(주),Exemed Pharmaceuticals,"Block No.628(A&B), ECP Canal Road, Village-Luna, Tai, Padra",인도,2023-10-27,,,정상,,v0.0.0/2023,
 별표1,20231030-209-J-1559,모사프리드시트르산염수화물,명문바이오(주),"명문바이오(주) / Anhui Heryi Pharmaceutical Co., Ltd","경기도 화성시 향남읍 제약공단2길 28 (10동 외) / Industrial park, Yangcun town, Tianchang city, Anhui province, China",대한민국 / 중국,2023-10-30,2025-10-10,,정상,,v0.1.0/2025,
 별표1,20231106-209-J-1317,옥스카르바제핀,(주)삼오제약,"Hubei Gedian Humanwell Pharmaceutical Co., Ltd.","No. 199, Jianshe Avenue, Gedian Economic Development District, E-zhou City, Hubei Province",중국,2023-11-06,,,정상,,v0.0.0/2023,
-별표1,20231115-204-I-664-11,타크로리무스수화물,(주)마성엘에스,Joyang Laboratories,"No. 9 Haidu North Road, Sheyang Economic Development zone, Yancheng, Jiangsu, 224300 China",중국,2023-11-15,,2025,정상,,v0.0.1/2025,
+별표1,20231115-204-I-664-11,타크로리무스수화물,(주)마성엘에스,Joyang Laboratories,"No. 9 Haidu North Road, Sheyang Economic Development zone, Yancheng, Jiangsu, 224300 China",중국,2023-11-15,,2026,정상,,v0.0.2/2026,
 별표1,20231115-209-J-1564,비가바트린,(주)사노피-아벤티스코리아,MSN Laboratories Private Limited,"Sy. No. 317 & 320, 321, 322, 323, 604 & 605, Rudraram (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pin code : 502 329, India",인도,2023-11-15,2025-01-13,,정상,,v1.3.0/2025,v1.3.0/2025
 별표1,20231115-211-J-1565,벤세라지드염산염,명인제약(주),명인제약(주) / (주)유일팜테크,경기도 화성시 만세구 향남읍 발안공단로 17 / 충청북도 진천군 이월면 물미길 3,대한민국,2023-11-15,2026-06-11,2025,정상,,v1.3.1/2026,v1.1.0/2024
 별표1,20231120-211-J-1567,라타노프로스트,한국산텐제약(주),Chirogate International Inc. Wulin Plant,"No.41, Sec. 1, Gong 2nd Rd., and No. 22, Alley 39, Sec. 1, Gong 2nd Rd., Longtan Dist., Taoyuan City 325019, Taiwan",대만,2023-11-20,2026-09-30,,정상,,v1.2.0/2026,v1.1.0/2025
@@ -6782,7 +6782,7 @@
 별표1,20250305-211-J-1762(1),리보플라빈,대신무약(주),"Hubei Guangji Pharmaceutical Co., Ltd.","B area of Dajin Guangji pharmaceutical Bio-Industry Park, Wuxue City, Hubei Province, China.",중국,2025-05-20,,,정상,,,
 별표1,20250305-211-J-1798,카르비도파,에이스바이오팜주식회사,"Shandong Xinhua Pharmaceutical Co.,Ltd","Hutian Chemical Industrial Zone, Zibo, Shandong, P.R. 255075. China",중국,2025-03-05,,,정상,,v0.0.0/2025,
 별표1,20250307-122-G-173-42,로사르탄칼륨,에이스바이오팜주식회사,"Zhejiang Jingsheng Pharmaceutical Co., Ltd","No. 27, Donghai 5th Avenue, Taizhouwan Economic and Technical Development Zone, Linhai, Taizhou City, Zhejiang Province, China",중국,2025-03-07,,2026,정상,,v0.0.1/2026,
-별표1,20250307-129-H-435-63,클로피도그렐황산수소염,(주)보령,"Metrochem API Pvt Ltd, Unit- IV","Plot No. 34B, 40B & 60B, J.N. Pharma City, Thanam (V) Parawada (M), Anakapalli District – 531 021, Andhra Pradesh, India.",인도,2025-03-07,,,정상,,v0.0.0/2025,
+별표1,20250307-129-H-435-63,클로피도그렐황산수소염,(주)보령,"Metrochem API Pvt Ltd, Unit- IV","Plot No. 34B, 40B & 60B, J.N. Pharma City, Thanam (V) Parawada (M), Anakapalli District – 531 021, Andhra Pradesh, India.",인도,2025-03-07,,2026,정상,,v0.0.1/2026,
 별표1,20250307-131-H-413-13,S-암로디핀베실산염,화일약품(주),Smruthi Organics Limited,"A-27, M.I.D.C. Chincholi, Tal-Mohol, Solapur 413255, Maharashtra state, India",인도,2025-03-07,,,정상,,v0.0.0/2025,
 별표1,20250307-209-J-1680,이소소르비드,(주)에셀바이오,"Jinan Yuteng Pharma Co., Ltd.","Sunguanzhuang Industrial Park, Yushan Street, Pingyin County, Jinan City, Shandong Province, China",중국,2025-03-07,,,정상,,v0.0.0/2025,
 별표1,20250307-209-J-1723,니코란딜,주식회사반센,Vital Laboratories Pvt. Ltd.,"Plot No. 1710 Phase-Ⅲ, G.I.D.C. Estate, Vapi - 396 195 vALSAD, Gujarat State, India",인도,2025-03-07,,,정상,,v0.0.0/2025,
@@ -7116,7 +7116,7 @@
 별표1,20250813-137-H-450-15,레보드로프로피진,(주)팜피아,Symed Labs Limited(Unit IV),"Survey No. 163, 163/A & 164/A, Pittampally Village, Chityal Mandal, Nalgonda District, Pincode 508114, Telangana State, India",인도,2025-08-13,,,정상,,v0.0.0/2025,
 별표1,20250813-46-C-436-15,에페리손염산염,명문바이오(주),Dalian Wonful Pharmaceutical Co. Ltd. / 명문바이오(주),"No. 50 Luanxiu Road, Changxing Island Economic Zone, Dalian, Liaoning Province, China / 경기도 화성시 향남읍 제약공단2길 28 (10동 외)",중국 / 대한민국,2025-08-13,,,정상,,v0.0.0/2025,
 별표1,20250818-211-J-1992,염화나트륨,우주산업주식회사,K+S Minerals and Agriculture GmbH,"Karlstrasse 80, Borth, Rheinberg, North Rhine-Westphalia, 47495 Germany",독일,2025-08-18,,,정상,,v0.0.0/2025,
-별표1,20250819-210-J-1970,도세탁셀무수물,(주)삼양바이오팜,"Hubei Haosun Pharmaceutical Co., Ltd.","No.20 Juxian Road, Gedian Economic & Technology Development Area, Hubei Province, China",중국,2025-08-19,2025-12-16,,정상,,v0.0.1/2025,
+별표1,20250819-210-J-1970,도세탁셀무수물,(주)삼양바이오팜,"Hubei Haosun Pharmaceutical Co., Ltd.","No.20 Juxian Road, Gedian Economic & Technology Development Area, Hubei Province, China",중국,2025-08-19,2025-12-16,2026,정상,,v0.0.2/2026,
 별표1,20250820-209-J-1974,트레티노인,에이스바이오팜주식회사,"Chongqing Huapont Shengchem Pharmaceutical Co., Ltd.","No. 6, Huanan 1st Road, Yanjia Avenue, Changshou District, Chongqing, P.R. China",중국,2025-08-20,,,정상,,v0.0.0/2025,
 별표1,20250821-209-J-1973,페노피브레이트,㈜하이플,"Jiangsu Nhwa Pharmaceutical Co., Ltd.","No.6, Tianyong Road, Industrial Park, Xuzhou City, Jiangsu Province, 221000, China",중국,2025-08-21,,,정상,,v0.0.0/2025,
 별표1,20250822-210-J-2000,카무스틴,싸이젠코리아(주),Agno Pharma Jiangsu,"68 Dapu Road, Dapu Industrial Zone, Lianyungang Economic & Technology Development Zone, Lianyungang, Jiangsu, China",중국,2025-08-22,2026-04-10,,정상,,v0.1.0/2026,
@@ -8149,7 +8149,7 @@
 신물질,수173-33-ND,닌테다닙에실산염(미분화),(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur(Village), Patancheru(Mandal), Sangareddy District, Telangana, Pin code: 502 300, India.",인도,2022-01-13,2025-07-11,2026,정상,,v1.5.3/2026,v1.5.1/2025
 신물질,수173-34-ND,사쿠비트릴·발사르탄나트륨염수화물,(주)국전,MSN Life Sciences Private Limited,"Unit-II, Sy.No. *Parts of 454, 455,457,458 & 459, Chandampet Village, Shankarampet-R Mandal, Medak District, Pincode: 502 255, Telangana State, India.",인도,2022-01-25,2024-03-06,2025,정상,,v0.1.2/2025,
 신물질,수173-36-ND,닐로티닙,(주)국전,MSN Laboratories Private Limited,"(Unit-II), Sy.No.50, 53, 53/A, 54&54A, Kardanur(village), Patancheru (Mandal), Sangareddy District, Pincode-502 300. Telangana State, India.",인도,2022-04-25,2026-04-27,2025,정상,,v0.2.2/2026,
-신물질,수173-37-ND,오시머티닙메실산염,(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pincode: 502 300, India.",인도,2022-04-25,2023-10-23,2025,정상,,v0.1.2/2025,
+신물질,수173-37-ND,오시머티닙메실산염,(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pincode: 502 300, India.",인도,2022-04-25,2023-10-23,2026,정상,,v0.1.3/2026,
 신물질,수173-37-ND(1),오시머티닙메실산염,(주)파마피아,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pincode: 502 300, India.",인도,2024-12-19,,2025,정상,,,
 신물질,수173-38-ND,팔보시클립,(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur, (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pin code: 502 300, India.",인도,2022-04-25,2026-09-21,2026,정상,,v1.3.2/2026,v1.1.0/2024
 신물질,수173-39-ND,카르필조밉,(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pincode: 502 300, India.",인도,2022-04-25,2025-04-25,2026,정상,,v0.1.3/2026,
@@ -8618,14 +8618,14 @@
 신물질,수258-61-ND,테리파라티드아세테이트,(주)파마피아,"Hubei JXBio Pharmaceutical Co., Ltd.","No. 9 Lvshan Road, Xian'an Economic Development Zone, Xianning City, Hubei Province, China",중국,2026-09-03,,,정상,,v0.0.0/2026,
 신물질,수258-62-ND,피타바스타틴칼슘,(주)파마피아,Zydus Lifesciences Limited,"Plot No. 26 to 29 & 31, Umaraya Road, Village - Dabhasa, Tal - Padra, City, Dabhasa - 391 440, Dist. Vadodara, Gujarat State, India",인도,2026-09-09,,,정상,,v0.0.0/2026,
 신물질,수258-63-ND,콜산,(주)파마피아,Dipharma Francis S.r.l,"Via Bissone, 5, 20021, Baranzate(MI), Italy",이탈리아,2026-10-06,,,정상,,v0.0.0/2026,
-신물질,수258-7-ND,레날리도마이드,(주)파마피아,Viyash Life Sciences Private Limited,"Plot No. 1-A/2 & Plot No. 1-A/3 M.I.D.C Taloja Industrial Area, Taluka-Panvel, District-Raigad, Maharashtra –410 208, India Raigad 410208 Maharashtra State, India",인도,2018-04-09,2025-05-16,2023,정상,,v1.2.3/2025,v1.2.0/2022
+신물질,수258-7-ND,레날리도마이드,(주)파마피아,Viyash Life Sciences Private Limited,"Plot No. 1-A/2 & Plot No. 1-A/3 M.I.D.C Taloja Industrial Area, Taluka-Panvel, District-Raigad, Maharashtra –410 208, India Raigad 410208 Maharashtra State, India",인도,2018-04-09,2025-05-16,2026,정상,,v1.2.4/2026,v1.2.0/2022
 신물질,수258-8-ND,프루칼로프라이드숙신산염,(주)파마피아,Symed Labs Ltd (Unit-Ⅰ),"Survey No.353, 35 4& 467 Domadugu Village, Gummadidala Mandal, SangaReddy District - 502 313, Telangana State, India",인도,2018-06-25,2025-07-09,,정상,,v1.4.0/2025,v1.3.0/2025
 신물질,수258-9-ND,티카그렐러,(주)파마피아,MSN Organics Private Limited,"Sy. No. 224/A, Bibinagar(Village), Bibinagar(Mandal), Yadadri Bhuvanagiri District, Telangana, Pincode : 508126, India",인도,2018-10-08,2023-05-17,2025,정상,,v1.2.2/2025,v1.0.0/2021
 신물질,수258-9-ND(1),티카그렐러,한국유나이티드제약(주),MSN Organics Private Limited,"Sy. No. 224/A, Bibinagar(Village), Bibinagar(Mandal), Yadadri Bhuvanagiri District, Telangana, Pincode : 508126, India",인도,2019-02-21,2020-11-11,2025,정상,,,
 신물질,수2582-17-ND,토파시티닙시트르산염,한국화이자제약(주),Pfizer Ireland Pharmaceuticals Unlimited Company,"Ringaskiddy API Plant, Ringaskiddy, Co. Cork, P43 X336, Ireland",아일랜드,2013-10-29,2025-10-10,2023,정상,,v1.4.2/2025,v1.4.1/2024
 신물질,수2582-18-ND,데스벤라팍신숙신산염일수화물,한국화이자제약(주),Pfizer Ireland Pharmaceuticals,"Ringaskiddy Active Pharmaceutical Ingredient Plant, P.O. Box 140, Ringaskiddy, Co. Cork, Ireland",아일랜드,2014-01-29,2017-04-06,2023,정상,,v1.0.1/2023,v1.0.0/2021
 신물질,수2582-19-ND,주석산바레니클린,한국화이자제약(주),Pfizer Pharmaceutical LLC,"PO Box 628 Road No.2 Km 58.2, Barceloneta, PR 00617, Puerto Rico",푸에르토리코,2014-10-22,2024-08-21,2023,취하,2024-08-21,v1.0.1/2023,v1.0.0/2021
-신물질,수2582-20-ND,수니티닙말산염,한국화이자제약(주),Pfizer Asia Manufacturing Pte Ltd,"11 Tuas Bay Street, Singapore 639164",싱가포르,2015-07-29,2026-08-25,2023,정상,,v1.1.1/2026,v1.0.0/2021
+신물질,수2582-20-ND,수니티닙말산염,한국화이자제약(주),Pfizer Asia Manufacturing Pte Ltd,"11 Tuas Bay Street, Singapore 639164",싱가포르,2015-07-29,2026-11-27,2023,정상,,v1.2.1/2026,v1.0.0/2021
 신물질,수2582-21-ND,데스벤라팍신숙신산염일수화물,한국화이자제약(주),Pfizer Asia Manufacturing Pte Ltd,31 Tuas South Ave 6 Singapore 637578,싱가포르,2015-12-18,2023-02-17,2023,정상,,v1.2.1/2023,v1.2.0/2023
 신물질,수259-10-ND,두타스테리드,성이바이오(주),Apitoria Pharma Private Limited Unit II,"Sy. No.10 & 13, Gaddapotharam Village, IDA, Kazipally, Jinnaram Mandal, Sangareddy District Telangana India",인도,2020-08-13,2026-03-17,2024,정상,,v0.1.1/2026,
 신물질,수259-10-ND(1),두타스테리드,주식회사더원팜텍,Apitoria Pharma Private Limited Unit II,"Sy. No.10 & 13, Gaddapotharam Village, IDA, Kazipally, Jinnaram Mandal, Sangareddy District Telangana India",인도,2023-07-20,,2025,정상,,,
@@ -8663,7 +8663,7 @@
 신물질,수2816-1-ND(2),데페라시록스,에이스바이오팜주식회사,Mylan Laboratories Limitted,"Unit-8, G.Chodavaram, Pusapatirega Mandal, Vizianagaram District-535204, Andhra Pradesh, India",인도,2018-03-22,2025-04-11,2023,취하,2025-04-11,,
 신물질,수2816-2-ND,이매티닙메실산염,(주)마성엘에스,Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33a, 40-47, Raichur Industrial Growth Centre, Chicksugur-584 134, Raichur, India",인도,2012-03-02,2023-03-03,2019,정상,,v1.1.0/2023,v1.0.0/2021
 신물질,수2816-2-ND(1),이매티닙메실산염,성이바이오(주),Shilpa Medicare Limited,"Plot Nos. 33, 33a, 40-47, Raichur Industrial Growth Centre, Chicksugur-584 134, Raichur, Kamataka, India",인도,2013-10-20,,2018,정상,,,
-신물질,수2816-3-ND,보르테조밉,(주)마성엘에스,Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33a, 40-47, Raichur Industrial Growth Centre, Chicksugur-584 134, Raichur, India",인도,2012-03-23,2023-04-10,2024,정상,,v1.1.1/2024,v1.0.0/2021
+신물질,수2816-3-ND,보르테조밉,(주)마성엘에스,Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33a, 40-47, Raichur Industrial Growth Centre, Chicksugur-584 134, Raichur, India",인도,2012-03-23,2023-04-10,2026,정상,,v1.1.2/2026,v1.0.0/2021
 신물질,수2816-4-ND,페메트렉시드이나트륨염,(주)마성엘에스,Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33A, 40 to 47, Raichur Industrial Growth Centre, Wadloor Road, Chicksugur cross, Chicksugur-584 134, Raichur, Karnataka, India",인도,2013-03-08,2026-05-27,2023,정상,,v1.3.1/2026,v1.0.0/2021
 신물질,수2816-4-ND(A),페메트렉시드이나트륨염2.5수화물,주식회사반센,Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33A, 40 to 47, Raichur Industrial Growth Centre, Wadloor Road, Chicksugur cross, Chicksugur-584 134, Raichur, Karnataka, India",인도,2023-02-13,2026-06-30,,정상,,v1.3.1/2026,
 신물질,수2816-4-ND(B),페메트렉시드이나트륨염2.5수화물,에이징생명과학(주),Shilpa Pharma Lifesciences Limited,"Plot Nos. 33, 33A, 40 to 47, Raichur Industrial Growth Centre, Chicksugur - 584 134, Raichur, Karnataka, India.",인도,2026-10-14,,,정상,,v1.3.1/2026,
@@ -8751,14 +8751,14 @@
 신물질,수3127-1-ND,데가렐릭스,한국페링제약(주),PolyPeptide Laboratories (Sweden) AB,Hogerudsgatan 21 SE-216 13 Limhamn,스웨덴,2013-03-18,2017-07-06,2023,정상,,v1.0.1/2023,v1.0.0/2021
 신물질,수316-5-ND,에제티미브,대봉엘에스(주),Aragen Life Sciences Pvt. Ltd,"Unit-II, Plot No. 94, SEZ, Jawaharlal Nehru Pharma City, Lemarthi(V), Parawada(M), Visakhapatnam District - 531019 Andhra Pradesh, India",인도,2021-09-10,,,정상,,v0.0.0/2021,
 신물질,수318-5-ND,미갈라스타트염산염,(주)한독,Carbogen Amcis AG,"Hauptstrasse 171, 4416 Bubendorf, Switzerland",스위스,2020-11-04,2023-03-09,2026,정상,,v1.2.3/2026,v1.0.0(r)/2025
-신물질,수318-6-ND,페그세타코플란,주식회사한독소비,Bachem AG,"Hauptstrasse 144, 4416 Bubendorf, Switzerland",스위스,2024-04-29,2025-10-29,2025,정상,,v1.2.2/2025,v1.2.2(r)/2026
+신물질,수318-6-ND,페그세타코플란,주식회사한독소비,Bachem AG,"Hauptstrasse 144, 4416 Bubendorf, Switzerland",스위스,2024-04-29,2025-10-29,2026,정상,,v1.2.3/2026,v1.2.2(r)/2026
 신물질,수318-7-ND,아바트롬보팍말레산염,주식회사한독소비,Sterling Wisconsin LLC,"W130 N10497 Washington Drive Germantown, WI, 53022, USA",미국,2024-11-26,2026-11-26,,정상,,v1.3.2/2026,v1.2.0/2025
 신물질,수323-2-ND,두타스테리드,대신무약(주),Swati Spentose Private Limited (Unit-Ⅱ),"Plot No. A-1/2110-2111, Phase-III, G.I.D.C. VAPI, City: Vapi - 396 195, Dist. Valsad, Gujarat State, India",인도,2021-06-22,,2025,정상,,v0.0.3/2025,
 신물질,수323-2-ND(1),두타스테리드,주식회사산일파마,Swati Spentose Private Limited (Unit-Ⅱ),"Plot No. A-1/2110-2111, Phase-III, G.I.D.C. VAPI, City: Vapi - 396 195, Dist. Valsad, Gujarat State, India",인도,2025-01-14,,,정상,,,
 신물질,수323-2-ND(A),두타스테리드,(주)삼오제약,Swati Spentose Private Limited(Unit-Ⅱ),"Plot No. A-1/2110 and 2111, III Phase, G.I.D.C. VAPI, City: Vapi - 396 195, Dist. Valsad, Gujarat State, India",인도,2025-01-13,2026-03-11,,정상,,v0.1.0/2026,
 신물질,수323-2-ND(B),두타스테리드,(주)필인터내셔널,Swati Spentose Private Limited(Unit-Ⅱ),"Plot No. A-1/2110 - 2111, III Phase, G.I.D.C. VAPI, City: Vapi - 396 195, Dist. Valsad, Gujarat State, India",인도,2025-06-23,,,정상,,v0.0.0/2025,
 신물질,수323-3-ND,아팔루타마이드,대신무약(주),"Zhejiang Jingsheng Pharmaceutical Co., Ltd.","No. 27, Donghai 5th Avenue, Taizhouwan Economic and Technical Development Zone, Linhai, Taizhou City, Zhejiang Province, China",중국,2025-05-19,2026-04-14,,정상,,v0.1.0/2026,
-신물질,수323-4-ND,엔잘루타미드,대신무약(주),"Zhejiang Jingsheng Pharmaceutical Co., Ltd.","No. 27, Donghai 5th Avenue, Taizhouwan Economic and Technical Development Zone, Linhai, Taizhou City, Zhejiang Province, China",중국,2025-05-19,2026-10-26,,정상,,v0.1.0/2026,
+신물질,수323-4-ND,엔잘루타미드,대신무약(주),"Zhejiang Jingsheng Pharmaceutical Co., Ltd.","No. 27, Donghai 5th Avenue, Taizhouwan Economic and Technical Development Zone, Linhai, Taizhou City, Zhejiang Province, China",중국,2025-05-19,2026-10-26,2026,정상,,v0.1.1/2026,
 신물질,수323-5-ND,오메가3산에틸에스테르90,대신무약(주),"Sichuan Gowell Pharmaceutical Co., Ltd.","New Economic Development Zone, Meishan City, Sichuan, Province, China",중국,2025-06-02,2026-11-02,,정상,,v0.1.0/2026,
 신물질,수323-6-ND,다파글리플로진프로판디올수화물,대신무약(주),"Jiangxi Synergy Pharmaceutical Co., Ltd","No. 888, Tiangong Avenue, Jiangxi Fengxin Industrial Park, Fengxin County, 330700, Yichun City, Jiangxi Province, China",중국,2025-07-23,,,정상,,v0.0.0/2025,
 신물질,수323-7-ND,아팔루타마이드,대신무약(주),"Zhejiang Jingsheng Pharmaceutical Co., Ltd.","No. 27, Donghai 5th Avenue, Taizhouwan Economic and Technical Development Zone, Linhai, Taizhou City, Zhejiang Province, China",중국,2025-08-19,2026-07-02,,정상,,v0.1.0/2026,
@@ -8777,7 +8777,7 @@
 신물질,수3281-14-ND,보세프레비르,한국엠에스디(주),MSD International GmbH,50 Tuas West Drive Singapore 638408,싱가포르,2014-06-24,,2021,정상,,v1.0.0/2021,v1.0.0/2021
 신물질,수3281-15-ND,에토리콕시브,한국오가논(주),F.I.S-Fabbrica Italiana Sintetici S.p.A / [일부공정위탁제조]F.I.S. Fabbrica Italiana Sintetici S.p.A,"Via Massimo D'Antoná 13 Termoli, Campobasso 86039, Italy / Alte - Montecchio Maggiore (VI) - Viale Milano 26",이탈리아,2014-12-23,2022-03-08,2023,정상,,v1.0.2/2023,v1.0.0/2021
 신물질,수3281-16-ND,아프레피탄트,한국엠에스디(주),Siegfried Evionnaz SA,"Route du Simplon 1, 36, 1902, Evionnaz, Switzerland",스위스,2016-01-14,2023-12-07,2021,정상,,v1.1.0/2023,v1.0.0/2021
-별표1,수331-10-ND,레날리도마이드,화일약품(주),Hetero Labs Limited,"Unit-I, Survey. No.10, I.D.A., Gaddapotharam Village, Jinnaram Mandal,Sangareddy District, Telangana, India",인도,2017-08-01,2024-02-28,2025,정상,,v1.3.2/2025,v1.0.0/2021
+별표1,수331-10-ND,레날리도마이드,화일약품(주),Hetero Labs Limited,"Unit-I, Survey. No.10, I.D.A., Gaddapotharam Village, Jinnaram Mandal,Sangareddy District, Telangana, India",인도,2017-08-01,2024-02-28,2026,정상,,v1.3.3/2026,v1.0.0/2021
 신물질,수331-10-ND(1),레날리도마이드,이성인터내쇼날(주),Hetero Labs Limited,"Unit-I, Survey. No.10, I.D.A., Gaddapotharam Village, Jinnaram Mandal,Sangareddy District, Telangana, India",인도,2018-03-26,2024-03-18,2025,정상,,,
 신물질,수331-10-ND(2),레날리도마이드,(주)파마피아,Hetero Labs Limited,"Unit-I, Survey. No.10, I.D.A., Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana, India",인도,2018-04-20,2024-03-11,2025,정상,,,
 신물질,수331-10-ND(3),레날리도마이드,(주)애거슨바이오,Hetero Labs Limited,"Unit-I, Survey. No.10, I.D.A., Gaddapotharam Village, Jinnaram Mandal,Sangareddy District, Telangana, India",인도,2021-11-11,2024-02-29,2025,정상,,,
@@ -9085,7 +9085,7 @@
 신물질,수4496-3-ND,보티옥세틴브롬화수소산염,한국룬드벡(주),H. Lundbeck A/S / Jetpharma SA / Lundbeck Pharmaceuticals Italy S.P.A,"Oddenvej 182, Lumsas 4500 Nykøbing Sjælland, Denmark / Via Sottobisio 42 A, 6828 Balerna, Switzerland / Viale dell'Industria, 54 - 35129, Padova (PD), Italy",덴마크 / 스위스 / 이탈리아,2014-07-24,2025-10-29,2019,정상,,v1.3.0/2025,v1.3.0/2025
 신물질,수4496-4-ND,보티옥세틴브롬화수소산염,한국룬드벡(주),Lundbeck Pharmaceuticals Italy S.P.A / [미분화공정 제조원] Microchem S.R.L,"Viale dell'Industria, 54 - 35129, Padova (PD), Italy / Fiorenzuola D'Arda (PC) - Via Turati 2, Italy",이탈리아,2014-07-24,2025-10-29,2019,정상,,v1.3.0/2025,v1.3.0/2025
 신물질,수4528-3-ND,옥테니딘염산염,(주)한국유니팜,Sterling Pharma Solutions Limited,Cramlington Road Dudley Northumberland NE23 7QG,영국,2016-02-01,2026-06-22,2021,정상,,v1.5.2/2026,v1.2.0/2024
-신물질,수4532-1-ND,루파타딘푸마르산염,안국약품(주),Urquima S.A.,"Arnau de Vilanova 22-42 08105 Sant Fost de Campsentelles(Barcelona), Spain",스페인,2017-01-09,2024-04-09,,정상,,v1.1.0/2024,v1.0.0/2021
+신물질,수4532-1-ND,루파타딘푸마르산염,안국약품(주),Urquima S.A.,"Arnau de Vilanova 22-42 08105 Sant Fost de Campsentelles(Barcelona), Spain",스페인,2017-01-09,2024-04-09,2026,정상,,v1.1.1/2026,v1.0.0/2021
 신물질,수4554-1-ND,이반드론산나트륨,(주)굿윌스,Gador S.A.,"Calle 10, Fraccion Ⅲ, Parcela 7, Parque Industrial Pilar B1630CFA of the Province of Buenos Aires, Argentine Republic",아르헨티나,2011-06-15,,2026,정상,,v1.0.1/2026,v1.0.0/2021
 신물질,수4554-1-ND(1),이반드론산나트륨,(주)유유제약,Gador S.A.,"Calle 10, Fraccion Ⅲ, Parcela 7, Parque Industrial Pilar B1630CFA of the Province of Buenos Aires, Argentine Republic",아르헨티나,2011-10-07,2026-04-02,2026,취하,2026-04-02,,
 기타,수4554-1-ND(2),이반드론산나트륨,신풍제약(주),Gador S.A.,"Calle 10, Fraccion III, Parcela 7, Parque industral Pilar B1630CFA of the Province of Buenos Aires, Argentine Republic",아르헨티나,2011-11-04,,2018,정상,,,
@@ -9167,7 +9167,7 @@
 신물질,수4722-4-ND,마시텐탄,(주)한국얀센,Lonza AG / [미분화공정 제조원] Jetpharma SA / [미분화공정 제조원] Micro-Macinazione SA,"Lonzastrasse, 3930 Visp, Switzerland / Via Sottobisio 42 A, 6828 Balerna, Switzerland / Via Cantonale 4, 6998 Monteggio, Switzerland",스위스,2014-06-23,2023-10-19,2021,정상,,v1.2.0/2023,v1.2.0/2025
 신물질,수4726-1-ND,인게놀메뷰테이트,레오파마(유),LEO Pharma Southport Pty Ltd,"18 Olympic Circuit & 5 Goodyear Street, Southport, Queensland 4215, Australia",호주,2013-10-29,2024-03-08,,취하,2024-03-08,v1.0.0/2021,v1.0.0/2021
 신물질,수473-18-ND,아픽사반,성우화학(주),Alembic Pharmaceuticals Limited,"API DivisionKarakhadi, Plot No. 842-843Tal-Padra, AT.- Karakhadi-391 450, Dist.- Vadodara,Gujarat State, India",인도,2017-07-11,2024-05-21,2025,정상,,v1.2.1/2025,v1.0.0/2021
-신물질,수473-19-ND,소라페닙토실레이트,성우화학(주),Hetero Labs Limited,"Unit-Ⅰ, Sy.No. 10, I.D.A., Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana State, India",인도,2017-12-04,2025-06-26,2025,정상,,v1.5.2/2025,v1.0.0/2021
+신물질,수473-19-ND,소라페닙토실레이트,성우화학(주),Hetero Labs Limited,"Unit-Ⅰ, Sy.No. 10, I.D.A., Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana State, India",인도,2017-12-04,2025-06-26,2026,정상,,v1.5.3/2026,v1.0.0/2021
 신물질,수473-19-ND(1),소라페닙토실레이트,엠피크코리아(주),Hetero Labs Limited,"Unit-Ⅰ, Sy.No. 10, I.D.A., Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana State, India",인도,2018-02-08,2025-07-11,2025,정상,,,
 신물질,수473-20-ND,에토리콕시브,성우화학(주),Alembic Pharmaceuticals Limited(API Unit-1),"AT-Panelav, Tal-Halol, City : Panelav, Dist : Panchmahal, Gujarat State, India",인도,2019-05-23,2025-03-11,2026,정상,,v1.1.1/2026,v1.0.0/2021
 신물질,수473-20-ND(1),에토리콕시브,(주)파마피아,Alembic Pharmaceuticals Limited(API Unit-1),"AT-Panelav, Tal-Halol, City : Panelav, Dist : Panchmahal, Gujarat State, India",인도,2020-07-21,2025-03-26,2026,정상,,,
@@ -9324,6 +9324,7 @@
 신물질,수522-7-ND(C),엔잘루타미드,(주)국전,MSN Laboratories Private Limited,"(Unit-ll) Sy. No. 50, 53, 53/A, 54 & 54/A, Kardanur (Village), Patancheru (Mandal), Sangareddy District, Telangana, Pincode: 502 300, India",인도,2025-06-30,,2026,정상,,v0.0.1/2026,
 신물질,수522-8-ND,에제티미브,알보젠코리아(주),"Nantong Chanyoo Pharmatech Co.,Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P.R. China",중국,2024-08-01,2026-10-23,,정상,,v0.1.0/2026,
 신물질,수522-8-ND(1),에제티미브,(주)마더스제약,"Nantong Chanyoo Pharmatech Co.,Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P.R. China",중국,2025-02-12,,,정상,,,
+신물질,수522-8-ND(2),에제티미브,(주)팜피아,"Nantong Chanyoo Pharmatech Co., Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P.R. China",중국,2026-11-27,,,정상,,,
 신물질,수522-8-ND(A),에제티미브(미분화),(주)삼오제약,"Nantong Chanyoo Pharmatech Co.,Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P. R. China",중국,2024-10-07,,2026,정상,,v0.0.1/2026,
 신물질,수522-8-ND(B),에제티미브(미분화),주식회사오트란코리아,"Nantong Chanyoo Pharmatech Co.,Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P.R. China",중국,2025-06-09,2026-11-23,,정상,,v0.1.0/2026,
 신물질,수522-8-ND(C),에제티미브(미분화),(주)휴시드,"Nantong Chanyoo Pharmatech Co., Ltd.","No.2 Tonghai Si Road, Yangkou Chemical Industrial Park, Rudong Coastal Economic Development Zone, Nantong, Jiangsu Province 226407, P.R. China",중국,2026-10-26,,,정상,,v0.0.0/2026,
@@ -9690,7 +9691,7 @@
 신물질,수674-7-ND(6),피네레논베실산염(미분화),(주)마성엘에스,Lee Pharma Limited,"No 10 G 1 Gaddapotharam,Jinnaram,Telangana 502319, India",인도,2026-03-24,,,정상,,,
 별표1,수69-10-ND,페라미비르수화물,익수제약(주),"Tianjin Taipu Pharmaceutical Co., Ltd.","No. 101, Xinye 8th street, Tianjin Economic-technological development area, Tianjin, China",중국,2021-03-23,2024-06-25,2025,정상,,v1.5.2/2025,v1.5.0/2025
 신물질,수69-10-ND(A),페라미비르수화물,리더스바이오(주),"Tianjin Taipu Pharmaceutical Co., Ltd.","101 Xinye 8th Street, Tianjin Economic and Technological Development Area, Tianjin, China",중국,2021-08-10,2024-08-09,,정상,,v0.1.0/2024,
-신물질,수69-11-ND,팔보시클립,익수제약(주),"Hetero Labs Limited,Unit-1","Sy.No.10, I.D.A.,Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana, India",인도,2021-11-25,2025-07-29,,정상,,v1.4.0/2025,v1.3.0/2023
+신물질,수69-11-ND,팔보시클립,익수제약(주),"Hetero Labs Limited,Unit-1","Sy.No.10, I.D.A.,Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana, India",인도,2021-11-25,2025-07-29,2026,정상,,v1.4.1/2026,v1.3.0/2023
 신물질,수69-11-ND(1),팔보시클립,엠피크코리아(주),Hetero Labs Limited(Unit-1),"Sy.No.10, I.D.A.,Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana State India",인도,2023-10-10,,,정상,,,
 신물질,수69-11-ND(2),팔보시클립,광동제약(주),Hetero Labs Limited(Unit-1),"Sy.No.10, I.D.A.,Gaddapotharam Village, Jinnaram Mandal, Sangareddy District, Telangana State India",인도,2026-02-04,,,정상,,,
 신물질,수69-12-ND,보노프라잔푸마르산염,익수제약(주),Ami Lifesciences Private Limited,"Block No. 82/B, ECP Road At & Post. Karakhadi, Tal-Padra, City : Karakhadi-391450, Dist : Vadodara, Gujarat State India",인도,2021-12-15,2026-09-22,,정상,,v1.6.0/2026,v1.5.0/2026
@@ -9839,7 +9840,7 @@
 신물질,수794-3-ND,시타글립틴염산염수화물,인성트레이딩(주),Aarti Pharmalabs Limited,"Plot No. E – 50, 50/1 and 59/1, Unit – IV, MIDC, Tarapur, Taluka & District – Palghar 401 506 Maharashtra State, India",인도,2025-08-25,,,정상,,v0.0.0/2025,
 신물질,수794-4-ND,엠파글리플로진(미분화),인성트레이딩(주),Aarti Pharmalabs Limited,"Plot No. E – 50, 50/1 and 59/1, Unit – IV, MIDC, Tarapur, Taluka & District – Palghar 401 506 Maharashtra State, India",인도,2025-08-25,,,정상,,v0.0.0/2025,
 신물질,수807-1-ND,라타노프로스틴부노드,(주)바슈헬스코리아,EUROAPI Hungary Ltd,"To utca 1-5, Budapest, H-1045, Hungary",헝가리,2021-02-05,2022-07-15,,정상,,v1.1.0/2022,v1.0.0/2021
-신물질,수81-24-ND,아팔루타마이드,(주)한국얀센,"Janssen Pharmaceuticals, Inc","1440 Olympic Drive, Athens, Georgia (GA) 30601, USA",미국,2020-12-29,2022-06-10,2022,정상,,v1.1.1/2023,v1.0.0/2021
+신물질,수81-24-ND,아팔루타마이드,(주)한국얀센,"Janssen Pharmaceuticals, Inc","1440 Olympic Drive, Athens, Georgia (GA) 30601, USA",미국,2020-12-29,2022-06-10,2026,정상,,v1.1.2/2026,v1.0.0/2021
 신물질,수81-25-ND,릴피비린,(주)한국얀센,Synergy Health Ede B.V. / Janssen Pharmaceutica NV / Janssen Pharmaceutical Sciences Unlimited Company,"Soevereinstraat 2, Etten-Leur 4879NN, Netherlands / Janssen Pharmaceuticalaan 3, Geel, 2440, Belgium / Little Island Industrial Estate, Little Island, Co. Cork, Ireland",네덜란드 / 벨기에 / 아일랜드,2021-11-08,2026-08-20,,정상,,v1.1.0/2026,v1.0.0/2022
 신물질,수810-1-ND,라푸티딘,비티팜주식회사,Bajaj Healthcare Limited,"(Unit–II), Block No. 588, Savli- Karachia Road, At & Post: Gothada Tal: Savli, Dist: Vadodara, Gujarat - 391 776 India",인도,2021-09-13,2026-01-14,,정상,,v1.5.0/2026,v1.5.0/2026
 신물질,수810-2-ND,라푸티딘,비티팜주식회사,Bajaj Healthcare Ltd,"Block No. 588, Savli Karachia Road, At & Post – Gothada, Tal-Savli, Dist – Vadodara – 391 776, India",인도,2024-11-26,2026-10-26,,정상,,v1.1.0/2026,v1.1.0/2026
@@ -9875,6 +9876,7 @@
 신물질,수812-36-ND,사피나미드메실산염,엠피크코리아(주),"Apitoria Pharma Private Limited, Unit-IV","Sy No’s. 52, 53, 58, 59, 61 to 78, 127 & 128, Pydibhimavaram Village & Sy. No’s. 1, 2, 4 to 9, 11, 29, 30, 31 &32, Chittivalasa Village, Ranasthalam Mandal Srikakulam District Andhra Pradesh State, India.",인도,2026-08-18,,,정상,,v0.0.0/2026,
 신물질,수812-37-ND,펠루비프로펜(미분화),엠피크코리아(주),Aurore Life Sciences Private Limited,"Plot No 180/2 & 3, Khazipally (V), Jinnaram (M), Sangareddy, Telangana, 502319, India",인도,2026-09-18,,,정상,,v0.0.0/2026,
 신물질,수812-38-ND,피네레논(미분화),엠피크코리아(주),Alivus Life Sciences Limited,"Plot No 3109, GIDC Industrial Estate, Ankleshwar - 393 002, Dist. Bharuch, Gujarat State, India",인도,2026-10-02,,,정상,,v0.0.0/2026,
+신물질,수812-38-ND(1),피네레논(미분화),(주)메디포엠,Alivus Life Sciences Limited,"Plot No. 3109, GIDC Industrial Estate, Ankleshwar - 393 002, Dist. Bharuch, Gujarat State, India",인도,2026-11-27,,,정상,,,
 신물질,수826-1-ND,베르테포르핀,디케이에스에이치코리아(주),Chiracon GmbH,Biotechnologiepark 3 14943 Luckenwalde Germany,독일,2026-09-15,,,정상,,v0.0.0/2026,
 신물질,수827-2-ND,데스벤라팍신숙신산염일수화물,(주)유엔유제네릭,Lupin Manufacturing Solutions Limited / HIKAL LIMITED / Amoli Organics (A Division of Umedica Laboratories Pvt. Ltd.),"Block No.21, Dabhasa Taluka Padra City : Dabhasa-391-440, Dist : Vadodara, Gujarat, state, India / Plot No. 72&82A, KIADB Industrial Area, Jigani, Anekal Taluk, Bangalore-560105, India / Block No. 422, E.C.P. Canal Road, Village-Luna, Taluka-Padra, District-Vadodara, PIN-391 440 State-Gujarat, INDIA",인도,2021-11-30,2026-08-11,2024,정상,,v1.3.1/2026,v1.2.0/2024
 신물질,수827-3-ND,다파글리플로진프로판디올수화물,(주)유엔유제네릭,Hikal Limited,"72&82/A, KIADB Industrial Area Jigani, Anekal Taluk Bengaluru-560105, Karnataka, India",인도,2022-04-11,2023-05-31,2024,정상,,v1.3.1/2024,v1.2.0/2023
