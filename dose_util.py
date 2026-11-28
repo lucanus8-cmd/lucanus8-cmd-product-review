@@ -159,7 +159,7 @@ def ubist_combo(df, code_n=None):
     col = "성분" if "성분" in df.columns else ("성분명" if "성분명" in df.columns else None)
     if col is None:
         return pd.Series("단일제", index=df.index, dtype=object)
-    s = df[col].astype(str)
+    s = df[col].astype(object).where(df[col].notna(), "nan").astype(str)   # 빈 칸 → 'nan' (단일제로 봄)
     uniq = pd.Series(s.unique())
     code_n = code_n or {}
 

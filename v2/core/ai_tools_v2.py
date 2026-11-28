@@ -25,10 +25,12 @@ def _core(s):
 
 
 def _ap():
-    A = data.approval()
-    if A is None:
+    """허가 표 (_k 성분키, _r 파일 안 줄 번호 — 지금 사이트 표와 같은 줄 순서를 지키려고)."""
+    p = data.ensure("approval")
+    if not p:
         raise RuntimeError("허가 자료가 아직 없습니다")
-    return A
+    return (f"(SELECT *, {data.key_expr('approval')} AS _k, file_row_number AS _r "
+            f"FROM read_parquet('{p.as_posix()}', file_row_number=true))")
 
 
 # ── 성분키 찾기 ─────────────────────────────────────────────────────
@@ -52,7 +54,7 @@ def _keys(q):
 def _ap_rows(keys, cols):
     A = _ap()
     sel = ", ".join(f'"{c}"' for c in cols)
-    return data.q(f"SELECT _k, {sel} FROM {A} WHERE list_contains(?, _k)", [sorted(keys)])
+    return data.q(f"SELECT _k, {sel} FROM {A} WHERE list_contains(?, _k) ORDER BY _r", [sorted(keys)])
 
 
 def _single(df):
@@ -207,7 +209,7 @@ def disease_search(disease, exclude=""):
     h["_b"] = (h["위치"] != "첫머리").astype(int)
     h = h.sort_values(["_b", "_ee_rank"])
     top = h.head(MAX_ROWS)
-    nm = data.q(f'SELECT _k, min("주성분") AS n FROM {_ap()} WHERE list_contains(?, _k) GROUP BY 1',
+    nm = data.q(f'SELECT _k, first("주성분" ORDER BY _r) AS n FROM {_ap()} WHERE list_contains(?, _k) GROUP BY 1',
                 [list(top.index.astype(str))]).set_index("_k")["n"].map(_core)
     return {"결과": {"성분 수": int(len(h)), "첫머리": int((h["위치"] == "첫머리").sum()),
                    "목록": [{"성분키": k, "성분": nm.get(k, k), "위치": r_["위치"], "문구": r_["문구"][:120]}
@@ -280,7 +282,9 @@ def clinical_summary(ingredient):
                 [nospace(c).lower() for c in cores])
     if cl.empty:
         return {"결과": "승인된 임상 없음", "출처": "식약처 임상시험 승인"}
-    d = pd.to_datetime(cl["CLST_APRV_DT"].astype(str).str[:8], format="%Y%m%d", errors="coerce")
+    raw = cl["CLST_APRV_DT"].astype(str)
+    d = pd.to_datetime(raw, format="%Y%m%d", errors="coerce")
+    d = d.fillna(pd.to_datetime(raw, errors="coerce", format="mixed"))
     cl = cl.assign(_d=d).sort_values("_d", ascending=False)
     return {"결과": {"승인 건수": int(len(cl)),
                    "단계별": cl["CLINIC_STEP_NM"].astype(str).value_counts().head(8).to_dict(),

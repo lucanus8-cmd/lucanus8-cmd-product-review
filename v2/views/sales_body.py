@@ -605,86 +605,68 @@ MKT_UBIST_FIELDS = ["제품명", "성분명", "제조사", "용량", "ATC", "급
 MKT_UBIST_MAP = {"제품명": "제품명", "성분명": "성분", "제조사": "제조사명",
                  "용량": "용량", "ATC": "ATC", "급여구분": "급여구분"}
 
-# v2: 구성(단일제·복합제)을 하나만 골랐으면 그 부분 표만 들고 있는다.
-# 전체 표에서 잘라 낸 뒤 전체 표는 메모리에서 내려놓는다(두 벌을 함께 들고 있지 않게). 둘 다 고르면 다시 전체 표.
+# v2: 매출 표를 메모리에 두지 않는다. 화면마다 쓰는 줄·칸만 파일에서 꺼낸다(core/sales_rows.py).
+# iqvia_df / ubist_df 는 '칸만 있는 빈 표'다(있는지·어떤 칸이 있는지 확인용). 실제 줄은 SR.rows(...)로 꺼낸다.
+from core import sales_rows as SR
 _SEL_NOW = tuple(sorted(st.session_state.get("sales_combo") or COMBO_LABELS))
 _PART = set(_SEL_NOW) != set(COMBO_LABELS)
+_COMBO = _SEL_NOW if _PART else None
+if _ss is not None:                 # 예전 방식으로 올려 둔 매출 표가 있으면 내려놓는다
+    _ss.drop_sales_pickles()
 
-
-def _part_only(kind):
-    if kind == "iqvia":
-        part = _iqvia_part(IQVIA_CACHE.stat().st_mtime, _SEL_NOW)
-        _load_iqvia_res.clear()
-    else:
-        part = _ubist_part(UBIST_CACHE.stat().st_mtime, _price_mt(), _SEL_NOW)
-        _load_ubist_res.clear()
-    if _ss is not None:            # 공유해 둔 원본 pkl 도 내려놓는다(다른 화면은 v2 에서 pkl 을 쓰지 않음)
-        _ss.drop_sales_pickles()
-    try:
-        _ss.release_memory()
-    except Exception:
-        pass
-    return _share_df(part)
-
-
-if not _PART:
-    _iqvia_part.clear(); _ubist_part.clear()
-
-# 데이터 로드 (parquet 캐시에서 — 빠름)
 iqvia_df = lc_qtr = lc_yr = None
 ubist_df = ubist_num_cols = None
-
-# 원본 xlsx가 있으면 그것으로, 없더라도 bootstrap이 만든 .pkl 캐시가 있으면 그대로 로드
-if IQVIA_SAVED.exists() or IQVIA_CACHE.exists():
-    # 원본 xlsx가 있고 캐시가 없/오래됐을 때만 재생성 (pkl만 있으면 그대로 사용)
-    if IQVIA_SAVED.exists() and (not IQVIA_CACHE.exists() or IQVIA_CACHE.stat().st_mtime < IQVIA_SAVED.stat().st_mtime):
-        with st.spinner("IQVIA 캐시 생성 중… (최초 1회)"):
-            build_cache("iqvia")
-    if _PART:
-        iqvia_df = _part_only("iqvia")
-        lc_qtr = [c for c in iqvia_df.columns if re.match(r"LC-\d{2}Q\d", c)]
-        lc_yr = [c for c in iqvia_df.columns if re.match(r"\d{4}년$", c)]
-    else:
-        iqvia_df, lc_qtr, lc_yr = load_iqvia(IQVIA_CACHE.stat().st_mtime)
-if UBIST_SAVED.exists() or UBIST_CACHE.exists():
-    if UBIST_SAVED.exists() and (not UBIST_CACHE.exists() or UBIST_CACHE.stat().st_mtime < UBIST_SAVED.stat().st_mtime):
-        with st.spinner("UBIST 캐시 생성 중… (최초 1회)"):
-            build_cache("ubist")
-    if _PART:
-        ubist_df = _part_only("ubist")
-        ubist_num_cols = [c for c in ubist_df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
-    else:
-        ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
-    UBIST_PART.update(_u_partial_cached(UBIST_CACHE.stat().st_mtime))
+with st.spinner("매출 자료 준비 중… (처음 한 번은 파일로 바꾸느라 1~2분)"):
+    _IQ_OK = SR.path("iqvia") is not None
+    _UB_OK = SR.path("ubist") is not None
+if _IQ_OK:
+    iqvia_df = SR.empty("iqvia")
+    lc_qtr = [c for c in iqvia_df.columns if re.match(r"LC-\d{2}Q\d", c)]
+    lc_yr = [c for c in iqvia_df.columns if re.match(r"\d{4}년$", c)]
+if _UB_OK:
+    ubist_df = SR.empty("ubist")
+    # 연간 컬럼만 기본 num_cols로 (분기·연간 혼합 중복합산 방지)
+    ubist_num_cols = [c for c in ubist_df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
+    _qcols = [c for c in ubist_df.columns if re.match(r"처방조제액\(원\)_\d{4}Q[1-4]$", c)]
+    _qs = SR.col_sums("ubist", tuple(_qcols), SR.mtime("ubist"))
+    _by = {}
+    for _c in _qcols:          # u_partial_years 와 같은 계산 (값이 있는 분기만)
+        _m = re.match(r"처방조제액\(원\)_(\d{4})Q([1-4])$", _c)
+        if _m and _qs.get(_c, 0) != 0:
+            _by.setdefault(_m.group(1), set()).add(int(_m.group(2)))
+    UBIST_PART.update({y: sorted(q) for y, q in _by.items() if len(q) < 4})
 
 # UBIST의 ATC 열 이름은 자료 판마다 다를 수 있어(ATC / ATC코드 등) 실제 열에서 찾는다
 UBIST_ATC_COL = next((c for c in (ubist_df.columns if ubist_df is not None else [])
                       if "ATC" in str(c).upper()), None)
 MKT_UBIST_MAP["ATC"] = UBIST_ATC_COL
 
-# ATC 선택 옵션 목록 (다중선택용)
-@st.cache_data
-def _atc_opts(cache_mtime, kind):
-    if kind == "iqvia" and iqvia_df is not None and "ATC 4(한글)" in iqvia_df.columns:
-        return sorted(iqvia_df["ATC 4(한글)"].dropna().astype(str).unique().tolist())
-    if kind == "ubist" and ubist_df is not None and UBIST_ATC_COL:
-        return sorted(ubist_df[UBIST_ATC_COL].dropna().astype(str).unique().tolist())
-    return []
+# ATC · 제품명 선택 목록 (표 전체에서 — 파일에서 서로 다른 값만 꺼낸다)
+iqvia_atc_opts = SR.distinct("iqvia", "ATC 4(한글)", SR.mtime("iqvia")) if iqvia_df is not None else []
+ubist_atc_opts = (SR.distinct("ubist", UBIST_ATC_COL, SR.mtime("ubist"))
+                  if (ubist_df is not None and UBIST_ATC_COL) else [])
+iqvia_prod_opts = SR.distinct("iqvia", "제품명", SR.mtime("iqvia")) if iqvia_df is not None else []
+ubist_prod_opts = SR.distinct("ubist", "제품명", SR.mtime("ubist")) if ubist_df is not None else []
 
-iqvia_atc_opts = _atc_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
-ubist_atc_opts = _atc_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists() else 0, "ubist") if ubist_df is not None else []
 
-# 제품명 선택 목록
-@st.cache_data
-def _prod_opts(cache_mtime, kind):
-    if kind == "iqvia" and iqvia_df is not None and "제품명" in iqvia_df.columns:
-        return sorted(iqvia_df["제품명"].dropna().astype(str).unique().tolist())
-    if kind == "ubist" and ubist_df is not None and "제품명" in ubist_df.columns:
-        return sorted(ubist_df["제품명"].dropna().astype(str).unique().tolist())
-    return []
+def _kind_of(df):
+    return "iqvia" if df is iqvia_df else "ubist"
 
-iqvia_prod_opts = _prod_opts(IQVIA_CACHE.stat().st_mtime if IQVIA_CACHE.exists() else 0, "iqvia") if iqvia_df is not None else []
-ubist_prod_opts = _prod_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists() else 0, "ubist") if ubist_df is not None else []
+
+def _filtered(kind, active, field_map, cols=None, require_any=True):
+    """원래 코드: df[make_filter_mask(df, active, field_map, require_any)] 와 같은 표를 파일에서."""
+    allc = SR.columns(kind)
+    if not active:
+        return SR.rows(kind, cols=cols, combo=_COMBO)
+    if not SR.any_applicable(active, field_map, allc) and not require_any:
+        return SR.empty(kind).iloc[0:0]
+    if cols is not None:
+        cols = list(dict.fromkeys(list(cols) + [field_map[f["field"]] for f in active
+                                                 if field_map.get(f["field"]) in allc]))
+    w, prm = SR.prefilter(active, field_map, allc)
+    sub = SR.rows(kind, w, prm, cols=cols, combo=_COMBO)
+    return sub[make_filter_mask(sub, active, field_map, require_any=require_any)]
+
 
 # ── 구성(단일제·복합제) 선택 — 아래 모든 보기에 적용 ─────────────────────────────
 _combo_sel = st.multiselect("💊 구성 (단일제 · 복합제 — 둘 다 고르면 전체, 아래 모든 보기에 적용)",
@@ -755,7 +737,7 @@ if _view == _VIEWS[0]:
         if _na:
             st.warning(f"이 자료원에는 **{', '.join(_na)}** 항목이 없어 그 조건은 적용할 수 없습니다. "
                        "다른 기준으로 바꾸거나 조건을 지워 주세요.")
-        return df[make_filter_mask(df, active_filters, field_map, require_any=False)]
+        return _filtered(_kind_of(df), active_filters, field_map, require_any=False)
 
     # IQVIA 제품 검색
     if dash_source == "IQVIA" and active_filters and iqvia_df is not None:
@@ -1228,7 +1210,7 @@ if _view == _VIEWS[1]:
                 atc_col = st.selectbox("ATC 분류 단계", atc_levels)
             else:
                 atc_col = atc_levels[0]
-            atc_list = sorted(src_df[atc_col].dropna().astype(str).unique().tolist())
+            atc_list = SR.distinct(_kind_of(src_df), atc_col, SR.mtime(_kind_of(src_df)), _COMBO)
             selected_atc = st.selectbox("ATC 선택", atc_list)
         with col_period:
             def _period_label(c):
@@ -1244,7 +1226,7 @@ if _view == _VIEWS[1]:
         with col_top:
             top_n = st.number_input("상위 N개", min_value=5, max_value=30, value=10)
 
-        atc_df = src_df[src_df[atc_col].astype(str) == selected_atc].copy()
+        atc_df = SR.rows(_kind_of(src_df), f'CAST("{atc_col}" AS VARCHAR) = ?', [selected_atc], combo=_COMBO)
 
         # 추가 필터 (선택)
         with st.expander("🔎 추가 필터 (제품명 · 성분명 · 제조사 · ATC · 급여구분 등)"):
@@ -1397,8 +1379,8 @@ if _view == _VIEWS[2]:
             st.info("비교할 제품을 선택하세요.")
         else:
             # 브랜드 매칭: IQVIA는 정확히, UBIST는 이름에 브랜드명이 포함된 품목
-            i_brand = iqvia_df[iqvia_df["제품명"].astype(str) == cmp_pick]
-            u_brand = ubist_df[ubist_df["제품명"].astype(str).str.contains(re.escape(cmp_pick), na=False)]
+            i_brand = SR.rows("iqvia", 'CAST("제품명" AS VARCHAR) = ?', [cmp_pick], combo=_COMBO)
+            u_brand = SR.rows("ubist", 'contains(CAST("제품명" AS VARCHAR), ?)', [cmp_pick], combo=_COMBO)
 
             # 용량 옵션 (양쪽 용량 컬럼 합집합)
             dose_set = set()
@@ -1534,7 +1516,8 @@ if _view == _VIEWS[3]:
             with st.expander("🔎 필터 (제품명 · 성분명 · 제조사 · 용량 · ATC · ETC/OTC · 급여구분)"):
                 gi_active = render_filters("grow_iqvia_filters", MKT_IQVIA_FIELDS,
                                            options_map={"ATC": iqvia_atc_opts, "ETC/OTC": ETC_OTC_OPTS})
-            src_i = iqvia_df[make_filter_mask(iqvia_df, gi_active, MKT_IQVIA_MAP)] if gi_active else iqvia_df
+            _need_i = [c for c in ["제품명", "회사명", "성분명", "ATC 4(한글)"] if c in iqvia_df.columns] + list(lc_yr)
+            src_i = _filtered("iqvia", gi_active, MKT_IQVIA_MAP, cols=_need_i)
 
             c0, c1, c2, c3 = st.columns(4)
             with c0:
@@ -1601,7 +1584,9 @@ if _view == _VIEWS[3]:
                 with st.expander("🔎 필터 (제품명 · 성분명 · 제조사 · ATC · 급여구분)"):
                     gu_active = render_filters("grow_ubist_filters", MKT_UBIST_FIELDS,
                                                options_map={"ATC": ubist_atc_opts})
-                src_u = ubist_df[make_filter_mask(ubist_df, gu_active, MKT_UBIST_MAP)] if gu_active else ubist_df
+                _need_u = ([c for c in ["제품명", "제조사명", "성분", "ATC"] if c in ubist_df.columns] + rx_yr_cols
+                           + [c for c in ubist_df.columns if re.match(r"처방조제액\(원\)_\d{4}Q[1-4]$", c)])
+                src_u = _filtered("ubist", gu_active, MKT_UBIST_MAP, cols=_need_u)
 
                 c0, c1, c2 = st.columns(3)
                 with c0:
