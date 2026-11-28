@@ -33,7 +33,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.what == 'jpind' && 200 || inputs.what == 'eebuild' && 340 || inputs.what == 'v2all' && 150 || inputs.what == 'v2salesdb' && 90 || 45 }}
+    timeout-minutes: ${{ inputs.what == 'jpind' && 200 || inputs.what == 'eebuild' && 340 || inputs.what == 'v2all' && 150 || inputs.what == 'v2salesdb' && 90 || inputs.what == 'v2realflow' && 120 || 45 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -496,6 +496,25 @@ jobs:
             python $S v2 /tmp/site_v2a v2이전 8602 v2/app.py $mode || true
             python $S v2 "$PWD" v2이번 8603 v2/app.py $mode || true
           done
+
+      - name: 실제 사용 순서(자료 없음 → 불러오기 포함) — v2 지금 vs 자료 만들기를 별도 작업으로 (사이트에 쓰지 않음)
+        if: inputs.what == 'v2realflow'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          BEFORE: ${{ inputs.urls }}
+        run: |
+          python -m pip install --quiet -r requirements.txt -r v2/requirements.txt requests
+          python - <<'PY'
+          import base64, json, os, sys
+          sys.path.insert(0, ".github/scripts")
+          import gsheet
+          os.makedirs(".streamlit", exist_ok=True)
+          open(".streamlit/secrets.toml", "w").write('gcp_service_account_b64 = "%s"\n' % base64.b64encode(json.dumps(gsheet._info()).encode()).decode())
+          PY
+          git fetch -q origin "$BEFORE" && git worktree add -q /tmp/v2old "$BEFORE"
+          mkdir -p /tmp/v2old/.streamlit && cp .streamlit/secrets.toml /tmp/v2old/.streamlit/
+          python .github/scripts/check_v2_realflow.py /tmp/v2old v2지금 8621 || true
+          python .github/scripts/check_v2_realflow.py "$PWD" v2별도작업 8622 || true
 
       - name: 운영 중인 v2 사이트 메모리 읽기 (상태 화면 숫자만, 사이트에 쓰지 않음)
         if: inputs.what == 'livemem'
