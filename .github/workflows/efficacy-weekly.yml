@@ -1,0 +1,79 @@
+# 매주 식약처 효능·효과 원문 중 새 품목·바뀐 품목만 받아 'data' 가지 efficacy_site/ 를 고친다.
+# 사이트 '질병명으로 좁히기'(v2)용. 식약처 공개 자료만 다룬다 — 매출 자료는 읽지 않는다.
+# 사이트 코드가 있는 main 가지는 건드리지 않는다(data 가지에만 쓴다).
+name: efficacy-weekly
+
+on:
+  schedule:
+    - cron: "23 22 * * 6"   # 매주 일요일 한국시간 07:23 (UTC 토 22:23). 허가 시트 갱신(05:00~)이 끝난 뒤.
+  workflow_dispatch:
+    inputs:
+      save:
+        description: "1 이면 data 가지에 저장한다"
+        required: false
+        default: "1"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: efficacy-weekly
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 지난번 파일 받기 (data 가지 efficacy_site/)
+        run: |
+          git fetch -q --depth=1 origin data && git worktree add -q /tmp/databr FETCH_HEAD
+          mkdir -p /tmp/prev && cp /tmp/databr/efficacy_site/* /tmp/prev/ 2>/dev/null || true
+          ls -la /tmp/prev
+
+      - name: 새 품목·바뀐 품목만 받기
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet -r requirements.txt requests pypdf
+          python .github/scripts/build_efficacy.py /tmp/prev /tmp/out 120
+
+      - name: 확인 뒤 data 가지에 저장
+        if: github.event_name == 'schedule' || inputs.save == '1'
+        run: |
+          python - <<'PY'
+          import json, os, pandas as pd
+          new = pd.read_parquet("/tmp/out/ee_item.parquet"); txt = pd.read_parquet("/tmp/out/ee_text.parquet")
+          old = len(pd.read_parquet("/tmp/prev/ee_item.parquet")) if os.path.exists("/tmp/prev/ee_item.parquet") else 0
+          print(f"품목 {old:,} → {len(new):,} · 글 {len(txt):,}")
+          # 받다가 크게 실패해 품목이 확 줄었으면 저장하지 않는다 (지난번 파일 유지)
+          assert len(new) >= 0.95 * old and len(txt) > 1000, "품목이 너무 줄어 저장하지 않음"
+          PY
+          git config user.name "ee-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd /tmp/databr && git checkout -q -B data
+          mkdir -p efficacy_site && cp /tmp/out/ee_text.parquet /tmp/out/ee_item.parquet /tmp/out/meta.json efficacy_site/
+          git add efficacy_site
+          if git diff --cached --quiet; then echo "바뀐 것 없음"; exit 0; fi
+          git commit -qm "효능·효과 주간 갱신 $(date +%F)"
+          for i in 1 2 3; do
+            git push -q origin data && { echo "data 가지에 저장함"; break; }
+            echo "다른 로봇이 먼저 저장 → 다시 맞춰서 저장 ($i)"; sleep 10
+            git fetch -q origin data && git rebase -q FETCH_HEAD
+          done
+
+      # 공개 저장소는 60일 동안 활동이 없으면 예약이 멈출 수 있다 — 돌 때마다 다시 켠다
+      - name: 예약 계속 켜 두기
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sS -X PUT -o /dev/null -w "예약 다시 켜기: HTTP %{http_code}\n" \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/efficacy-weekly.yml/enable"
