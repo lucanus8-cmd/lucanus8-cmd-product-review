@@ -3995,7 +3995,31 @@ if PAGE == "sugg":
                 atc_pick[_c] = _sel
                 _pool = _pool[_pool[_c].astype(str).str.strip().isin(_sel)]
 
-    only_dmf_up = (st.checkbox("⑤ 원료사 DMF 등록이 늘어난 성분만 (최근 12개월이 그 전 12개월보다 많음)",
+    # ⑤ 질병명(효능·효과): 식약처 허가 효능·효과 원문에 그 말이 들어 있는 성분만. ATC 처럼 접어 둔다.
+    _ee_w = str(st.session_state.get("sugg_ee_words", "") or "").strip()
+    _ee_box = st.expander("⑤ 질병명(효능·효과)으로 좁히기 (선택)" + (f" · {_ee_w}" if _ee_w else ""),
+                          expanded=bool(_ee_w))
+    _ee_on = False
+    try:
+        import efficacy as _ee
+        _ee_ok = _ee.available()
+    except Exception:
+        _ee_ok = False
+    if not _ee_ok:
+        _ee_box.info("효능·효과 자료를 아직 받지 못했습니다. 로봇이 만들어 두면 여기서 질병명으로 찾을 수 있습니다.")
+    else:
+        _e1, _e2 = _ee_box.columns(2)
+        _ee_words = _e1.text_input("질병명 (쉼표로 여러 개 · 하나라도 들어가면)", key="sugg_ee_words",
+                                   placeholder="예: 당뇨 / 고지혈증, 이상지질혈증")
+        _ee_ex = _e2.text_input("빼는 단어 (이 말이 든 문구로만 걸린 성분은 뺌)", key="sugg_ee_ex",
+                                placeholder="예: 폐동맥, 간질환")
+        _m = _ee.meta()
+        _ee_box.caption("식약처 허가 효능·효과 원문에서 찾습니다 (띄어쓰기 무시) · 단일제 품목 기준"
+                        + (f" · 자료 기준일 {_m.get('기준일')}" if _m.get("기준일") else "")
+                        + " · 문구 첫머리에 나오는 성분이 위로 옵니다")
+        _ee_on = bool(str(_ee_words).strip())
+
+    only_dmf_up = (st.checkbox("⑥ 원료사 DMF 등록이 늘어난 성분만 (최근 12개월이 그 전 12개월보다 많음)",
                                value=False, key="sugg_dmf_up") if unit == "성분별" else False)
 
     res = m[(m["시장규모"] >= min_size * 1e8) & (m["CAGR"].fillna(-1e9) >= min_cagr)].copy()
@@ -4014,6 +4038,15 @@ if PAGE == "sugg":
             res = res[res[_c].astype(str).str.strip().isin(_sel)]
 
     res = res.sort_values("시장규모", ascending=False)
+    _ee_cols = []
+    if _ee_on and "_key" in res.columns:
+        _r = _ee.search(res["_key"].astype(str), _ee_words, _ee_ex)
+        res = res[_r["걸림"]].copy()
+        _r = _r.loc[res.index]
+        res["효능·효과 문구"] = (_r["위치"].map({"첫머리": "[첫머리] ", "본문": "[본문] "}).fillna("") + _r["문구"])
+        res["_ee_b"] = (_r["위치"] != "첫머리").astype(int)
+        res = res.sort_values(["_ee_b", "시장규모"], ascending=[True, False], kind="mergesort")
+        _ee_cols = ["효능·효과 문구"]
     res["시장규모(억)"] = (res["시장규모"] / 1e8).round(1)
     res["CAGR(%)"] = res["CAGR"].round(1)
     # 원료사 DMF(식약처 최신 목록). 단일제만 붙인다 — 복합제는 첫 성분 것이 붙어 헷갈린다.
@@ -4053,6 +4086,9 @@ if PAGE == "sugg":
     st.markdown(f"#### ✅ 조건 충족 후보 {len(res):,}개")
     show_src = st.checkbox("특허 근거 표시 (그 만료일이 어느 품목·유형의 특허에서 왔는지)",
                            value=False, key="sugg_src") if HAS_REG else False
+    if _ee_cols:
+        _show_ee = st.checkbox("효능·효과 문구 표시 (어느 문구 때문에 걸렸는지)", value=True, key="sugg_ee_show")
+        cols = cols[:1] + (_ee_cols if _show_ee else []) + cols[1:]
     vcols = cols + (src_cols if show_src else [])
     st.dataframe(res[vcols].head(200), use_container_width=True, height=430, hide_index=True)
     st.download_button("⬇️ CSV", res[cols + src_cols].to_csv(index=False).encode("utf-8-sig"),
