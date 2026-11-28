@@ -15,7 +15,7 @@ for p in (HERE, HERE.parent):
 
 import streamlit as st  # noqa: E402
 
-st.set_page_config(page_title="제품 검토", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="제품검토_v2", page_icon="🔎", layout="wide")
 
 
 def _gate():
@@ -26,7 +26,7 @@ def _gate():
         pw = None
     if not pw or st.session_state.get("_authed"):
         return
-    st.title("🔒 제품 검토")
+    st.title("🔒 제품검토_v2")
     entered = st.text_input("비밀번호를 입력하세요", type="password")
     if entered == "":
         st.stop()
@@ -52,6 +52,6 @@ PAGES = [
 ]
 st.session_state["_pages"] = {p.url_path: p for p in PAGES}
 nav = st.navigation(PAGES, position="top")
-st.markdown("<div style='font-size:13px;color:#8a8f99;margin:-6px 0 6px'>제품 검토 · 새 버전(v2, 시험 중)</div>",
+st.markdown("<div style='font-size:13px;color:#8a8f99;margin:-6px 0 6px'>제품검토_v2 · 시험 중</div>",
             unsafe_allow_html=True)
 nav.run()

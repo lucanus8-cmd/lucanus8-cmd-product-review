@@ -7,7 +7,7 @@ TILES = [("종", "제품 종합분석", "search", "#5b6ef5"), ("제", "제품 �
          ("AI", "AI 분석", "ai", "#1c2030"), ("상", "상태", "status", "#6b7280")]
 
 st.markdown(
-    "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품 검토</div>"
+    "<div style='color:#1f2a44;font-size:26px;font-weight:800;letter-spacing:-.01em'>🔎 제품검토_v2</div>"
     "<div style='color:#9aa3b2;font-size:12px;margin-bottom:8px'>매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS</div>",
     unsafe_allow_html=True)
 
