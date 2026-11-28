@@ -76,7 +76,7 @@ def _dmf_cols(_n):
     """성분키 → (정상 DMF, 원료사 최근 12개월, 그 전 12개월). 지금 사이트 원료사 동향과 같은 계산."""
     import dmf_trend as dt
     try:
-        x = dt.prepare_dmf(ss.load_dmf(), ss.load_approval())
+        x = dt.prepare_dmf(ss.load_dmf(), ss.load_slim("approval", ["신약구분", "주성분", "업체명"]))
         t, _ = dt.trend(x, TODAY, 12, True)
     except Exception:
         return None
@@ -100,6 +100,9 @@ st.subheader("🎯 제품 제안")
 a, b, c = st.columns([1, 1, 2])
 src2 = a.radio("매출 자료원", ["IQVIA", "UBIST"], horizontal=True, key="s2")
 unit = b.radio("분석 단위", ["성분별", "제품별"], horizontal=True, key="u2")
+_VIEW_Q = {"dmf": "🧪 원료사 동향(DMF)", "rp": "🧬 약물 재창출", "ovs": "해외 허가 비교"}
+if "sugg_view" not in st.session_state and st.query_params.get("view") in _VIEW_Q:   # 주소로 바로 열기 (?view=dmf)
+    st.session_state["sugg_view"] = _VIEW_Q[st.query_params.get("view")]
 view = c.radio("보기", ["🎯 조건 필터", "🧪 원료사 동향(DMF)", "🧬 약물 재창출", "해외 허가 비교"], horizontal=True, key="sugg_view")
 if view == "해외 허가 비교":
     ag = st.radio("허가 기관", ["미국 FDA", "유럽 EMA"], horizontal=True, key="ovs_agency")
@@ -150,6 +153,17 @@ if blank.any():
             k.loc[still] = ik
 m["_key"] = k.fillna("")
 
+if view.startswith("🧪"):
+    # 원료사 동향은 특허를 따로(성분키별 만료일 작은 표) 붙이므로 아래 특허 병합을 건너뛴다(가볍게)
+    for col in atc_lv:
+        m[col] = m[col].fillna("").astype(str) if col in m.columns else ""
+    if atc_lv:
+        m["ATC"] = m[atc_lv[0]]
+    data.ensure("clinical")
+    from views import dmf_mod
+    dmf_mod._dmf_view(m, name, unit, yr)
+    st.stop()
+
 HAS_REG = data.has("approval") and data.has("patent")
 if HAS_REG:
     def _ingname(v):
@@ -185,12 +199,6 @@ for col in atc_lv:
     m[col] = m[col].fillna("").astype(str) if col in m.columns else ""
 if atc_lv:
     m["ATC"] = m[atc_lv[0]]
-
-if view.startswith("🧪"):
-    data.ensure("clinical")
-    from views import dmf_mod
-    dmf_mod._dmf_view(m, name, unit, yr)
-    st.stop()
 
 st.markdown("**필터 조건**")
 f1, f2, f3 = st.columns(3)

@@ -33,7 +33,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.what == 'jpind' && 200 || inputs.what == 'eebuild' && 340 || 45 }}
+    timeout-minutes: ${{ inputs.what == 'jpind' && 200 || inputs.what == 'eebuild' && 340 || inputs.what == 'v2all' && 150 || 45 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -462,6 +462,32 @@ jobs:
           python .github/scripts/check_v2_pages.py /tmp/site_main 지금사이트 8601 scouting.py "?page=search" "?page=sugg" /tmp/r_main.json || true
           python .github/scripts/check_v2_pages.py "$PWD" v2 8602 v2/app.py search sugg /tmp/r_v2.json || true
           python .github/scripts/compare_v2.py /tmp/r_main.json /tmp/r_v2.json || true
+
+      - name: 사이트 전체 무게 — 지금 사이트 · v2(이전) · v2(이번) 같은 순서로 (사이트에 쓰지 않음, 매출 숫자 안 적음)
+        if: inputs.what == 'v2all'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          BEFORE: ${{ inputs.urls }}
+        run: |
+          python -m pip install --quiet -r requirements.txt -r v2/requirements.txt requests
+          python - <<'PY'
+          import base64, json, os, sys
+          sys.path.insert(0, ".github/scripts"); sys.path.insert(0, ".")
+          import gsheet
+          os.makedirs(".streamlit", exist_ok=True)
+          open(".streamlit/secrets.toml", "w").write('gcp_service_account_b64 = "%s"\n' % base64.b64encode(json.dumps(gsheet._info()).encode()).decode())
+          import bootstrap
+          print("자료 만들기:", bootstrap._do_build(include_sales=True, force=True))
+          PY
+          git fetch -q --depth=1 origin main && git worktree add -q /tmp/site_main FETCH_HEAD
+          git fetch -q origin "$BEFORE" && git worktree add -q /tmp/site_v2a "$BEFORE"
+          for d in /tmp/site_main /tmp/site_v2a; do mkdir -p $d/.streamlit && cp .streamlit/secrets.toml $d/.streamlit/ && cp -r scout_data saved_data $d/; done
+          S=.github/scripts/check_all_pages.py
+          for mode in full dmf rp; do
+            python $S old /tmp/site_main 지금사이트 8601 scouting.py $mode || true
+            python $S v2 /tmp/site_v2a v2이전 8602 v2/app.py $mode || true
+            python $S v2 "$PWD" v2이번 8603 v2/app.py $mode || true
+          done
 
       - name: v2 원료사 동향·약물 재창출 vs 지금 사이트 (사이트에 쓰지 않음, 매출 숫자 안 적음)
         if: inputs.what == 'v2dmfrp'

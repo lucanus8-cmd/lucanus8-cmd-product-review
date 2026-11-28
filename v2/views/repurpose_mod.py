@@ -44,10 +44,18 @@ def _rp_version():
         return ""
 
 
+def _ap_n():
+    """허가 자료 판(파일 수정 시각) — 캐시 열쇠. 표를 올리지 않는다."""
+    return int(data._mtime(data.FILES["approval"]))
+
+
 @st.cache_data(max_entries=1, show_spinner=False)
 def _rp_site(_n):
     """허가 자료 → (성분키별 정상 허가 품목 수, 성분키별 한글 성분명, 한글 코어→성분키)."""
-    ap = ss.load_approval()
+    # v2: 허가 표 전체 대신 쓰는 칸만 잠깐 읽는다
+    ap = ss.load_slim("approval", ["상태", "주성분", "주성분(영문)", "_key"])
+    if "_key" not in ap.columns:
+        ap["_key"] = ss.ing_key_series(ap["주성분(영문)"])
     act = ap[ap["상태"] == "정상"] if "상태" in ap.columns else ap
     cnt = act[act["_key"].astype(str).str.len() > 0].groupby("_key").size().to_dict()
     one = ss.is_single_series(ap["주성분"], ap["주성분(영문)"]) & (ap["_key"].astype(str).str.len() > 0)
@@ -79,7 +87,7 @@ def _rp_kr_trials(_n):
         cl = ss.load_slim("clinical", ["성분명", "CLST_APRV_DT"])
         if cl is None or cl.empty:
             return {}
-        _, _, c2k = _rp_site(len(ss.load_approval()))
+        _, _, c2k = _rp_site(_ap_n())
         k = ss.ing_core_series(cl["성분명"]).map(c2k).fillna("")
         d = pd.DataFrame({"k": k, "d": cl["CLST_APRV_DT"].astype(str).str[:8]})
         d = d[d["k"].str.len() > 0]
@@ -127,7 +135,7 @@ def _rp_drug_term(q):
     if not re.search(r"[가-힣]", q):
         return q
     try:
-        ap = ss.load_approval()
+        ap = ss.load_slim("approval", ["주성분", "주성분(영문)"])
         hit = ap[ap["주성분"].astype(str).str.replace(r"\s+", "", regex=True).str.contains(q.replace(" ", ""), regex=False, na=False)]
         ks = ss.ing_key_series(hit["주성분(영문)"])
         ks = ks[ks.str.len() > 0]
@@ -281,7 +289,7 @@ def _repurpose_view(src):
 
     # ③ 사이트 자료 (특허·허가·식약처 임상)
     try:
-        _n = len(ss.load_approval())
+        _n = _ap_n()
         cnt, kor, _c2k = _rp_site(_n)
     except Exception:
         _n, cnt, kor = 0, {}, {}

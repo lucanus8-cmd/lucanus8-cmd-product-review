@@ -18,10 +18,8 @@ HAS_PAT = data.has("patent")
 @st.cache_data(ttl=6 * 3600, show_spinner="원료사 동향 계산 중…")
 def _dmf_prep():
     import dmf_trend as _dt
-    try:
-        _ap = ss.load_approval()
-    except Exception:
-        _ap = None
+    # v2: 허가 표 전체 대신 오리지널사 판정에 쓰는 세 칸만 잠깐 읽는다(계산 뒤 바로 회수)
+    _ap = ss.load_slim("approval", ["신약구분", "주성분", "업체명"])
     return _dt.prepare_dmf(ss.load_dmf(), _ap)
 
 
@@ -35,7 +33,10 @@ def _dmf_trend_cached(months, drop_orig):
 def _dmf_clin_prep():
     import dmf_trend as _dt
     try:
-        return _dt.prepare_clinical(ss.load_clinical())
+        # v2: 임상 표 전체 대신 계산에 쓰는 칸만 잠깐 읽는다
+        cl = ss.load_slim("clinical", ["성분명", "CLINIC_STEP_NM", "TRGT_DISS_NM", "제품명", "CLST_APRV_DT",
+                                       "CLNC_TEST_TITLE", "원개발사"])
+        return _dt.prepare_clinical(cl)
     except Exception:
         return pd.DataFrame()
 
