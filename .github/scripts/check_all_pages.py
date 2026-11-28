@@ -117,6 +117,23 @@ def main():
         elif mode == "dmf":
             step(pg, "1. 제품 제안 → 원료사 동향", lambda: (go(pg, "sugg", "?view=dmf"),
                                                      None if pg.get_by_text("원료사 동향 — DMF").count() else click_text(pg, "🧪 원료사 동향(DMF)")))
+        elif mode == "dmfee":
+            def _ee(words):
+                go(pg, "sugg", "?view=dmf")
+                pg.get_by_text(re.compile("질병명\\(효능·효과\\)으로 좁히기")).first.click(); time.sleep(1)
+                pg.get_by_label(re.compile("질병명 \\(쉼표로")).first.fill(words); pg.keyboard.press("Enter"); idle(pg, 2)
+                body = pg.inner_text("body")
+                print("     ", re.findall(r"질병명으로 좁힌 성분 [\d,]+개[^\n]{0,40}|조건 맞는 성분 [\d,]+개", body)[:3],
+                      "· 효능 문구 칸" + (" 있음" if "효능·효과 문구" in body else " 없음"), flush=True)
+            step(pg, "1. 원료사 동향 (바로 열기)", lambda: go(pg, "sugg", "?view=dmf"))
+            def _atc():
+                pg.get_by_text(re.compile("ATC 계열로 좁히기")).first.click(); time.sleep(1)
+                pg.get_by_text("Choose options").first.click(); time.sleep(0.6); pg.keyboard.press("Enter")
+                pg.keyboard.press("Escape"); idle(pg, 2)
+                print("     ", re.findall(r"ATC로 좁힌 성분 [\d,]+개", pg.inner_text("body"))[:1], flush=True)
+            step(pg, "2. ATC 펼쳐서 1단계 첫 항목", _atc)
+            for w in ("당뇨", "고혈압", "고지혈증, 이상지질혈증", "없는질병명zz"):
+                step(pg, f"3. 질병명 '{w}'", lambda w=w: _ee(w))
         else:
             def _rp():
                 go(pg, "sugg", "?view=rp")

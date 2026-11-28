@@ -124,8 +124,10 @@ def _dmf_atc_filter(t, m, name):
         for c in lv:
             t["_ATC표시"] = t[c].where(t[c].astype(str).str.len() > 0, t["_ATC표시"])
         n_none = int((t[lv[0]].astype(str).str.len() == 0).sum())
-        st.markdown("**ATC 계열로 좁히기** (매출 자료 기준 · 비우면 전체)")
-        cols = st.columns(len(lv))
+        n_on = sum(1 for kk, v in st.session_state.items() if str(kk).startswith("dmfv_atc_") and v)
+        box = st.expander("ATC 계열로 좁히기 (선택 · 매출 자료 기준)" + (f" · {n_on}단계 고름" if n_on else ""),
+                          expanded=bool(n_on))
+        cols = box.columns(len(lv))
         pool, picked = t, False
         for i, c in enumerate(lv):
             opts = sorted({str(x).strip() for x in pool[c] if str(x).strip()})
@@ -138,15 +140,55 @@ def _dmf_atc_filter(t, m, name):
                 picked = True
                 pool = pool[pool[c].astype(str).str.strip().isin(sel)]
         if picked:
-            st.caption(f"ATC로 좁힌 성분 {len(pool)}개"
-                       + (f" · 매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개는 빠짐" if n_none else ""))
+            box.caption(f"ATC로 좁힌 성분 {len(pool)}개"
+                        + (f" · 매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개는 빠짐" if n_none else ""))
         elif n_none:
-            st.caption(f"매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개 — ATC를 고르면 빠집니다")
+            box.caption(f"매출 자료에 없어 ATC가 비어 있는 성분 {n_none}개 — ATC를 고르면 빠집니다")
         return pool, "_ATC표시"
     except Exception as e:                      # ATC 문제로 원료사 동향 화면이 멈추지 않게
         if type(e).__name__ in ("RerunException", "StopException"):
             raise
         return t, None
+
+
+def _dmf_ee_filter(t):
+    """질병명(효능·효과)으로 좁히기 — 제품 제안 '조건 필터'의 ⑤ 와 같은 검색(식약처 허가 효능·효과 원문, 단일제 기준).
+    반환: (좁힌 표, 켜졌는지). 문제가 생기면 표를 그대로 돌려준다."""
+    w = str(st.session_state.get("dmfv_ee_words", "") or "").strip()
+    box = st.expander("질병명(효능·효과)으로 좁히기 (선택)" + (f" · {w}" if w else ""), expanded=bool(w))
+    try:
+        import efficacy as ee
+        ok = ee.available()
+    except Exception:
+        ok = False
+    if not ok:
+        box.info("효능·효과 자료를 아직 받지 못했습니다.")
+        return t, False
+    e1, e2 = box.columns(2)
+    words = e1.text_input("질병명 (쉼표로 여러 개 · 하나라도 들어가면)", key="dmfv_ee_words",
+                          placeholder="예: 당뇨 / 고지혈증, 이상지질혈증")
+    ex = e2.text_input("빼는 단어 (이 말이 든 문구로만 걸린 성분은 뺌)", key="dmfv_ee_ex", placeholder="예: 폐동맥, 간질환")
+    mt_ = ee.meta()
+    box.caption("식약처 허가 효능·효과 원문에서 찾습니다 (띄어쓰기 무시) · 단일제 품목 기준"
+                + (f" · 자료 기준일 {mt_.get('기준일')}" if mt_.get("기준일") else ""))
+    if not str(words).strip() or t.empty:
+        return t, False
+    try:
+        keys = pd.Series(_dmf_keys(t["성분"]), index=t.index).astype(str)
+        r = ee.search(keys, words, ex)
+        n_nokey = int((keys.str.len() == 0).sum())
+        out = t[r["걸림"]].copy()
+        out["_ee문구"] = (r.loc[out.index, "위치"].map({"첫머리": "[첫머리] ", "본문": "[본문] "}).fillna("")
+                        + r.loc[out.index, "문구"])
+        out["_ee순"] = r.loc[out.index, "_ee_rank"]
+        box.caption(f"질병명으로 좁힌 성분 {len(out)}개 (전체 {len(t)}개 중)"
+                    + (f" · 영문 성분키를 못 찾은 {n_nokey}개는 효능 자료와 이을 수 없어 빠짐" if n_nokey else ""))
+        return out, True
+    except Exception as e:
+        if type(e).__name__ in ("RerunException", "StopException"):
+            raise
+        box.warning(f"질병명 검색 중 문제가 생겨 적용하지 못했습니다 ({type(e).__name__})")
+        return t, False
 
 
 def _dmf_view(m, name, unit, yr=()):
@@ -178,6 +220,7 @@ def _dmf_view(m, name, unit, yr=()):
         t = t_all[(t_all["추가_최근"] >= min_n) & (t_all["추가_증감"] > 0)]
         t = t.sort_values(["추가_증감", "추가_최근"], ascending=False)
     t, _atc_show = _dmf_atc_filter(t.copy(), m, name)
+    t, _ee_on = _dmf_ee_filter(t)
     t = t.head(80).copy()
 
     # 임상: 성분 이름이 적힌 최근 생동·1상, 코드명 의심
@@ -251,6 +294,8 @@ def _dmf_view(m, name, unit, yr=()):
             view["전년 대비(%)"] = ((_a / _b.where(_b > 0) - 1) * 100).round(1)
         view["CAGR(%)"] = pd.to_numeric(t.get("CAGR"), errors="coerce").round(1)
     view["질환 핵심어"] = t["질환 핵심어"]
+    if _ee_on and "_ee문구" in t.columns:
+        view.insert(1, "효능·효과 문구", t["_ee문구"].values)
     st.dataframe(view, use_container_width=True, hide_index=True, height=min(460, 38 + 35 * len(view)))
     st.download_button("⬇️ CSV", view.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"원료사동향_{months}개월.csv", key="dmfv_csv")
