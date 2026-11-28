@@ -24,6 +24,8 @@ FILES = {"approval": SD / "approval.parquet", "patent": SD / "patent.parquet",
          "clinical": SD / "clinical.parquet", "price": SD / "price.parquet", "nego": SD / "nego.parquet",
          "iqvia": SAVED / "iqvia.parquet", "ubist": SAVED / "ubist.parquet"}
 DUCK_MEM = os.environ.get("V2_DUCK_MEM", "256MB")
+LABEL = {"approval": "허가", "patent": "특허", "clinical": "임상", "price": "약가", "nego": "공단협상",
+         "iqvia": "매출 IQVIA", "ubist": "매출 UBIST"}
 _LOCK = threading.Lock()
 
 
@@ -34,9 +36,31 @@ def _mtime(p):
         return 0.0
 
 
+ERR = {}            # 자료 이름 → 마지막으로 못 받은 이유 (화면·상태 화면에 보여 준다)
+_TRIED = {}         # 자료 이름 → 마지막으로 받기를 시도한 시각 (실패했을 때 매번 다시 시도하지 않도록)
+
+
+def _build_missing(name):
+    """파일이 없을 때 지금 받는다. 실패하면 이유를 ERR 에 남긴다(예전엔 이유 없이 '미연결'만 보였다)."""
+    import time
+    import bootstrap
+    if time.time() - _TRIED.get(name, 0) < 60:
+        return
+    _TRIED[name] = time.time()
+    try:
+        bootstrap._do_build(include_sales=name in ("iqvia", "ubist"), only={name})
+        ERR.pop(name, None)
+    except Exception as e:
+        ERR[name] = f"{type(e).__name__}: {str(e)[:300]}"
+
+
 def ensure(name):
     """자료 파일을 확보한다(없으면 받음, 오래되면 뒤에서 갱신). 파일 경로 또는 None."""
     import bootstrap
+    src_file = (SAVED / f"{name}.pkl") if name in ("iqvia", "ubist") else FILES[name]
+    if not src_file.exists():
+        with st.spinner(f"{LABEL.get(name, name)} 자료를 처음 받는 중… (1~2분)"):
+            _build_missing(name)
     if name in ("iqvia", "ubist"):
         pq = FILES[name]
         pkl = SAVED / f"{name}.pkl"
@@ -95,6 +119,12 @@ def q(sql, params=None):
 
 def has(name):
     return ensure(name) is not None
+
+
+def missing_note(name):
+    """'○○ 데이터 미연결' 안내 + 원인."""
+    e = ERR.get(name)
+    return f"{LABEL.get(name, name)} 데이터 미연결" + (f" — 원인: {e}" if e else "")
 
 
 def file_date(name):

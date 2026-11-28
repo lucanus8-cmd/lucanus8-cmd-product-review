@@ -69,7 +69,8 @@ def _union_where(cols_avail, name_cols, q, keys, cores, core_col="_core", kexpr=
 # ══════════════════════════ 화면 ══════════════════════════
 st.subheader("🔍 제품 종합분석")
 if not HAS_REG:
-    st.info("허가 데이터 미연결")
+    st.error(data.missing_note("approval"))
+    st.caption("‘상태’ 화면에서 자료마다 받기 상태와 원인을 볼 수 있습니다.")
     st.stop()
 c0, c1, c2 = st.columns([1, 3, 1])
 basis = c0.radio("검색 기준", ["제품명", "주성분"], key="s_basis")
@@ -121,7 +122,8 @@ if cores and not ing_keys:
 # ── 매출 ──
 S, cfg, yr = data.sales(src1)
 if S is None or not yr:
-    st.info(f"{src1} 매출 자료가 아직 준비되지 않았습니다 — 허가/특허/임상/약가는 아래에서 확인할 수 있습니다.")
+    st.info(f"{src1} 매출 자료가 아직 준비되지 않았습니다 — 허가/특허/임상/약가는 아래에서 확인할 수 있습니다."
+            + (f"\n\n원인: {data.ERR[src1.lower()]}" if data.ERR.get(src1.lower()) else ""))
 else:
     scols = data.cols(src1.lower())
     secol = next((c for c in scols if "EDI" in str(c).upper() or ("보험" in str(c) and "코드" in str(c))
