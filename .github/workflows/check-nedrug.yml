@@ -28,6 +28,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   check:
@@ -46,7 +47,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -397,6 +398,25 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt requests
           python .github/scripts/check_memory.py
+
+      - name: 효능·효과 파일 받기 (eebuild 로봇이 남긴 것, urls=그 실행 번호)
+        if: inputs.what == 'aitools' && inputs.urls != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: efficacy_site
+          path: /tmp/efficacy_site
+          run-id: ${{ inputs.urls }}
+          github-token: ${{ github.token }}
+
+      - name: C 방식(Gemini 검색 도구) 사이트 부담 시험 (사이트에 쓰지 않음, 매출 숫자 안 적음)
+        if: inputs.what == 'aitools'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EE_SITE_BASE: /tmp/efficacy_site/
+        run: |
+          python -m pip install --quiet -r requirements.txt requests
+          python .github/scripts/check_ai_tools.py
 
       - name: 효능·효과 전체 모으기 + 질병명 필터 시험 (공개 자료, 사이트·data 가지에 쓰지 않음, 매출 금액 안 적음)
         if: inputs.what == 'eebuild'
