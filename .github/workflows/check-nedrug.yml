@@ -483,6 +483,10 @@ jobs:
           git fetch -q origin "$BEFORE" && git worktree add -q /tmp/site_v2a "$BEFORE"
           for d in /tmp/site_main /tmp/site_v2a; do mkdir -p $d/.streamlit && cp .streamlit/secrets.toml $d/.streamlit/ && cp -r scout_data saved_data $d/; done
           S=.github/scripts/check_all_pages.py
+          if [ "${{ inputs.words }}" = "v2only" ]; then
+            python $S v2 "$PWD" v2이번 8603 v2/app.py full || true
+            exit 0
+          fi
           for mode in full dmf rp; do
             python $S old /tmp/site_main 지금사이트 8601 scouting.py $mode || true
             python $S v2 /tmp/site_v2a v2이전 8602 v2/app.py $mode || true

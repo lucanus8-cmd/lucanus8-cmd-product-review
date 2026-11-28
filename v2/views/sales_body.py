@@ -605,6 +605,31 @@ MKT_UBIST_FIELDS = ["제품명", "성분명", "제조사", "용량", "ATC", "급
 MKT_UBIST_MAP = {"제품명": "제품명", "성분명": "성분", "제조사": "제조사명",
                  "용량": "용량", "ATC": "ATC", "급여구분": "급여구분"}
 
+# v2: 구성(단일제·복합제)을 하나만 골랐으면 그 부분 표만 들고 있는다.
+# 전체 표에서 잘라 낸 뒤 전체 표는 메모리에서 내려놓는다(두 벌을 함께 들고 있지 않게). 둘 다 고르면 다시 전체 표.
+_SEL_NOW = tuple(sorted(st.session_state.get("sales_combo") or COMBO_LABELS))
+_PART = set(_SEL_NOW) != set(COMBO_LABELS)
+
+
+def _part_only(kind):
+    if kind == "iqvia":
+        part = _iqvia_part(IQVIA_CACHE.stat().st_mtime, _SEL_NOW)
+        _load_iqvia_res.clear()
+    else:
+        part = _ubist_part(UBIST_CACHE.stat().st_mtime, _price_mt(), _SEL_NOW)
+        _load_ubist_res.clear()
+    if _ss is not None:            # 공유해 둔 원본 pkl 도 내려놓는다(다른 화면은 v2 에서 pkl 을 쓰지 않음)
+        _ss.drop_sales_pickles()
+    try:
+        _ss.release_memory()
+    except Exception:
+        pass
+    return _share_df(part)
+
+
+if not _PART:
+    _iqvia_part.clear(); _ubist_part.clear()
+
 # 데이터 로드 (parquet 캐시에서 — 빠름)
 iqvia_df = lc_qtr = lc_yr = None
 ubist_df = ubist_num_cols = None
@@ -615,12 +640,21 @@ if IQVIA_SAVED.exists() or IQVIA_CACHE.exists():
     if IQVIA_SAVED.exists() and (not IQVIA_CACHE.exists() or IQVIA_CACHE.stat().st_mtime < IQVIA_SAVED.stat().st_mtime):
         with st.spinner("IQVIA 캐시 생성 중… (최초 1회)"):
             build_cache("iqvia")
-    iqvia_df, lc_qtr, lc_yr = load_iqvia(IQVIA_CACHE.stat().st_mtime)
+    if _PART:
+        iqvia_df = _part_only("iqvia")
+        lc_qtr = [c for c in iqvia_df.columns if re.match(r"LC-\d{2}Q\d", c)]
+        lc_yr = [c for c in iqvia_df.columns if re.match(r"\d{4}년$", c)]
+    else:
+        iqvia_df, lc_qtr, lc_yr = load_iqvia(IQVIA_CACHE.stat().st_mtime)
 if UBIST_SAVED.exists() or UBIST_CACHE.exists():
     if UBIST_SAVED.exists() and (not UBIST_CACHE.exists() or UBIST_CACHE.stat().st_mtime < UBIST_SAVED.stat().st_mtime):
         with st.spinner("UBIST 캐시 생성 중… (최초 1회)"):
             build_cache("ubist")
-    ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
+    if _PART:
+        ubist_df = _part_only("ubist")
+        ubist_num_cols = [c for c in ubist_df.columns if re.search(r"(처방조제액|처방건수|처방량).*_\d{4}년$", c)]
+    else:
+        ubist_df, ubist_num_cols = load_ubist(UBIST_CACHE.stat().st_mtime)
     UBIST_PART.update(_u_partial_cached(UBIST_CACHE.stat().st_mtime))
 
 # UBIST의 ATC 열 이름은 자료 판마다 다를 수 있어(ATC / ATC코드 등) 실제 열에서 찾는다
@@ -655,17 +689,10 @@ ubist_prod_opts = _prod_opts(UBIST_CACHE.stat().st_mtime if UBIST_CACHE.exists()
 # ── 구성(단일제·복합제) 선택 — 아래 모든 보기에 적용 ─────────────────────────────
 _combo_sel = st.multiselect("💊 구성 (단일제 · 복합제 — 둘 다 고르면 전체, 아래 모든 보기에 적용)",
                             COMBO_LABELS, default=COMBO_LABELS, key="sales_combo")
-if not _combo_sel or set(_combo_sel) == set(COMBO_LABELS):
-    if not _combo_sel:
-        st.caption("구성을 하나도 고르지 않아 단일제·복합제 전체를 봅니다.")
-    _iqvia_part.clear(); _ubist_part.clear()
-else:
-    _sel = tuple(sorted(_combo_sel))
-    if iqvia_df is not None and "_구성" in iqvia_df.columns:
-        iqvia_df = _share_df(_iqvia_part(IQVIA_CACHE.stat().st_mtime, _sel))
-    if ubist_df is not None and "_구성" in ubist_df.columns:
-        ubist_df = _share_df(_ubist_part(UBIST_CACHE.stat().st_mtime, _price_mt(), _sel))
-    st.caption(f"**{', '.join(_combo_sel)}**만 분석합니다 · IQVIA는 원자료의 '단일제/복합제' 칸, "
+if not _combo_sel:
+    st.caption("구성을 하나도 고르지 않아 단일제·복합제 전체를 봅니다.")
+elif _PART:
+    st.caption(f"**{', '.join(_SEL_NOW)}**만 분석합니다 · IQVIA는 원자료의 '단일제/복합제' 칸, "
                "UBIST는 성분 끝 약가코드의 심평원 성분 수(없으면 성분 글자: 서로 다른 성분 2개 이상 = 복합제)로 구분합니다.")
 
 # ── 탭 구성 ──────────────────────────────────────────────────────────────────
