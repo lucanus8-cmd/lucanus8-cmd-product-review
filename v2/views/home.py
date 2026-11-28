@@ -7,10 +7,10 @@ TILES = [("종", "제품 종합분석", "search", "#5b6ef5"), ("제", "제품 �
 
 st.markdown("## 🔎 제품 검토")
 st.caption("매출 IQVIA·UBIST · 허가/특허/임상 식약처 · 약가 심평원+NHIS")
-css = ["<style>.hl{text-align:center;color:#5b6472;font-size:15px;font-weight:600;margin:10px 0 24px}"]
+css = ["<style>"]
 for ic, lb, k, col in TILES:
     css.append(f".st-key-h_{k} button{{background:{col}!important;color:#fff!important;width:88px!important;"
-               f"height:88px!important;border:none!important;border-radius:22px!important;margin:0 auto!important;display:block}}"
+               f"height:88px!important;border:none!important;border-radius:22px!important;margin:0 auto 28px!important;display:block}}"
                f".st-key-h_{k} button p{{font-size:30px!important;font-weight:800!important}}")
 css.append("</style>")
 st.markdown("".join(css), unsafe_allow_html=True)
@@ -19,6 +19,5 @@ for r in range(0, len(TILES), 4):
     cols = st.columns(4)
     for i, (ic, lb, k, col) in enumerate(TILES[r:r + 4]):
         with cols[i]:
-            if st.button(ic, key=f"h_{k}") and k in pages:
+            if st.button(ic, key=f"h_{k}", help=lb) and k in pages:   # 이름은 마우스를 올리면 보인다
                 st.switch_page(pages[k])
-            st.markdown(f"<div class='hl'>{lb}</div>", unsafe_allow_html=True)
