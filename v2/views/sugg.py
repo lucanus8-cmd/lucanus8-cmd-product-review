@@ -110,9 +110,15 @@ if view == "해외 허가 비교":
         import fda_view
         fda_view.render()
     st.stop()
-if view != "🎯 조건 필터":
-    st.info("이 보기는 새 버전(v2)으로 옮기는 중입니다. 지금은 기존 사이트에서 쓰실 수 있습니다.")
+if view.startswith("🧬"):
+    # 약물 재창출은 매출 자료 없이도 돈다(매출은 있을 때만 덧붙인다)
+    data.ensure("approval")
+    from views import repurpose_mod
+    repurpose_mod._repurpose_view(src2)
     st.stop()
+if view.startswith("🧪") and unit != "성분별":
+    st.caption("원료사 동향은 성분 단위로 봅니다 — 분석 단위와 상관없이 성분별 매출을 씁니다.")
+    unit = "성분별"
 
 S, cfg, yr = data.sales(src2)
 if S is None or not yr:
@@ -179,6 +185,12 @@ for col in atc_lv:
     m[col] = m[col].fillna("").astype(str) if col in m.columns else ""
 if atc_lv:
     m["ATC"] = m[atc_lv[0]]
+
+if view.startswith("🧪"):
+    data.ensure("clinical")
+    from views import dmf_mod
+    dmf_mod._dmf_view(m, name, unit, yr)
+    st.stop()
 
 st.markdown("**필터 조건**")
 f1, f2, f3 = st.columns(3)
