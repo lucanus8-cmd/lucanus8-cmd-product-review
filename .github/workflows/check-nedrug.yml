@@ -46,7 +46,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -397,6 +397,14 @@ jobs:
         run: |
           python -m pip install --quiet -r requirements.txt requests
           python .github/scripts/check_memory.py
+
+      - name: 질병명 검색 시험 A — 효능·효과 PDF 에서 글 뽑기 (공개 자료, 사이트에 쓰지 않음)
+        if: inputs.what == 'eepdf'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet -r requirements.txt requests pypdf
+          python .github/scripts/check_ee_pdf.py
 
       - name: 질병명 검색 시험 — 허가 효능·효과 칸 (공개 자료, 사이트에 쓰지 않음, 매출 금액 안 적음, words=질병,질병)
         if: inputs.what == 'efficacy'
