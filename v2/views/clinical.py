@@ -79,7 +79,7 @@ try:
 except Exception:
     cl = None
 if cl is None or cl.empty:
-    st.info("임상 데이터 미연결")
+    data.show_missing("clinical")
 else:
     def _cc(cands):
         for c in cands:

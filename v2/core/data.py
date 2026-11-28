@@ -127,6 +127,18 @@ def missing_note(name):
     return f"{LABEL.get(name, name)} 데이터 미연결" + (f" — 원인: {e}" if e else "")
 
 
+def show_missing(name, container=None):
+    """'○○ 데이터 미연결' + 원인 + [다시 시도] 버튼 (지금 사이트의 '다시 시도'와 같은 일 — 바로 다시 받는다)."""
+    c = container or st
+    c.error(missing_note(name))
+    if c.button("🔄 다시 시도", key=f"retry_{name}"):
+        _TRIED.pop(name, None)
+        ERR.pop(name, None)
+        with st.spinner(f"{LABEL.get(name, name)} 자료를 다시 받는 중…"):
+            _build_missing(name)
+        st.rerun()
+
+
 def file_date(name):
     p = FILES.get(name)
     if not p or not Path(p).exists():

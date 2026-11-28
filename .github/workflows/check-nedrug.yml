@@ -47,7 +47,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools' && inputs.what != 'eesave' && inputs.what != 'eeweekly' && inputs.what != 'v2aitools'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools' && inputs.what != 'eesave' && inputs.what != 'eeweekly' && inputs.what != 'v2aitools' 
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -496,6 +496,26 @@ jobs:
             python $S v2 /tmp/site_v2a v2이전 8602 v2/app.py $mode || true
             python $S v2 "$PWD" v2이번 8603 v2/app.py $mode || true
           done
+
+      - name: 제네릭 등재 예전(약가 전체) vs v2 가벼운 판 — 결과·메모리 (사이트에 쓰지 않음, 공개 자료만)
+        if: inputs.what == 'genlight'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          python -m pip install --quiet -r requirements.txt -r v2/requirements.txt requests
+          python - <<'PY'
+          import base64, json, os, sys
+          sys.path.insert(0, ".github/scripts"); sys.path.insert(0, ".")
+          import gsheet
+          os.makedirs(".streamlit", exist_ok=True)
+          open(".streamlit/secrets.toml", "w").write('gcp_service_account_b64 = "%s"\n' % base64.b64encode(json.dumps(gsheet._info()).encode()).decode())
+          import bootstrap
+          print("자료 만들기:", bootstrap._do_build(only={"approval", "price"}, force=True))
+          PY
+          python .github/scripts/check_generic_light.py old /tmp/g_old.json || true
+          python .github/scripts/check_generic_light.py v2 /tmp/g_v2.json || true
+          python .github/scripts/check_generic_light.py cmp /tmp/g_old.json /tmp/g_v2.json || true
+          python .github/scripts/check_all_pages.py v2 "$PWD" v2 8631 v2/app.py gen || true
 
       - name: 실제 사용 순서(자료 없음 → 불러오기 포함) — v2 지금 vs 자료 만들기를 별도 작업으로 (사이트에 쓰지 않음)
         if: inputs.what == 'v2realflow'

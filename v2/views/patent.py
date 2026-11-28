@@ -13,7 +13,7 @@ TODAY = pd.Timestamp.today().normalize()
 st.subheader("⚖️ 특허 분석 — 조건별")
 PT = data.table("patent")
 if PT is None or not data.has("approval"):
-    st.error(data.missing_note("patent" if PT is None else "approval"))
+    data.show_missing("patent" if PT is None else "approval")
     st.stop()
 
 pc = data.cols("patent")

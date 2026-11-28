@@ -69,7 +69,7 @@ def _union_where(cols_avail, name_cols, q, keys, cores, core_col="_core", kexpr=
 # ══════════════════════════ 화면 ══════════════════════════
 st.subheader("🔍 제품 종합분석")
 if not HAS_REG:
-    st.error(data.missing_note("approval"))
+    data.show_missing("approval")
     st.caption("‘상태’ 화면에서 자료마다 받기 상태와 원인을 볼 수 있습니다.")
     st.stop()
 c0, c1, c2 = st.columns([1, 3, 1])
@@ -203,7 +203,7 @@ with tabs[0]:
 
 with tabs[1]:
     if PT is None:
-        st.info("특허 데이터 미연결")
+        data.show_missing("patent")
     else:
         w, p = _union_where(data.cols("patent"), ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q, ing_keys, cores,
                             kexpr=data.key_expr("patent"))
@@ -236,7 +236,7 @@ with tabs[1]:
 
 with tabs[2]:
     if CL is None:
-        st.info("임상 데이터 미연결")
+        data.show_missing("clinical")
     else:
         clc = data.cols("clinical")
         w, p = _match(["제품명", "성분명"], clc, q)
@@ -258,7 +258,7 @@ with tabs[2]:
 
 with tabs[3]:
     if not HAS_PRICE:
-        st.info("약가 데이터 미연결")
+        data.show_missing("price")
     else:
         prc = data.cols("price")
         w, p = _match(["제품명", "주성분명"], prc, q_brand)

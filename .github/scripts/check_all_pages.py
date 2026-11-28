@@ -117,6 +117,18 @@ def main():
         elif mode == "dmf":
             step(pg, "1. 제품 제안 → 원료사 동향", lambda: (go(pg, "sugg", "?view=dmf"),
                                                      None if pg.get_by_text("원료사 동향 — DMF").count() else click_text(pg, "🧪 원료사 동향(DMF)")))
+        elif mode == "gen":
+            for t in ("에독사반", "리바록사반", "로수바스타틴", "텔미사르탄 + 암로디핀"):
+                def _g(t=t):
+                    go(pg, "price")
+                    pg.get_by_label(re.compile("성분 검색어")).first.fill(t.split(" + ")[0]); pg.keyboard.press("Enter"); idle(pg, 1)
+                    pg.get_by_role("combobox", name=re.compile("성분 선택")).first.click(); time.sleep(0.8)
+                    pg.get_by_role("option", name=re.compile("^" + re.escape(t) + "$")).first.click(); idle(pg, 2)
+                    body = pg.inner_text("body")
+                    print("     ", re.findall(r"📌[^\n]{0,160}", body)[:1], "· 오리지널 칸" + (" 있음" if "오리지널 (자동" in body else " 없음"), flush=True)
+                step(pg, f"약가 성분 '{t}'", _g)
+            step(pg, "상태 화면 (지금 새로고침 버튼)", lambda: (go(pg, "status"),
+                 print("     버튼", "있음" if pg.get_by_role("button", name=re.compile("지금 새로고침")).count() else "없음", flush=True)))
         elif mode == "dmfee":
             def _ee(words):
                 go(pg, "sugg", "?view=dmf")

@@ -15,7 +15,7 @@ CAP = 500
 st.subheader("💊 약가 분석")
 P, A = data.price(), data.approval()
 if not P:
-    st.info("약가 데이터 미연결")
+    data.show_missing("price")
     st.stop()
 
 mode = st.radio("보기", ["약가 조회", "약가 산정"], horizontal=True, key="price_mode", label_visibility="collapsed")
@@ -96,17 +96,57 @@ def _trend_codes(basis, term):
     return [], f"{term} 오리지널(신약) 약가 변동"
 
 
-# ── 약가 변동 그래프 ─────────────────────────────────────────────────
-st.markdown("**🔎 약가 변동 그래프** · 성분=동일성분 오리지널(신약) 기준, 제품=고른 품목 하나(함량·포장까지 구분)")
+# ── 약가 변동 그래프 (+ 제네릭 등재 시점) ─────────────────────────────────
+from core import generic_light as GL   # noqa: E402
+from core.ui import show_df            # noqa: E402
+
+st.markdown("**🔎 약가 변동 그래프** · 성분=허가 최초 품목(오리지널) 기준, 제품=고른 품목 하나(함량·포장까지 구분)")
 pc = st.columns([1, 1, 2])
 basis = pc[0].radio("기준", ["성분", "제품"], key="ptrend_basis", horizontal=True)
-opts = _prod_opts(mt) if basis == "제품" else _ing_opts(amt)
+byspec = basis == "제품"
+gmt = GL._mt()
+ge_opts = [] if byspec else GL.options()
+opts = _prod_opts(mt) if byspec else (ge_opts or _ing_opts(amt))
 kw = pc[1].text_input(f"{basis} 검색어", key="ptrend_kw", placeholder="일부만 입력")
-sel = pc[2].selectbox(f"{'약가' if basis == '제품' else '허가'} {basis} 선택 ({len(opts):,}개 중 검색)",
-                      ["(선택하세요)"] + _filter_opts(opts, kw), key="ptrend_sel")
+sel = pc[2].selectbox(f"{'약가' if byspec else '허가'} {basis} 선택 ({len(opts):,}개 중 검색"
+                      + ("" if byspec else " · 복합제 조합 포함") + ")",
+                      ["(선택하세요)"] + _filter_opts(opts, kw), key="ptrend_sel2")
 if sel and sel != "(선택하세요)":
-    codes, title = _trend_codes(basis, sel)
-    if basis == "제품":
+    gr, show_gen, lab, osel = None, False, [], 0
+    if not byspec and ge_opts:
+        try:
+            g0 = GL.run(sel, None, gmt)
+        except Exception as e:
+            g0 = None
+            st.caption(f"제네릭 등재 계산을 건너뜀 ({type(e).__name__})")
+        if g0 and g0["families"]:
+            fams = g0["families"]
+            lab = [f"{re.split(r'[(_]', str(nm))[0][:30]} · {co} · 허가 {d:%Y.%m}" + (" · 신약" if nw else "")
+                   for _b, co, nm, d, nw in fams]
+            fkeys = [(f[0], f[1]) for f in fams]
+            ai = fkeys.index(g0["auto"]) if g0["auto"] in fkeys else 0
+            oc = st.columns([3, 1])
+            osel = oc[0].selectbox(f"오리지널 (자동: {g0['reason']} · 허가일자 최초, 신약 표시 우선 · 바꿀 수 있음)",
+                                   range(len(lab)), index=ai, format_func=lambda i: lab[i], key=f"ptrend_orig_{sel}")
+            show_gen = oc[1].checkbox("제네릭 등재 시점 표시", value=True, key="ptrend_gen")
+            pick = fkeys[osel]
+            gr = g0 if pick == g0["auto"] else GL.run(sel, pick, gmt)
+            if gr.get("warn"):
+                w = ", ".join(f"**{re.split(r'[(_]', str(x['name']))[0][:24]}**({x['company']} · {int(x['price']):,}원)"
+                              for x in gr["warn"][:5])
+                st.warning(f"⚠️ **오리지널이 맞는지 확인해 주세요.** 같은 함량·제형에서 자료 시작일 상한가가 "
+                           f"지금 오리지널보다 높은 품목이 있습니다: {w} — 지금 오리지널 "
+                           f"{int(gr['warn'][0]['orig_price']):,}원. 오래된 오리지널은 허가를 다시 받아 "
+                           f"허가일자가 늦게 적혀 있을 수 있습니다. 위 **오리지널** 칸에서 바꿀 수 있습니다.")
+            if gr.get("note"):
+                st.info(gr["note"])
+    if gr is not None and gr.get("orig_codes"):
+        codes = list(gr["orig_codes"])
+        title = f"{sel} 오리지널({lab[osel].split(' · ')[0]}) 약가 변동"
+    else:
+        codes, title = _trend_codes(basis, sel)
+        show_gen = False
+    if byspec:
         g = data.q(f"""SELECT "제제코드" FROM {P} WHERE "제품명" = ? AND coalesce("제제코드", '') <> '' LIMIT 1""", [sel])
         if not g.empty:
             gc = g["제제코드"].iat[0]
@@ -114,8 +154,8 @@ if sel and sel != "(선택하세요)":
                            WHERE "제제코드" = ? AND "급여구분" = '급여'""", [gc])["n"].iat[0]
             st.caption(f"동일제제 `{gc}` · 같은 성분·함량·제형 급여 품목 {n}개")
     h = data.q(f"""SELECT "제품코드", "제품명", "적용일자", "금액" FROM {P}
-                   WHERE list_contains(?, "제품코드") AND "급여구분" = '급여' ORDER BY "적용일자" """, [codes]) \
-        if codes else pd.DataFrame()
+                   WHERE list_contains(?, trim(CAST("제품코드" AS VARCHAR))) AND "급여구분" = '급여'
+                   ORDER BY "적용일자" """, [[str(c).strip() for c in codes]]) if codes else pd.DataFrame()
     if h.empty:
         st.info("해당 급여 약가 이력이 없습니다.")
     else:
@@ -124,10 +164,65 @@ if sel and sel != "(선택하세요)":
         for nm, gg in h[h["제품명"].isin(show)].groupby("제품명"):
             fig.add_trace(go.Scatter(x=gg["적용일자"], y=gg["금액"], mode="lines+markers", name=str(nm)[:26],
                                      line_shape="hv"))
+        gen_tabs = []
+        if show_gen and gr is not None:
+            shp, ann = [], []
+            for df_, sym, col, yy, lbl in ((gr["same"], "diamond", "#e8590c", 0.03, "◆같은 약가코드 제네릭"),
+                                           (gr["salt"], "diamond-open", "#6b7280", 0.09, "◇염변경 등")):
+                if df_ is None or df_.empty:
+                    continue
+                gen_tabs.append(df_)
+                own = df_["비고"] if "비고" in df_.columns else pd.Series("", index=df_.index)
+                txt = [f"{str(n)[:30]}<br>{co}" + (" (오리지널 회사)" if ow else "") + f" · {d:%Y-%m-%d} 급여 등재"
+                       + (" (자료 시작일 — 실제 등재일 모름)" if u else "")
+                       + (f" · 첫 상한가 {int(fp):,}원" if pd.notna(fp) else "")
+                       for n, co, d, u, fp, ow in zip(df_["제품명"], df_["업체"], df_["등재일"], df_["날짜모름"],
+                                                      df_["첫상한가"], own)]
+                fig.add_trace(go.Scatter(x=df_["등재일"], y=[yy] * len(df_), yaxis="y2", mode="markers",
+                                         marker=dict(symbol=sym, size=9, color=col), name=lbl[1:],
+                                         text=txt, hovertemplate="%{text}<extra></extra>"))
+                kk = df_[~df_["날짜모름"]]
+                if not kk.empty:
+                    d1 = kk["등재일"].min()
+                    shp.append(dict(type="line", xref="x", yref="paper", x0=d1, x1=d1, y0=0, y1=1,
+                                    line=dict(color=col, dash="dash" if sym == "diamond" else "dot", width=1.5)))
+                    ann.append(dict(x=d1, y=1.0 if sym == "diamond" else 0.92, xref="x", yref="paper",
+                                    text=f"{lbl[0]} 첫 등재 {d1:%Y.%m}", showarrow=False,
+                                    font=dict(color=col, size=11), xanchor="left"))
+            fig.update_layout(yaxis2=dict(overlaying="y", range=[0, 1], visible=False, fixedrange=True),
+                              shapes=shp, annotations=ann)
         fig.update_layout(height=430, title=title, yaxis=WON, legend=dict(orientation="h", y=-0.3),
-                          hovermode="x unified")
+                          hovermode="closest" if gen_tabs else "x unified")
         st.plotly_chart(fig, width="stretch")
         st.caption(f"대상 품목 {h['제품코드'].nunique()}개 · 그래프는 이력 많은 상위 30개 표시")
+        if show_gen and gr is not None:
+            def _sumtxt(df_, mark):
+                if df_ is None or df_.empty:
+                    return f"{mark} 없음"
+                pre = int((df_["등재일"] <= pd.Timestamp("2010-02-01")).sum())
+                kk = df_[~df_["날짜모름"]]
+                t = f"{mark} {len(df_)}개"
+                if pre:
+                    t += f" · 2010.02 이전부터 있음({pre})"
+                if not kk.empty:
+                    r0 = kk.sort_values("등재일").iloc[0]
+                    ow = " · 오리지널 회사" if str(r0.get("비고", "")) == "오리지널 회사" else ""
+                    t += (f" · {'그 뒤 ' if pre else ''}첫 등재 {r0['등재일']:%Y.%m} "
+                          f"({re.split(r'[(_]', str(r0['제품명']))[0][:18]} · {r0['업체']}{ow})")
+                return t
+            sm = f"📌 {_sumtxt(gr['same'], '◆ 같은 약가코드')}  |  {_sumtxt(gr['salt'], '◇ 염변경 등')}"
+            if gr.get("n_combo"):
+                sm += f"  |  이 성분이 든 복합제 {gr['n_combo']}개 제외 (복합제는 성분 목록에서 조합으로 따로 보기)"
+            st.markdown(sm)
+            if gen_tabs:
+                with st.expander(f"📋 제네릭 등재 목록 (◆ {len(gr['same'])} · ◇ {len(gr['salt'])})"):
+                    tb = pd.concat(gen_tabs, ignore_index=True).sort_values("등재일")
+                    tb["급여 등재일"] = [("자료 시작 전" if u else f"{d:%Y.%m.%d}") for d, u in zip(tb["등재일"], tb["날짜모름"])]
+                    show_df(tb[[c for c in ["구분", "급여 등재일", "제품명", "업체", "비고", "첫상한가", "지금상한가"]
+                                if c in tb.columns]], height=320, file_name="제네릭등재.csv")
+                st.caption("◆ = 오리지널과 심평원 약가코드(성분·함량·제형)가 같은 제품 · ◇ = 같은 성분이지만 코드가 다른 제품(염변경 등) · "
+                           "등재일 = 그 제품에 처음 급여 상한가가 붙은 날 · 오리지널 회사가 낸 다른 제품(XR·OD 등)도 약가를 받았으면 "
+                           "'오리지널 회사'로 표시해 포함 · 공동판매 제품은 구분하지 않음")
 st.divider()
 
 # ── 조건별 최신 약가 · 연도별 ───────────────────────────────────────────
