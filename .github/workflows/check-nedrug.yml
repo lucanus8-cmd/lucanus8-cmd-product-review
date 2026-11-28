@@ -47,7 +47,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools' && inputs.what != 'eesave'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -484,6 +484,34 @@ jobs:
           mkdir -p v2/.streamlit && cp .streamlit/secrets.toml v2/.streamlit/
           python .github/scripts/check_v2_price.py /tmp/site_main 지금사이트 8601 scouting.py "?page=price" || true
           python .github/scripts/check_v2_price.py "$PWD" v2 8602 v2/app.py price || true
+
+      - name: 효능·효과 파일 받기 (저장용)
+        if: inputs.what == 'eesave' && inputs.urls != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: efficacy_site
+          path: /tmp/efficacy_site
+          run-id: ${{ inputs.urls }}
+          github-token: ${{ github.token }}
+
+      - name: 효능·효과 파일을 data 가지 efficacy_site/ 에 저장 (식약처 공개 자료만)
+        if: inputs.what == 'eesave'
+        run: |
+          ls -la /tmp/efficacy_site
+          python - <<'PY'
+          import json, pandas as pd
+          d = "/tmp/efficacy_site/"
+          m = json.load(open(d + "meta.json", encoding="utf-8"))
+          t = pd.read_parquet(d + "ee_text.parquet"); i = pd.read_parquet(d + "ee_item.parquet")
+          print("확인: 품목", len(i), "· 글", len(t), "· meta", m)
+          assert len(i) > 30000 and len(t) > 5000 and m.get("품목") == len(i)
+          PY
+          git config user.name "fda-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q --depth=1 origin data && git worktree add -q rv FETCH_HEAD && cd rv && git checkout -q -B data
+          mkdir -p efficacy_site && cp /tmp/efficacy_site/ee_text.parquet /tmp/efficacy_site/ee_item.parquet /tmp/efficacy_site/meta.json efficacy_site/
+          git add efficacy_site
+          git diff --cached --quiet && echo "바뀐 것 없음" || { git commit -qm "효능·효과 (식약처 공개, 같은 글은 번호로 한 번만)" && git push -q origin data && echo "data 가지에 저장함"; }
+          git ls-tree -l HEAD efficacy_site/
 
       - name: 효능·효과 파일 받기 (eebuild 로봇이 남긴 것, urls=그 실행 번호)
         if: inputs.what == 'aitools' && inputs.urls != ''
