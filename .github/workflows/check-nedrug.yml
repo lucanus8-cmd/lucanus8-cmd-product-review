@@ -497,6 +497,13 @@ jobs:
             python $S v2 "$PWD" v2이번 8603 v2/app.py $mode || true
           done
 
+      - name: 운영 중인 v2 사이트 메모리 읽기 (상태 화면 숫자만, 사이트에 쓰지 않음)
+        if: inputs.what == 'livemem'
+        env:
+          APP_URL: https://k3xpfjhkk57x8l5kmxsxmw.streamlit.app/
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: python .github/scripts/check_live_mem.py
+
       - name: 매출 분석 DuckDB(v2 새) vs 표 전체(v2 예전) — 자료 대조 + 화면 4개 (사이트에 쓰지 않음, 매출 숫자 안 적음)
         if: inputs.what == 'v2salesdb'
         env:
