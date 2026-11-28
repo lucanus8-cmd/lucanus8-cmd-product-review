@@ -194,7 +194,7 @@ tabs = st.tabs(["📋 허가", "⚖️ 특허", "🧪 임상", "💊 약가·이
 
 with tabs[0]:
     w, p = _union_where(apc, ["품목명", "주성분", "주성분(영문)"], q, ing_keys, cores, kexpr=data.key_expr("approval"))
-    m = _rows(AP, w, p)
+    m = _rows(AP, w, p).drop_duplicates()
     st.caption(f"허가 {len(m):,}건 · 업체 {m['업체명'].nunique()}곳 · 신약 {int((m.get('신약구분', pd.Series(dtype=str)) == '신약').sum())}건")
     cc = [c for c in ["품목명", "업체명", "허가일자", "전문/일반", "주성분", "신약구분", "상태", "보험코드(EDI)"] if c in m.columns]
     show_df(m[cc].sort_values("허가일자", ascending=False) if "허가일자" in cc else m[cc], height=300, file_name="허가목록.csv")
@@ -205,7 +205,7 @@ with tabs[1]:
     else:
         w, p = _union_where(data.cols("patent"), ["품목명", "INGR_ENG_NAME", "INGR_NAME"], q, ing_keys, cores,
                             kexpr=data.key_expr("patent"))
-        m = ss.enrich_patent(_rows(PT, w, p))
+        m = ss.enrich_patent(_rows(PT, w, p).drop_duplicates())   # 시트의 완전히 같은 중복 줄은 지금 사이트처럼 지운다
         m["만료D(년)"] = ((m["_exp"] - TODAY).dt.days / 365.25).round(1)
         live = ss.active_patent_mask(m["DOMESTIC_PATENT_STATUS"])
         if ss.has_listed_flag(m):
@@ -244,7 +244,7 @@ with tabs[2]:
         if ing_keys and "성분명" in clc:
             w += " OR list_contains(?, upper(regexp_extract(CAST(\"성분명\" AS VARCHAR), '([A-Za-z]{3,})', 1)))"
             p.append(sorted(ing_keys))
-        m = _rows(CL, w, p)
+        m = _rows(CL, w, p).drop_duplicates()
         stp = m["CLINIC_STEP_NM"] if "CLINIC_STEP_NM" in m.columns else pd.Series([], dtype=str)
         st.caption(f"임상 {len(m):,}건 · 생동(제네릭 개발) {int(stp.astype(str).str.contains('생동', na=False).sum())}건")
         cmap = {"제품명": "제품명", "성분명": "성분명", "CLINIC_STEP_NM": "단계", "TRGT_DISS_NM": "대상질환",

@@ -2,7 +2,9 @@ import streamlit as st
 
 from core import data
 
+BUILD = "v2-2026-11-28-a"
 st.subheader("데이터 연결 상태 (v2)")
+st.caption(f"코드 버전: {BUILD}")
 rows = []
 for n, lab in [("approval", "허가"), ("patent", "특허"), ("clinical", "임상"), ("price", "약가"),
                ("nego", "공단협상"), ("iqvia", "매출 IQVIA"), ("ubist", "매출 UBIST")]:
