@@ -25,7 +25,16 @@ def eq(a, b, lab):
         pd.testing.assert_frame_equal(a, b, check_dtype=True, check_index_type=False)
         N["같음"] += 1; print(f"같음 · {lab} · {len(a):,}줄", flush=True)
     except AssertionError as e:
-        N["다름"] += 1; print(f"다름 · {lab} · 새 {len(a):,}줄 / 예전 {len(b):,}줄 · {str(e).splitlines()[0][:160]}", flush=True)
+        N["다름"] += 1
+        extra = ""
+        if "index" in str(e).splitlines()[0]:
+            same_vals = a.reset_index(drop=True).equals(b.reset_index(drop=True))
+            extra = (f" · 값만 보면 {'같음' if same_vals else '다름'} · 새 index {list(a.index[:4])}…{list(a.index[-2:])}"
+                     f" · 예전 {list(b.index[:4])}…{list(b.index[-2:])}")
+            if not same_vals and len(a) == len(b):
+                srt = a.sort_index().reset_index(drop=True).equals(b.reset_index(drop=True))
+                extra += f" · 새 줄을 번호순으로 놓으면 {'같음' if srt else '다름'}"
+        print(f"다름 · {lab} · 새 {len(a):,}줄 / 예전 {len(b):,}줄 · {str(e).splitlines()[0][:120]}{extra}", flush=True)
 
 for k in ("iqvia", "ubist"):
     print(k, "파일:", data.ensure(k))

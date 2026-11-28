@@ -171,6 +171,9 @@ def rows(kind, where="TRUE", params=(), cols=None, combo=None):
     if kind == "iqvia":
         try:
             df, _ = fix_iqvia_dose(df)
+            # 원래는 표 전체에 손질하므로 (복합제가 늘 있어) '용량' 칸이 항상 object 형식이 된다 → 똑같이
+            if "용량" in df.columns and df["용량"].dtype != object:
+                df["용량"] = df["용량"].astype(object)
         except Exception:
             pass
         try:

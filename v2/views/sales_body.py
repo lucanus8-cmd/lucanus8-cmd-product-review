@@ -320,7 +320,11 @@ def make_filter_mask(df, active, field_map, require_any=True):
             elif f["field"] == "용량":   # 단위·대소문자 상관없이 숫자로 (40/10 → 40MG/10MG, 40 → 140은 제외)
                 mask &= dose_match(df[col], f["value"]).values
             else:
-                mask &= df[col].astype(str).str.contains(f["value"].strip(), case=False, na=False)
+                _sv = df[col].astype(str)
+                try:
+                    mask &= _sv.str.contains(f["value"].strip(), case=False, na=False)
+                except Exception:   # '+'·'(' 같은 글자는 정규식 오류 → 글자 그대로 찾는다 (예전엔 화면이 멈췄음)
+                    mask &= _sv.str.contains(f["value"].strip(), case=False, na=False, regex=False)
             applied += 1
     if applied == 0 and not require_any:
         return pd.Series(False, index=df.index)
