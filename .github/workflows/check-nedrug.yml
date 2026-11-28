@@ -47,7 +47,7 @@ jobs:
           key: playwright-1.49.0-${{ runner.os }}
 
       - name: 브라우저 준비
-        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools' && inputs.what != 'eesave'
+        if: inputs.what != 'fetch' && inputs.what != 'ctgov' && inputs.what != 'ctspeed' && inputs.what != 'pubmed' && inputs.what != 'metamod' && inputs.what != 'opentargets' && inputs.what != 'repurpose' && inputs.what != 'paper' && inputs.what != 'metaref' && inputs.what != 'otcover' && inputs.what != 'overseas' && inputs.what != 'jpnames' && inputs.what != 'uskr' && inputs.what != 'fdatables' && inputs.what != 'fdadaily' && inputs.what != 'fdasheet' && inputs.what != 'keycheck' && inputs.what != 'patentcheck' && inputs.what != 'fdasite' && inputs.what != 'pattrim' && inputs.what != 'indhead' && inputs.what != 'pmda' && inputs.what != 'jpind' && inputs.what != 'ema' && inputs.what != 'uskrtest' && inputs.what != 'emasite' && inputs.what != 'patmem' && inputs.what != 'dmfcand' && inputs.what != 'ubisthdr' && inputs.what != 'ingprice' && inputs.what != 'iqviadose' && inputs.what != 'genentry' && inputs.what != 'gencode' && inputs.what != 'gencombo' && inputs.what != 'genmix' && inputs.what != 'apdates' && inputs.what != 'gensimple' && inputs.what != 'salescombo' && inputs.what != 'genmodule' && inputs.what != 'salescombo2' && inputs.what != 'hirafolder' && inputs.what != 'oneprod' && inputs.what != 'memcheck' && inputs.what != 'prebuilt' && inputs.what != 'efficacy' && inputs.what != 'eepdf' && inputs.what != 'eerole' && inputs.what != 'eestore' && inputs.what != 'aitools' && inputs.what != 'eesave' && inputs.what != 'eeweekly'
         run: |
           python -m pip install --quiet playwright==1.49.0
           python -m playwright install --with-deps chromium
@@ -484,6 +484,22 @@ jobs:
           mkdir -p v2/.streamlit && cp .streamlit/secrets.toml v2/.streamlit/
           python .github/scripts/check_v2_price.py /tmp/site_main 지금사이트 8601 scouting.py "?page=price" || true
           python .github/scripts/check_v2_price.py "$PWD" v2 8602 v2/app.py price || true
+
+      - name: 효능·효과 주간 갱신 시험 (저장하지 않음)
+        if: inputs.what == 'eeweekly'
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        run: |
+          git fetch -q --depth=1 origin data && git worktree add -q /tmp/databr FETCH_HEAD
+          mkdir -p /tmp/prev && cp /tmp/databr/efficacy_site/* /tmp/prev/ && ls -la /tmp/prev
+          python -m pip install --quiet -r requirements.txt requests pypdf
+          python .github/scripts/build_efficacy.py /tmp/prev /tmp/out 120
+          python - <<'PY'
+          import os, pandas as pd
+          new = pd.read_parquet("/tmp/out/ee_item.parquet"); txt = pd.read_parquet("/tmp/out/ee_text.parquet")
+          old = len(pd.read_parquet("/tmp/prev/ee_item.parquet"))
+          print(f"품목 {old:,} → {len(new):,} · 글 {len(txt):,} · 저장 조건 {'통과' if len(new) >= 0.95*old and len(txt) > 1000 else '실패'}")
+          PY
 
       - name: 효능·효과 파일 받기 (저장용)
         if: inputs.what == 'eesave' && inputs.urls != ''
