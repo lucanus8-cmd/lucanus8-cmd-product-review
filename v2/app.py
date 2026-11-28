@@ -17,8 +17,8 @@ import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="제품검토_v2", page_icon="🔎", layout="wide")
 
-from core import buildsub  # noqa: E402
-buildsub.install()          # 자료 만들기(엑셀 풀기 등)는 별도 작업에서 — 끝나면 메모리를 통째로 돌려받는다
+# (시험함) 자료 만들기를 별도 작업으로 떼는 방식(core/buildsub.py)은 끝난 뒤 남는 메모리는 51MB 줄지만
+# 불러오는 순간 본체+별도 작업 합계가 1,203 → 1,352MB 로 올라 앱이 멈출 위험이 커져 쓰지 않는다.
 
 
 def _gate():
