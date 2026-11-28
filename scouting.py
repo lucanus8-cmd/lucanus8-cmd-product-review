@@ -4992,11 +4992,11 @@ if PAGE == "ai":
             # Streamlit 이 그걸 화면에 출력한다(파이썬 설명문이 쏟아진다).
             if ok:
                 st.markdown(ans)
-            if gemini_ai.LAST_MODEL and gemini_ai.LAST_MODEL != gemini_ai.model_name():
-                st.caption(f"설정된 모델({gemini_ai.model_name()})이 붐벼서 "
-                           f"**{gemini_ai.LAST_MODEL}** 로 답했습니다.")
+                if gemini_ai.LAST_MODEL and gemini_ai.LAST_MODEL != gemini_ai.model_name():
+                    st.caption(f"설정된 모델({gemini_ai.model_name()})이 붐벼서 "
+                               f"**{gemini_ai.LAST_MODEL}** 로 답했습니다.")
             else:
-                st.error(ans)
+                st.error(ans)       # 실패했을 때만 빨간 상자 (예전에는 성공한 답도 한 번 더 빨간 상자로 나왔다)
     else:
         st.caption("제품/성분을 입력하고 실행하면, 연결된 데이터를 종합해 아래 양식으로 검토서를 만듭니다.")
         if st.button("📋 제품 검토서 생성", key="ai_review", type="primary"):
