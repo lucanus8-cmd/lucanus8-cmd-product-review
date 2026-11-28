@@ -157,3 +157,43 @@ def approval():
                         "신약구분", "상태", "보험코드(EDI)") if x in have]
     sel = ", ".join([f"\"{x}\"" for x in keep] + [f"{k} AS _k"])
     return f"(SELECT {sel} FROM read_parquet('{p.as_posix()}'))"
+
+
+def ns(col):
+    """띄어쓰기 없앤 소문자 칸 (SQL 조각) — 지금 사이트의 '띄어쓰기 무시 포함 검색'과 같게."""
+    return f"lower(regexp_replace(CAST(\"{col}\" AS VARCHAR), '\\s', '', 'g'))"
+
+
+def table(name):
+    """자료 파일 그대로(모든 칸). 조건을 붙여 필요한 줄만 꺼낼 때 쓴다."""
+    p = ensure(name)
+    return f"read_parquet('{p.as_posix()}')" if p else None
+
+
+SALES = {"IQVIA": {"prod": "제품명", "maker": "회사명", "ing": "성분명", "yr": r"^\d{4}년$"},
+         "UBIST": {"prod": "제품명", "maker": "제조사명", "ing": "성분", "yr": r"^처방조제액\(원\)_\d{4}년$"}}
+
+
+def sales(src):
+    """(SQL 원본, 설정, 연도 칸 목록). 없으면 (None, cfg, [])."""
+    import re
+    cfg = SALES[src]
+    name = src.lower()
+    p = ensure(name)
+    if not p:
+        return None, cfg, []
+    yr = sorted([c for c in cols(name) if re.match(cfg["yr"], str(c))])
+    return f"read_parquet('{p.as_posix()}', file_row_number=true)", cfg, yr
+
+
+_KEY_SRC = {"approval": "주성분(영문)", "patent": "INGR_ENG_NAME", "price": "주성분명", "clinical": "성분명"}
+
+
+def key_expr(name):
+    """그 자료의 성분키 칸 (저장된 _key 가 있으면 그것, 없으면 영문 성분명에서 바로 만든다)."""
+    if "_key" in cols(name):
+        return '"_key"'
+    c = _KEY_SRC.get(name)
+    if c and c in cols(name):
+        return f"upper(regexp_extract(CAST(\"{c}\" AS VARCHAR), '([A-Za-z]{{3,}})', 1))"
+    return "''"

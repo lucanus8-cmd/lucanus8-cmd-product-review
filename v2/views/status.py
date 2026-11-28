@@ -9,5 +9,5 @@ for n, lab in [("approval", "허가"), ("patent", "특허"), ("clinical", "임�
     p = data.FILES[n]
     rows.append({"자료": lab, "파일": "있음" if p.exists() else "없음", "받은 시각": data.file_date(n),
                  "크기(MB)": round(p.stat().st_size / 1e6, 1) if p.exists() else None})
-st.dataframe(rows, hide_index=True, use_container_width=True)
+st.dataframe(rows, hide_index=True, width="stretch")
 st.caption(f"서버 메모리 지금 {data.rss_mb():.0f} MB · DuckDB 상한 {data.DUCK_MEM}")

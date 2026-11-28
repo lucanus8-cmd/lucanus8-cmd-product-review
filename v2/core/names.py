@@ -54,3 +54,47 @@ def is_single_series(*srs):
         one = ~t.str.contains(r"[/,]|및|\+", regex=True, na=False)
         m = one if m is None else (m & one)
     return m if m is not None else pd.Series(dtype=bool)
+
+
+# 제형어(정/캡슐/액 등) — 브랜드 핵심어만 남길 때 뗀다. 긴 것이 앞에 와야 한다.
+FORM_RE = (r"(서방정|속붕정|장용정|설하정|츄어블정|구강붕해정|정제|정|연질캡슐|경질캡슐|캡슐|"
+           r"주사액|주사|프리필드시린지|건조시럽|시럽|과립|산제|산|점안액|점비액|점이액|"
+           r"현탁액|흡입액|외용액|액|크림|연고|겔|패치|좌제)$")
+
+
+def edi_codes(v):
+    """허가시트 보험코드(EDI)에서 9자리 코드들 (지금 사이트 _edi_codes 와 같음)."""
+    raw = str(v).strip()
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+        d = re.sub(r"\D", "", raw)
+        if len(d) % 9 == 8:
+            d = "0" + d
+        return {d[:9]} if len(d) >= 9 else set()
+    out = set()
+    for p in parts:
+        d = re.sub(r"\D", "", p)
+        if len(d) == 9:
+            out.add(d)
+        elif len(d) == 8:
+            out.add("0" + d)
+    return out
+
+
+def calc_cagr(values, labels, min_base=1e8):
+    def yr(c):
+        m = re.search(r"(\d{4})", str(c))
+        return int(m.group(1)) if m else 0
+    pairs = [(l, v) for l, v in zip(labels, values) if v and v > 0]
+    starts = [(l, v) for l, v in pairs if v >= min_base]
+    if not starts or len(pairs) < 2:
+        return None
+    sl, sv = starts[0]
+    el, ev = pairs[-1]
+    n = yr(el) - yr(sl)
+    return None if n <= 0 or ev <= 0 else ((ev / sv) ** (1 / n) - 1) * 100
+
+
+def year_of(c):
+    m = re.search(r"(\d{4})", str(c))
+    return m.group(1) if m else str(c)

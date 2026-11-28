@@ -121,7 +121,7 @@ if sel and sel != "(선택하세요)":
                                      line_shape="hv"))
         fig.update_layout(height=430, title=title, yaxis=WON, legend=dict(orientation="h", y=-0.3),
                           hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption(f"대상 품목 {h['제품코드'].nunique()}개 · 그래프는 이력 많은 상위 30개 표시")
 st.divider()
 
@@ -192,11 +192,11 @@ if A and int(agg["ng"]) > 0 and n <= 2000:
                 fo.add_trace(go.Scatter(x=gg["적용일자"], y=gg["금액"], mode="lines+markers", name=str(nm)[:24],
                                         line_shape="hv"))
             fo.update_layout(height=360, title="오리지널(신약) 상한금액 추이", yaxis=WON, legend=dict(orientation="h", y=-0.3))
-            st.plotly_chart(fo, use_container_width=True)
+            st.plotly_chart(fo, width="stretch")
         else:
             st.caption(f"오리지널 {len(oc)}개 — 그래프는 40개 이하로 좁혀야 표시됩니다.")
         st.dataframe(ol[["제품명", "업체명", "주성분명", "적용일자", "금액"]].sort_values("금액", ascending=False),
-                     use_container_width=True, height=220, hide_index=True)
+                     width="stretch", height=220, hide_index=True)
 elif A and n > 2000:
     st.caption("⭐ 오리지널 분류·그래프는 필터를 좁히면(투여·분류·업체·제품/성분 검색) 표시됩니다.")
 
@@ -222,7 +222,7 @@ else:
         pv.columns = [str(c) for c in pv.columns]
         pv.insert(0, "제품명", [names.get(c, c) for c in pv.index])
         ym = pv.reset_index(drop=True)
-        st.dataframe(ym.head(CAP), use_container_width=True, height=380)
+        st.dataframe(ym.head(CAP), width="stretch", height=380)
         st.download_button("⬇️ 연도별 약가 CSV", ym.to_csv(index=False).encode("utf-8-sig"), file_name="연도별약가.csv")
 
 with st.expander("📉 가격 인하폭 Top 20 / 급여중지(삭제) 목록"):
@@ -236,7 +236,7 @@ with st.expander("📉 가격 인하폭 Top 20 / 급여중지(삭제) 목록"):
                       FROM h JOIN {L} l USING ("제품코드")
                       WHERE h.최초가 IS NOT NULL AND h.최초가 <> 0
                       ORDER BY "인하율%" LIMIT 20""", prm)
-    st.dataframe(drop, use_container_width=True, height=240, hide_index=True)
+    st.dataframe(drop, width="stretch", height=240, hide_index=True)
     deleted = data.q(f"""SELECT "제품명","업체명","주성분명","적용일자" FROM {L}
                          WHERE {W} AND "급여구분" = '삭제' ORDER BY "적용일자" DESC LIMIT 30""", prm)
-    st.dataframe(deleted, use_container_width=True, height=200, hide_index=True)
+    st.dataframe(deleted, width="stretch", height=200, hide_index=True)
