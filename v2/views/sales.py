@@ -1,5 +1,5 @@
-"""매출 분석 (v2). 지금 사이트 매출 분석(app.py 4개 탭)을 그대로 띄운다.
-매출 표는 scout_sources 의 공유 표(한 벌만)를 같이 쓴다. 다음 단계에서 DuckDB 로 가볍게 바꾼다."""
+"""매출 분석 (v2). 본문은 sales_body.py (지금 사이트 app.py 4개 화면을 옮긴 것, 고른 화면 하나만 계산).
+매출 표는 scout_sources 의 공유 표(한 벌만)를 같이 쓴다."""
 import streamlit as st
 
 import bootstrap
@@ -8,9 +8,14 @@ from core import data
 st.subheader("💰 매출 분석")
 ready = (data.SAVED / "iqvia.pkl").exists() or (data.SAVED / "ubist.pkl").exists()
 if st.session_state.get("_load_sales") and ready:
-    import sales_analysis
+    from pathlib import Path as _P
+    _body = _P(__file__).with_name("sales_body.py")
     try:
-        sales_analysis.render()
+        _code = st.session_state.get("_sales_code")
+        if _code is None or _code[0] != _body.stat().st_mtime:
+            _code = (_body.stat().st_mtime, compile(_body.read_text(encoding="utf-8"), str(_body), "exec"))
+            st.session_state["_sales_code"] = _code
+        exec(_code[1], {"__name__": "v2_sales", "__file__": str(_body)})
     except Exception as e:
         if type(e).__name__ in ("RerunException", "StopException"):
             raise
