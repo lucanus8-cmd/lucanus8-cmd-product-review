@@ -3955,7 +3955,7 @@ if PAGE == "sugg":
         st.stop()
 
     st.markdown("**필터 조건**")
-    f1, f2, f3, f4 = st.columns(4)
+    f1, f2, f3 = st.columns(3)
     min_size = f1.number_input("① 최소 시장규모(억, 최신연도)", value=50, step=10, min_value=0)
     min_cagr = f2.number_input("② 최소 성장 CAGR(%)", value=0.0, step=5.0)
     cy = int(TODAY.year)
@@ -3972,13 +3972,17 @@ if PAGE == "sugg":
         ptypes = [_PT_KIND[t] for t in _pt_sel]
         sel_year = st.selectbox("이 연도까지 특허 만료", list(range(cy, cy + 16)), index=5,
                                 help="선택한 유형 특허가 이 연도까지 만료(또는 없음)인 후보만")
-    with f4:
-        st.markdown("④ ATC 계열")
-        st.caption("아래에서 1단계부터 차례로 좁힙니다. 비우면 전체.")
+    # ④ ATC: 처음 보는 사람에게 필터가 너무 많아 보이지 않도록 접어 둔다.
+    #    무언가 골라 두었으면 펼친 채로 두고, 제목에 몇 개 골랐는지 보여준다.
+    _atc_on = sum(1 for _k, _v in st.session_state.items()
+                  if str(_k).startswith("sugg_atc_") and _v)
+    _atc_box = st.expander("④ ATC 계열로 좁히기 (선택)" + (f" · {_atc_on}단계 고름" if _atc_on else ""),
+                           expanded=bool(_atc_on))
     # ④ ATC: 단계마다 고르기 칸. 위 단계에서 고른 것 안에서만 다음 단계 선택지가 나온다.
     atc_pick = {}
     if _atc_lv:
-        _ac = st.columns(len(_atc_lv))
+        _atc_box.caption("1단계부터 차례로 좁힙니다. 비우면 전체.")
+        _ac = _atc_box.columns(len(_atc_lv))
         _pool = m
         for _i, _c in enumerate(_atc_lv):
             _opts = sorted({str(x).strip() for x in _pool[_c] if str(x).strip()})
@@ -4002,7 +4006,8 @@ if PAGE == "sugg":
                 if pd.notna(exp) and pd.Timestamp(exp).year > sel_year:
                     return False
             return True
-        res = res[res.apply(clear_by, axis=1)]
+        if not res.empty:      # 빈 표에 apply 를 하면 칸이 사라져 아래에서 오류가 난다(조건에 맞는 후보가 없을 때)
+            res = res[res.apply(clear_by, axis=1).astype(bool)]
 
     for _c, _sel in atc_pick.items():
         if _c in res.columns:
